@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psidata"
+description = "Routines for data from codes maintained by Predictive Science Inc."
+authors = [
+  {name = "Ronald M. Caplan", email = "caplanr@predsci.com"},
+  {name = "Ryder Davidson", email = "rdavidson@predsci.com "},
+  {name = "Cooper Downs", email = "cdowns@predsci.com"},
+]
+version = "1.0.0"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
+requires-python = ">=3.11"
+dependencies = [
+    "h5py",
+]
+
+[project.optional-dependencies]
+hdf4 = [
+    "pyhdf",
+]
+interp = [
+    "scipy",
+]
+all = ["psidata[hdf4,interp]"]

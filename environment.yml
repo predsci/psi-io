@@ -1,0 +1,28 @@
+# Generally we recommend installing the python HDF packages using conda.
+#   This makes it simpler to ensure that the underlying HDF5 and HDF4 libraries
+#   are properly set up and linked to the python interfaces.
+#
+# Here is a minimal conda recipe for the psidata dependencies.
+#
+# To create the development environment:
+#   $ conda env create -f environment.yml
+#   $ conda activate psidata-dev
+#
+# To remove the development environment:
+#   $ conda remove --name psidata-dev --all
+#
+name: psidata-dev
+channels:
+  - conda-forge
+dependencies:
+  # Minimal Dependencies
+  - python>=3.10
+  - h5py
+  - numpy
+
+  # Optional Dependencies
+  - pyhdf
+  - scipy
+
+  # Development Dependencies
+  - setuptools
