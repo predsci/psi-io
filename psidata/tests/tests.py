@@ -1,7 +1,13 @@
+"""
+Ryder's manual tests copied from a previous iteration of psihdf so that we
+have a starting point for building a proper testsuite.
+
+NOT YET INTENDED FOR USE! This will need to be refactored for automated testing.
+"""
 import timeit
 from matplotlib import pyplot as plt
 
-from psipytools.psihdf import *
+from ..psi_io import *
 
 ITERATION_NUMBER_PWR = 3
 
