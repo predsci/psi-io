@@ -1,5 +1,5 @@
 """
-Routines for reading/writing PSI style HDF4 and HDF5 data files.
+Routines for reading/writing PSI style HDF5 and HDF4 data files.
 
 - Use rdhdf_1d, rdhdf_2d, and rdhdf_3d for reading full datasets.
 
@@ -13,21 +13,21 @@ Routines for reading/writing PSI style HDF4 and HDF5 data files.
 - The HDF type is determined by the filename extension (.hdf or .h5).
 
 Package Requirements:
-    - pyhdf + HDF4 (for .hdf).
-    - h5py + HDF5 (for .h5). h5py is available in default conda.
+    - REQUIRED: h5py + HDF5 (for .h5). h5py is available in default conda.
+    - OPTIONAL: pyhdf + HDF4 (for .hdf), scipy (for special interpolation routines).
     - It is easiest to install these with conda (from anaconda or miniconda),
       but HDF4, HDF5, pyhdf, and h5py can be installed manually too.
       - pyhdf is available in the conda-forge channel.
       - h5py is available in the default conda channel.
 
 Notes:
-    1) Not all PSI FORTRAN tools can read HDF4 files written by pyhdf.SD.
-      - If you have a problem, use the PSI tool "hdfsd2hdf" to convert.
-
-    2) Python uses C-style array indexing, while PSI tools use FORTRAN style
+    1) Python uses C-style array indexing, while PSI tools use FORTRAN style
        array indexing, so 3D fields f(r,t,p) in FORTRAN are read and manipulated
-       as f(p,t,r) in PYTHON. But we set the HDF4 rdhdf returns to resemble how
-       we call them in FORTRAN or IDL. So, if in doubt check the shapes.
+       as f(p,t,r) in PYTHON. But we set the rdhdf_1d (2d) (3d) returns to resemble
+       how we call them in FORTRAN or IDL. So, if in doubt check the shapes.
+
+    2) Not all PSI FORTRAN tools can read HDF4 files written by the pyhdf.SD interface.
+      - If you have a problem, use the PSI tool "hdfsd2hdf" to convert.
 
 Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
 
@@ -50,7 +50,8 @@ import h5py as h5
 # -----------------------------------------------------------------------------
 # Optional Imports and Import Checking
 # -----------------------------------------------------------------------------
-# These packages are needed by several functions --> check in the module namespace.
+# These packages are needed by several functions and must be imported in the
+# module namespace.
 try:
     import pyhdf.SD as h4
     H4_AVAILABLE = True
@@ -74,14 +75,13 @@ def except_no_scipy():
     return
 
 # -----------------------------------------------------------------------------
-# "Classic" HDF reading and writing routines adapted from psihdf.
+# "Classic" HDF reading and writing routines adapted from psihdf.py or psi_io.py.
 # -----------------------------------------------------------------------------
 def rdh5(h5_filename):
-    """
-    Base reader for 1D, 2D, and 3D HDF5 files.
+    """Base reader for 1D, 2D, and 3D HDF5 files.
 
-    Generally this function should not be called directly, use `rdhdf_1d`,
-    `rdhdf_2d`, or `rdhdf_3d` instead.
+    Generally this function should not be called directly.
+    Use `rdhdf_1d`, `rdhdf_2d`, or `rdhdf_3d` instead.
     """
     x = np.array([])
     y = np.array([])
@@ -116,11 +116,10 @@ def rdh5(h5_filename):
 
 
 def rdhdf(hdf_filename):
-    """
-    Base reader for 1D, 2D, and 3D HDF4 files.
+    """Base reader for 1D, 2D, and 3D HDF4 files.
 
-    Generally this function should not be called directly, use `rdhdf_1d`,
-    `rdhdf_2d`, or `rdhdf_3d` instead.
+    Generally this function should not be called directly.
+    Use `rdhdf_1d`, `rdhdf_2d`, or `rdhdf_3d` instead.
     """
     if (hdf_filename.endswith('h5')):
         x, y, z, f = rdh5(hdf_filename)
@@ -170,12 +169,47 @@ def rdhdf(hdf_filename):
 
 
 def rdhdf_1d(hdf_filename):
+    """Read a 1D PSI-style HDF5 or HDF4 file.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales.
+    f: ndarray
+        1D array of data.
+    """
     x, y, z, f = rdhdf(hdf_filename)
 
     return (x, f)
 
 
 def rdhdf_2d(hdf_filename):
+    """Read a 2D PSI-style HDF5 or HDF4 file.
+
+    The data in the HDF file is assumed to be ordered X,Y in Fortran order.
+
+    Each dimension is assumed to have a 1D "scale" associated with it that
+    describes the rectilinear grid coordinates in each dimension.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    f: ndarray
+        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+    """
     x, y, z, f = rdhdf(hdf_filename)
 
     if (hdf_filename.endswith('h5')):
@@ -184,6 +218,29 @@ def rdhdf_2d(hdf_filename):
 
 
 def rdhdf_3d(hdf_filename):
+    """Read a 3D PSI-style HDF5 or HDF4 file.
+
+    The data in the HDF file is assumed to be ordered X,Y,Z in Fortran order.
+
+    Each dimension is assumed to have a 1D "scale" associated with it that
+    describes the rectilinear grid coordinates in each dimension.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    z: ndarray
+        1D array of scales in the Z dimension.
+    f: ndarray
+        3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+    """
     x, y, z, f = rdhdf(hdf_filename)
     if (hdf_filename.endswith('h5')):
         return (x, y, z, f)
@@ -192,6 +249,11 @@ def rdhdf_3d(hdf_filename):
 
 
 def wrh5(h5_filename, x, y, z, f):
+    """Base writer for 1D, 2D, and 3D HDF5 files.
+
+    Generally this function should not be called directly.
+    Use `wrhdf_1d`, `wrhdf_2d`, or `wrhdf_3d` instead.
+    """
     h5file = h5.File(h5_filename, 'w')
 
     # Create the dataset (Data is the name used by the psi data)).
@@ -242,6 +304,11 @@ def wrh5(h5_filename, x, y, z, f):
 
 
 def wrhdf(hdf_filename, x, y, z, f):
+    """Base writer for 1D, 2D, and 3D HDF4 files.
+
+    Generally this function should not be called directly.
+    Use `wrhdf_1d`, `wrhdf_2d`, or `wrhdf_3d` instead.
+    """
     if (hdf_filename.endswith('h5')):
         wrh5(hdf_filename, x, y, z, f)
         return
@@ -317,6 +384,17 @@ def wrhdf(hdf_filename, x, y, z, f):
 
 
 def wrhdf_1d(hdf_filename, x, f):
+    """Write a 1D PSI-style HDF5 or HDF4 file.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
+    x: ndarray
+        1D array of scales.
+    f: ndarray
+        1D array of data.
+    """
     x = np.asarray(x)
     y = np.array([])
     z = np.array([])
@@ -325,6 +403,24 @@ def wrhdf_1d(hdf_filename, x, f):
 
 
 def wrhdf_2d(hdf_filename, x, y, f):
+    """Write a 2D PSI-style HDF5 or HDF4 file.
+
+    The data in the HDF file will appear as X,Y in Fortran order.
+
+    Each dimension requires a 1D "scale" associated with it that
+    describes the rectilinear grid coordinates in each dimension.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    f: ndarray
+        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+    """
     x = np.asarray(x)
     y = np.asarray(y)
     z = np.array([])
@@ -336,6 +432,26 @@ def wrhdf_2d(hdf_filename, x, y, f):
 
 
 def wrhdf_3d(hdf_filename, x, y, z, f):
+    """Write a 3D PSI-style HDF5 or HDF4 file.
+
+    The data in the HDF file will appear as X,Y,Z in Fortran order.
+
+    Each dimension requires a 1D "scale" associated with it that
+    describes the rectilinear grid coordinates in each dimension.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    z: ndarray
+        1D array of scales in the Z dimension.
+    f: ndarray
+        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+    """
     x = np.asarray(x)
     y = np.asarray(y)
     z = np.asarray(z)
@@ -346,43 +462,20 @@ def wrhdf_3d(hdf_filename, x, y, z, f):
     wrhdf(hdf_filename, z, y, x, f)
 
 
-def make_periodic_3d(z, y, x, f, periodic_dim):
-    # Takes in info from rdhdf_3d, assumes hdf4 format(z,y,x,f).
-    # Makes dimension of choice periodic (0 - 2PI).
-
-    nx = len(x)
-    ny = len(y)
-    nz = len(z)
-    tempDatas = f
-
-    # Mapping periodicDim number 3 to x and number 1 to z makes calls
-    # to this function with the periodicDim keyword consistent with calls
-    # to the IDL function ps_read_hdf_3d
-    if periodic_dim == 3:
-        x = np.append(x, x[0] + 2.0 * np.pi)
-        f = np.empty((nx + 1, ny, nz))
-        f[0:nx, :, :] = tempDatas
-        f[nx, :, :] = tempDatas[0, :, :]
-    elif periodic_dim == 2:
-        y = np.append(y, y[0] + 2.0 * np.pi)
-        f = np.empty((nx, ny + 1, nz))
-        f[:, 0:ny, :] = tempDatas
-        f[:, ny, :] = tempDatas[:, 0, :]
-    elif periodic_dim == 1:
-        z = np.append(z, z[0] + 2.0 * np.pi)
-        f = np.empty((nx, ny, nz + 1))
-        f[:, :, 0:nz] = tempDatas
-        f[:, :, nz] = tempDatas[:, :, 0]
-
-    return (z, y, x, f)
-
-
 def get_scales_1d(filename):
-    """
-    Wrapper to return the scales of a 1D PSI style HDF4 or HDF5 dataset.
-    - This DOES NOT load in the data array --> it can be quite fast for large files.
-    - The 1D, 2D, and 3D versions of this wrapper are separated to make it easier
-      to debug and to match the style of the other psihdf routines.
+    """Wrapper to return the scales of a 1D PSI style HDF5 or HDF4 dataset.
+
+    This routine does not load the data array so it can be quite fast for large files.
+
+    Parameters
+    ----------
+    filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
     """
     if filename.endswith('h5'):
         x = get_scales_h5(filename)
@@ -392,11 +485,23 @@ def get_scales_1d(filename):
 
 
 def get_scales_2d(filename):
-    """
-    Wrapper to return the scales of a SD PSI style HDF4 or HDF5 dataset.
-    - This DOES NOT load in the data array --> it can be quite fast for large files.
-    - The 1D, 2D, and 3D versions of this wrapper are separated to make it easier
-      to debug and to match the style of the other psihdf routines.
+    """Wrapper to return the scales of a 2D PSI style HDF5 or HDF4 dataset.
+
+    This routine does not load the data array so it can be quite fast for large files.
+
+    The data in the HDF file is assumed to be ordered X,Y in Fortran order.
+
+    Parameters
+    ----------
+    filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
     """
     if filename.endswith('h5'):
         x, y = get_scales_h5(filename)
@@ -406,11 +511,25 @@ def get_scales_2d(filename):
 
 
 def get_scales_3d(filename):
-    """
-    Wrapper to return the scales of a SD PSI style HDF4 or HDF5 dataset.
-    - This DOES NOT load in the data array --> it can be quite fast for large files.
-    - The 1D, 2D, and 3D versions of this wrapper are separated to make it easier
-      to debug and to match the style of the other psihdf routines.
+    """Wrapper to return the scales of a 3D PSI style HDF5 or HDF4 dataset.
+
+    This routine does not load the data array so it can be quite fast for large files.
+
+    The data in the HDF file is assumed to be ordered X,Y,Z in Fortran order.
+
+    Parameters
+    ----------
+    filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    z: ndarray
+        1D array of scales in the Z dimension.
     """
     if filename.endswith('h5'):
         x, y, z = get_scales_h5(filename)
@@ -420,9 +539,10 @@ def get_scales_3d(filename):
 
 
 def get_scales_h4(hdf_filename):
-    """
-    Return the 1D scales of an HDF4 dataset.
-    - This DOES NOT load in the data array --> it can be quite fast for large files.
+    """Base 1D scale reader for 1D, 2D, and 3D HDF4 files.
+
+    Generally this function should not be called directly.
+    Use `get_scales_1d`, `get_scales_2d`, or `get_scales_3d` instead.
     """
     except_no_pyhdf()
     # get the file info
@@ -468,11 +588,13 @@ def get_scales_h4(hdf_filename):
 
 
 def get_scales_h5(h5_filename):
-    """
-    Return the 1D scales of an HDF5 dataset.
-    - This DOES NOT load in the data array --> it can be quite fast for large files.
-    - Here the arrays are converted to 64 bit for better compatibility with numpy,
-      which (weirdly) is generally as fast or faster than keeping float32.
+    """Base 1D scale reader for 1D, 2D, and 3D HDF5 files.
+
+    Here the arrays are converted to 64 bit for better compatibility with numpy,
+    which (weirdly) is generally as fast or faster than keeping float32.
+
+    Generally this function should not be called directly.
+    Use `get_scales_1d`, `get_scales_2d`, or `get_scales_3d` instead.
     """
     # get the file info
     try:
@@ -510,9 +632,9 @@ def get_scales_h5(h5_filename):
         return scale1, scale2, scale3
 
 
-# ----------------------------------------------------
-# ALTERNATIVE METHODS FOR SLICING & INTERPOLATING HDFs
-#
+# -----------------------------------------------------------------------------
+# NEWER ALTERNATIVE METHODS FOR SLICING & INTERPOLATING HDFs
+# -----------------------------------------------------------------------------
 # These methods are aimed at eliminating the need for
 # reading entire datasets into memory when the objective
 # is to inspect only a small subset of the data e.g.
@@ -520,7 +642,7 @@ def get_scales_h5(h5_filename):
 #
 # More examples and use cases are forthcoming, along
 # with benchmarking tests and further documentation.
-# ----------------------------------------------------
+# -----------------------------------------------------------------------------
 
 """
 Helper dictionary for mapping HDF4 types to numpy dtypes
@@ -1239,6 +1361,7 @@ def instantiate_linear_interpolator(*args, **kwargs):
     interpolator = instantiate_linear_interpolator(f, x, y, bounds_error=False, fill_value=0)
 
     """
+    except_no_scipy()
     return RegularGridInterpolator(
         values=np.transpose(args[0]),
         points=args[1:],
