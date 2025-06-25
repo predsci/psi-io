@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "psidata"
-description = "Routines for data from codes maintained by Predictive Science Inc."
+description = "Readers and writers for data formats used by Predictive Science Inc."
 authors = [
   {name = "Ronald M. Caplan", email = "caplanr@predsci.com"},
   {name = "Ryder Davidson", email = "rdavidson@predsci.com "},

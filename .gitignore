@@ -1,3 +1,7 @@
+# Wheel building
+dist/
+psidata.egg-info/
+
 # Node artifact files
 node_modules/
 dist/
