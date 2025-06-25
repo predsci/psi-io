@@ -1,4 +1,12 @@
+"""
+Object oriented interface for reading HDF files and interacting
+with their datasets on the fly.
 
+This is still being actively developed for use with interactive applications.
+For general scientific analysis scripting, we recommend using the routines psidata.psi_io.
+
+Written by Ryder Davidson.
+"""
 import os
 from math import prod
 from warnings import warn
@@ -7,9 +15,21 @@ from pathlib import Path
 from typing import Optional, List, Dict, Tuple, ItemsView, ValuesView, KeysView
 
 import numpy as np
-import pyhdf.SD as h4
 import h5py as h5
 
+# Optional import checking
+try:
+    import pyhdf.SD as h4
+    H4_AVAILABLE = True
+except ImportError:
+    H4_AVAILABLE = False
+
+def except_no_pyhdf():
+    if not H4_AVAILABLE:
+        raise ImportError('The pyhdf package is required to read HDF4 .hdf files!')
+    return
+
+# HDF type constants
 SDC_TYPE_CONVERSIONS = {
     3: np.dtype("ubyte"),
     4: np.dtype("byte"),
@@ -299,6 +319,7 @@ class H4Scale(_HdfScale, H4Data):
 class H4File(_HdfFile):
 
     def __init__(self, filepath: os.PathLike):
+        except_no_pyhdf()
         filepath_ = Path(filepath)
         file_ = H4File.read_file(filepath_)
         data_ = H4File.read_data(file_)

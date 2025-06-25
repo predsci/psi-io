@@ -37,6 +37,7 @@ Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
          - Read only the portions of data required (`read_hdf_by_index`, `read_hdf_by_value`).
          - Interpolate to slices along a given axes (`np_interpolate_slice_from_hdf`) or
            generic positions (`interpolate_positions_from_hdf`).
+2025/06: CD: Prep for integration into psidata package, HDF4 is now optional.
 """
 # Standard Python imports
 from collections import namedtuple
@@ -63,16 +64,19 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
+
 # Functions to stop execution if a package doesn't exist.
 def except_no_pyhdf():
     if not H4_AVAILABLE:
         raise ImportError('The pyhdf package is required to read/write HDF4 .hdf files!')
     return
 
+
 def except_no_scipy():
     if not SCIPY_AVAILABLE:
         raise ImportError('The scipy package is required for the interpolation routines!')
     return
+
 
 # -----------------------------------------------------------------------------
 # "Classic" HDF reading and writing routines adapted from psihdf.py or psi_io.py.
@@ -916,7 +920,9 @@ def read_h5_rtp(ifile: Path | str):
 
     """
     with h5.File(ifile, 'r') as hdf:
-        return {dim[0]: (hdf[dim[1]].shape[0], hdf[dim[1]][0], hdf[dim[1]][-1]) for dim in zip('rtp', ('dim1', 'dim2', 'dim3'))}
+        return {dim[0]: (hdf[dim[1]].shape[0], hdf[dim[1]][0], hdf[dim[1]][-1]) for dim in
+                zip('rtp', ('dim1', 'dim2', 'dim3'))}
+
 
 def read_h4_rtp(ifile: Path | str):
     """
@@ -946,7 +952,8 @@ def read_h4_rtp(ifile: Path | str):
     except_no_pyhdf()
     hdf = h4.SD(ifile)
     data = hdf.select('Data-Set-2')
-    return {dim[0]: (dim[1][1][0], hdf.select(dim[1][0])[0], hdf.select(dim[1][0])[-1]) for dim in zip('ptr', (data.dimensions(full=1).items()))}
+    return {dim[0]: (dim[1][1][0], hdf.select(dim[1][0])[0], hdf.select(dim[1][0])[-1]) for dim in
+            zip('ptr', (data.dimensions(full=1).items()))}
 
 
 def read_h5_meta(ifile: Path | str,
@@ -1092,7 +1099,6 @@ def read_h5_by_value(*xi,
 
     """
 
-
     with h5.File(ifile, 'r') as hdf:
         if dataset_id is None:
             dataset_id = 'Data'
@@ -1106,7 +1112,7 @@ def read_h5_by_value(*xi,
         else:
             assert len(xi) == data.ndim, f"len(xi) must equal the number of scales for {dataset_id}"
 
-            slices = [None] * data.ndim
+            slices = [None]*data.ndim
             for i, dim in enumerate(data.dims):
                 dim_proxy = dim[0]
                 if xi[i] is None:
@@ -1178,7 +1184,7 @@ def read_h4_by_value(*xi,
     else:
         assert len(xi) == ndim, f"len(xi) must equal the number of scales for {dataset_id}"
         xi = list(xi)[::-1]
-        slices = [None] * ndim
+        slices = [None]*ndim
         for i, dim in enumerate(data.dimensions().keys()):
             dim_proxy = hdf.select(dim)
             if xi[i] is None:
@@ -1249,7 +1255,7 @@ def read_h5_by_index(*xi,
         else:
             assert len(xi) == data.ndim, f"len(xi) must equal the number of scales for {dataset_id}"
 
-            slices = [None] * data.ndim
+            slices = [None]*data.ndim
             for i, dim in enumerate(data.dims):
                 if xi[i] is None:
                     slices[i] = slice(None, None)
@@ -1314,7 +1320,7 @@ def read_h4_by_index(*xi,
     else:
         assert len(xi) == ndim, f"len(xi) must equal the number of scales for {dataset_id}"
         xi = list(xi)[::-1]
-        slices = [None] * ndim
+        slices = [None]*ndim
         for i, dim in enumerate(data.dimensions().keys()):
             if xi[i] is None:
                 slices[i] = slice(None, None)
@@ -1509,9 +1515,9 @@ def interpolate_point_from_1d_slice(xi, scalex, values):
 def interpolate_point_from_2d_slice(xi, yi, scalex, scaley, values):
     values = np.transpose(values)
     if scalex[0] > scalex[-1]:
-        scalex, values = scalex[::-1], values[::-1,:]
+        scalex, values = scalex[::-1], values[::-1, :]
     if scaley[0] > scaley[-1]:
-        scaley, values = scaley[::-1], values[:,::-1]
+        scaley, values = scaley[::-1], values[:, ::-1]
     xi_, yi_ = int(np.searchsorted(scalex, xi)), int(np.searchsorted(scaley, yi))
     sx_, sy_ = slice(*_check_index_ranges(len(scalex), xi_, xi_)), slice(*_check_index_ranges(len(scaley), yi_, yi_))
     return _np_bilinear_interpolation([xi, yi], [scalex[sx_], scaley[sy_]], values[(sx_, sy_)])
@@ -1537,13 +1543,13 @@ def _np_linear_interpolation(xi, scales, values):
 
     """
     index0 = next((i for i, v in enumerate(xi) if v is not None), None)
-    t = (xi[index0] - scales[index0][0]) / (scales[index0][1] - scales[index0][0])
-    f0 = [slice(None, None)] * values.ndim
-    f1 = [slice(None, None)] * values.ndim
+    t = (xi[index0] - scales[index0][0])/(scales[index0][1] - scales[index0][0])
+    f0 = [slice(None, None)]*values.ndim
+    f1 = [slice(None, None)]*values.ndim
     f0[index0] = 0
     f1[index0] = 1
 
-    return (1 - t) * values[tuple(f0)] + t * values[tuple(f1)]
+    return (1 - t)*values[tuple(f0)] + t*values[tuple(f1)]
 
 
 def _np_bilinear_interpolation(xi, scales, values):
@@ -1566,22 +1572,22 @@ def _np_bilinear_interpolation(xi, scales, values):
 
     """
     index0, index1 = [i for i, v in enumerate(xi) if v is not None]
-    t, u = [(xi[i] - scales[i][0]) / (scales[i][1] - scales[i][0]) for i in (index0, index1)]
+    t, u = [(xi[i] - scales[i][0])/(scales[i][1] - scales[i][0]) for i in (index0, index1)]
 
-    f00 = [slice(None, None)] * values.ndim
-    f10 = [slice(None, None)] * values.ndim
-    f01 = [slice(None, None)] * values.ndim
-    f11 = [slice(None, None)] * values.ndim
+    f00 = [slice(None, None)]*values.ndim
+    f10 = [slice(None, None)]*values.ndim
+    f01 = [slice(None, None)]*values.ndim
+    f11 = [slice(None, None)]*values.ndim
     f00[index0], f00[index1] = 0, 0
     f10[index0], f10[index1] = 1, 0
     f01[index0], f01[index1] = 0, 1
     f11[index0], f11[index1] = 1, 1
 
     return (
-            (1 - t) * (1 - u) * values[tuple(f00)] +
-            t * (1 - u) * values[tuple(f10)] +
-            (1 - t) * u * values[tuple(f01)] +
-            t * u * values[tuple(f11)]
+          (1 - t)*(1 - u)*values[tuple(f00)] +
+          t*(1 - u)*values[tuple(f10)] +
+          (1 - t)*u*values[tuple(f01)] +
+          t*u*values[tuple(f11)]
     )
 
 
@@ -1605,16 +1611,16 @@ def _np_trilinear_interpolation(xi, scales, values):
 
     """
     index0, index1, index2 = [i for i, v in enumerate(xi) if v is not None]
-    t, u, v = [(xi[i] - scales[i][0]) / (scales[i][1] - scales[i][0]) for i in (index0, index1, index2)]
+    t, u, v = [(xi[i] - scales[i][0])/(scales[i][1] - scales[i][0]) for i in (index0, index1, index2)]
 
-    f000 = [slice(None, None)] * values.ndim
-    f100 = [slice(None, None)] * values.ndim
-    f010 = [slice(None, None)] * values.ndim
-    f110 = [slice(None, None)] * values.ndim
-    f001 = [slice(None, None)] * values.ndim
-    f101 = [slice(None, None)] * values.ndim
-    f011 = [slice(None, None)] * values.ndim
-    f111 = [slice(None, None)] * values.ndim
+    f000 = [slice(None, None)]*values.ndim
+    f100 = [slice(None, None)]*values.ndim
+    f010 = [slice(None, None)]*values.ndim
+    f110 = [slice(None, None)]*values.ndim
+    f001 = [slice(None, None)]*values.ndim
+    f101 = [slice(None, None)]*values.ndim
+    f011 = [slice(None, None)]*values.ndim
+    f111 = [slice(None, None)]*values.ndim
 
     f000[index0], f000[index1], f000[index2] = 0, 0, 0
     f100[index0], f100[index1], f100[index2] = 1, 0, 0
@@ -1625,15 +1631,15 @@ def _np_trilinear_interpolation(xi, scales, values):
     f011[index0], f011[index1], f011[index2] = 0, 1, 1
     f111[index0], f111[index1], f111[index2] = 1, 1, 1
 
-    c00 = values[tuple(f000)] * (1 - t) + values[tuple(f100)] * t
-    c10 = values[tuple(f010)] * (1 - t) + values[tuple(f110)] * t
-    c01 = values[tuple(f001)] * (1 - t) + values[tuple(f101)] * t
-    c11 = values[tuple(f011)] * (1 - t) + values[tuple(f111)] * t
+    c00 = values[tuple(f000)]*(1 - t) + values[tuple(f100)]*t
+    c10 = values[tuple(f010)]*(1 - t) + values[tuple(f110)]*t
+    c01 = values[tuple(f001)]*(1 - t) + values[tuple(f101)]*t
+    c11 = values[tuple(f011)]*(1 - t) + values[tuple(f111)]*t
 
-    c0 = c00 * (1 - u) + c10 * u
-    c1 = c01 * (1 - u) + c11 * u
+    c0 = c00*(1 - u) + c10*u
+    c1 = c01*(1 - u) + c11*u
 
-    return c0 * (1 - v) + c1 * v
+    return c0*(1 - v) + c1*v
 
 
 def _check_index_ranges(arr_size: int,
@@ -1664,8 +1670,8 @@ def _check_index_ranges(arr_size: int,
 
     """
     if i0 == 0:
-        return (i0, i1 + 2) if i1 == 0 else (i0, i1+1)
+        return (i0, i1 + 2) if i1 == 0 else (i0, i1 + 1)
     elif i0 == arr_size:
-        return i0-2, i1
+        return i0 - 2, i1
     else:
-        return i0-1, i1+1
+        return i0 - 1, i1 + 1
