@@ -3,7 +3,7 @@ Object oriented interface for reading HDF files and interacting
 with their datasets on the fly.
 
 This is still being actively developed for use with interactive applications.
-For general scientific analysis scripting, we recommend using the routines psidata.psi_io.
+For general scientific analysis scripting, we recommend using the routines psi-io.psi_io.
 
 Written by Ryder Davidson.
 """

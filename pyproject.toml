@@ -3,7 +3,7 @@ requires = ["setuptools >= 77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "psidata"
+name = "psi-io"
 description = "Readers and writers for data formats used by Predictive Science Inc."
 authors = [
   {name = "Predictive Science Inc.", email = "webmaster@predsci.com"},
@@ -33,8 +33,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://pypi.org/project/psidata"
-Repository = "https://github.com/predsci/psidata"
+Homepage = "https://pypi.org/project/psi-io"
+Repository = "https://github.com/predsci/psi-io"
 
 [project.optional-dependencies]
 hdf4 = [
@@ -43,4 +43,4 @@ hdf4 = [
 interp = [
     "scipy",
 ]
-all = ["psidata[hdf4,interp]"]
+all = ["psi-io[hdf4,interp]"]

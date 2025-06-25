@@ -37,7 +37,7 @@ Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
          - Read only the portions of data required (`read_hdf_by_index`, `read_hdf_by_value`).
          - Interpolate to slices along a given axes (`np_interpolate_slice_from_hdf`) or
            generic positions (`interpolate_positions_from_hdf`).
-2025/06: CD: Prep for integration into psidata package, HDF4 is now optional.
+2025/06: CD: Prep for integration into psi-io package, HDF4 is now optional.
 """
 # Standard Python imports
 from collections import namedtuple

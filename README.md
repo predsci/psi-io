@@ -1,4 +1,4 @@
-# psidata
+# psi-io
 
 ---
 
@@ -19,7 +19,7 @@ heliosphere, including:
 ---
 
 ```bash
-pip install psidata
+pip install psi-io
 ```
 
 
@@ -30,8 +30,8 @@ pip install psidata
 ### Basic Reading
 Read the entire dataset from a 3D Br HDF file output by a POT3D solution (spherical r,t,p):
 ```python
-import psidata
-r, t, p, br = psidata.rdhdf_3d('br.h5')
+import psi_io
+r, t, p, br = psi_io.rdhdf_3d('br.h5')
 ```
 Here `r`, `t`, and `p` are the 1D coordinate arrays. `br` is the 3D data array.
 
@@ -46,12 +46,12 @@ Extract a wedge of data that just spans a range of interest:
 r_range = [1.0, 1.2]
 t_range = [0.5, 1.0]
 p_range = [2.0, 3.0]
-brx, rx, tx, px = psidata.read_hdf_by_value(r_range, t_range, p_range, ifile='br.h5')
+brx, rx, tx, px = psi_io.read_hdf_by_value(r_range, t_range, p_range, ifile='br.h5')
 ```
 
 Get 2D t,p slice of data interpolated to a specific radius (e.g. 2.0 Rs).
 ```python
-br_slice, t, p = psidata.np_interpolate_slice_from_hdf(2.5, None, None, ifile='br.h5')
+br_slice, t, p = psi_io.np_interpolate_slice_from_hdf(2.5, None, None, ifile='br.h5')
 ```
 
 Interpolate the data to specific r, t, p positions (supplied as 1D, 2D, or 3D arrays).
@@ -60,13 +60,13 @@ import numpy as np
 r_vals = np.array([1.0, 1.1])
 t_vals = np.array([0.7, 0.7])
 t_vals = np.array([1.5, 1.5])
-br_vals = psidata.interpolate_positions_from_hdf(r_vals, t_vals, t_vals, ifile='br.h5')
+br_vals = psi_io.interpolate_positions_from_hdf(r_vals, t_vals, t_vals, ifile='br.h5')
 ```
 
 ### Writing
 Write a new 3D file:
 ```python
-psidata.wrhdf_3d('br_mod.h5', r, t, p, br_mod)
+psi_io.wrhdf_3d('br_mod.h5', r, t, p, br_mod)
 ```
 As before `r`, `t`, and `p` are the 1D coordinate arrays. `br_mod` is the 3D data array.
 

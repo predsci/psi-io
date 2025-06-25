@@ -1,21 +1,21 @@
-# While psidata should be easy to pip install, it requires HDF libraries.
+# While psi-io should be easy to pip install, it requires HDF libraries.
 #
 # Generally we recommend installing the python HDF packages using conda.
 # This makes it simpler to ensure that the underlying HDF5 and HDF4 libraries
 # are properly set up and linked to the python interfaces.
 #
-# Here is a minimal conda recipe for the psidata dependencies that are
+# Here is a minimal conda recipe for the psi-io dependencies that are
 # currently required to build the project. If you only wish to pip install
 # the project, you can remove everything past the minimal dependencies.
 #
 # To create the development environment:
 #   $ conda env create -f environment.yml
-#   $ conda activate psidata-dev
+#   $ conda activate psi-io-dev
 #
 # To remove the development environment:
-#   $ conda remove --name psidata-dev --all
+#   $ conda remove --name psi-io-dev --all
 #
-name: psidata-dev
+name: psi-io-dev
 channels:
   - defaults
   - conda-forge
