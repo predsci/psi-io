@@ -31,6 +31,6 @@ dependencies:
 
   # Development Dependencies
   - setuptools
+  - python-build
+  - twine
   - pip
-  - pip:
-      build

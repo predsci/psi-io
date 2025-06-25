@@ -6,18 +6,35 @@ build-backend = "setuptools.build_meta"
 name = "psidata"
 description = "Readers and writers for data formats used by Predictive Science Inc."
 authors = [
-  {name = "Ronald M. Caplan", email = "caplanr@predsci.com"},
-  {name = "Ryder Davidson", email = "rdavidson@predsci.com "},
-  {name = "Cooper Downs", email = "cdowns@predsci.com"},
+  {name = "Predictive Science Inc.", email = "webmaster@predsci.com"},
+  {name = "Ronald M. Caplan"},
+  {name = "Ryder Davidson"},
+  {name = "Cooper Downs"},
 ]
 version = "1.0.0"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE.txt"]
-requires-python = ">=3.11"
+keywords = ["solar physics", "space physics", "heliophysics", "solar", "sun",
+  "science", "magnetohydrodynamic", "mas", "predsci", "psi"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache-2.0",
+  "Natural Language :: English",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+requires-python = ">=3.8"
 dependencies = [
     "h5py",
 ]
+
+[project.urls]
+Homepage = "https://pypi.org/project/psidata"
+Repository = "https://github.com/predsci/psidata"
 
 [project.optional-dependencies]
 hdf4 = [
