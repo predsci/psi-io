@@ -17,17 +17,33 @@ from typing import Optional, List, Dict, Tuple, ItemsView, ValuesView, KeysView
 import numpy as np
 import h5py as h5
 
-# Optional import checking
+# Optional import checking so that we can still import of pyhdf is not installed
+# *** There is probably a proper way to do this but we don't want to show warnings
+#     elsewhere if someone just wants psi_io.py.
 try:
     import pyhdf.SD as h4
     H4_AVAILABLE = True
 except ImportError:
     H4_AVAILABLE = False
+    class Dummy():
+        pass
+    h4 = Dummy()
+    h4.SD = None
 
 def except_no_pyhdf():
     if not H4_AVAILABLE:
         raise ImportError('The pyhdf package is required to read HDF4 .hdf files!')
     return
+
+def crash_if_less_than_py310():
+    """
+    Silly function that will crash when this file is imported bu python<3.10.
+    Hopefully this makes it more obvious why the import fails and we don't want
+    to always warn on init for Ron's sake :)
+    """
+    match this_specific_module_requires_python310_or_above:
+        case _:
+            pass
 
 # HDF type constants
 SDC_TYPE_CONVERSIONS = {
