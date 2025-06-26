@@ -1,6 +1,10 @@
 # Wheel building
 dist/
 *.egg-info/
+README_build_instructions.md
+
+# Local testing
+local_testing/
 
 # Node artifact files
 node_modules/

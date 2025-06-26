@@ -20,7 +20,6 @@ keywords = ["solar physics", "space physics", "heliophysics", "solar", "sun",
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache-2.0",
   "Natural Language :: English",
   "Programming Language :: Python :: 3",
   "Operating System :: OS Independent",
@@ -44,3 +43,6 @@ interp = [
     "scipy",
 ]
 all = ["psi-io[hdf4,interp]"]
+
+[tool.setuptools.packages.find]
+exclude = ["local_testing"]

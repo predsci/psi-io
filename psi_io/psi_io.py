@@ -42,7 +42,7 @@ Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
 # Standard Python imports
 from collections import namedtuple
 from pathlib import Path
-from typing import Optional, Literal, Tuple, Iterable, List, Dict
+from typing import Optional, Literal, Tuple, Iterable, List, Dict, Union
 
 # Required Packages
 import numpy as np
@@ -672,8 +672,8 @@ HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'ima
 HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'scales'])
 
 
-def read_hdf_meta(ifile: Path | str,
-                  dataset_id: Optional[str | Literal['all']] = None
+def read_hdf_meta(ifile: Union[Path, str],
+                  dataset_id: Optional[ Union[ str, Literal['all']]] = None
                   ) -> List[HdfDataMeta]:
     """
     Read metadata from an HDF4 (.hdf) or HDF5 (.h5) file.
@@ -711,7 +711,7 @@ def read_hdf_meta(ifile: Path | str,
         raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
 
 
-def read_rtp_meta(ifile: Path | str) -> Dict:
+def read_rtp_meta(ifile: Union[ Path, str]) -> Dict:
     """
     Read the scale metadata for PSI's 3D cubes. This function assumes that the
     dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
@@ -750,11 +750,11 @@ def read_rtp_meta(ifile: Path | str) -> Dict:
         raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
 
 
-def read_hdf_by_value(*xi: float | Tuple[float, float] | None,
-                      ifile: Path | str,
+def read_hdf_by_value(*xi: Union[ float, Tuple[float, float], None],
+                      ifile: Union[ Path, str],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
-                      ) -> np.ndarray | Tuple[np.ndarray]:
+                      ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
     """
     Read data from an HDF4 (.hdf) or HDF5 (.h5) file by value(s).
 
@@ -837,10 +837,10 @@ def read_hdf_by_value(*xi: float | Tuple[float, float] | None,
 
 
 def read_hdf_by_index(*xi,
-                      ifile: Path | str,
+                      ifile: Union[ Path, str],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
-                      ) -> np.ndarray | Tuple[np.ndarray]:
+                      ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
     """
     Read data from an HDF4 (.hdf) or HDF5 (.h5) file by index ranges.
 
@@ -894,7 +894,7 @@ def read_hdf_by_index(*xi,
         raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
 
 
-def read_h5_rtp(ifile: Path | str):
+def read_h5_rtp(ifile: Union[ Path, str]):
     """
     Read the scale metadata for PSI's HDF5 (.h5) 3D cubes. This function assumes that the
     dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
@@ -924,7 +924,7 @@ def read_h5_rtp(ifile: Path | str):
                 zip('rtp', ('dim1', 'dim2', 'dim3'))}
 
 
-def read_h4_rtp(ifile: Path | str):
+def read_h4_rtp(ifile: Union[ Path, str]):
     """
     Read the scale metadata for PSI's HDF4 (.hdf) 3D cubes. This function assumes that the
     dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
@@ -956,8 +956,8 @@ def read_h4_rtp(ifile: Path | str):
             zip('ptr', (data.dimensions(full=1).items()))}
 
 
-def read_h5_meta(ifile: Path | str,
-                 dataset_id: Optional[str | Literal['all']] = None
+def read_h5_meta(ifile: Union[ Path, str],
+                 dataset_id: Optional[ Union[ str, Literal['all']]] = None
                  ):
     """
     Read metadata from an HDF5 (.h5) file.
@@ -982,19 +982,19 @@ def read_h5_meta(ifile: Path | str,
 
     """
     with h5.File(ifile, 'r') as hdf:
-        match dataset_id:
-            case None:
-                datasets = [('Data', hdf['Data'])]
-            case 'all':
-                datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
-            case _:
-                datasets = [(dataset_id, hdf[dataset_id])]
-        # if dataset_id is None:
-        #     datasets = [('Data', hdf['Data'])]
-        # elif dataset_id == 'all':
-        #     datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
-        # else:
-        #     datasets = [(dataset_id, hdf[dataset_id])]
+        # match dataset_id:
+        #     case None:
+        #         datasets = [('Data', hdf['Data'])]
+        #     case 'all':
+        #         datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
+        #     case _:
+        #         datasets = [(dataset_id, hdf[dataset_id])]
+        if dataset_id is None:
+            datasets = [('Data', hdf['Data'])]
+        elif dataset_id == 'all':
+            datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
+        else:
+            datasets = [(dataset_id, hdf[dataset_id])]
         meta = [HdfDataMeta(name=k,
                             type=v.dtype,
                             shape=v.shape,
@@ -1009,8 +1009,8 @@ def read_h5_meta(ifile: Path | str,
         return meta
 
 
-def read_h4_meta(ifile: Path | str,
-                 dataset_id: Optional[str | Literal['all']] = None
+def read_h4_meta(ifile: Union[ Path, str],
+                 dataset_id: Optional[ Union[ str, Literal['all']]] = None
                  ):
     """
     Read metadata from an HDF4 (.hdf) file.
@@ -1036,19 +1036,19 @@ def read_h4_meta(ifile: Path | str,
     """
     except_no_pyhdf()
     hdf = h4.SD(ifile)
-    match dataset_id:
-        case None:
-            datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
-        case 'all':
-            datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
-        case _:
-            datasets = [(dataset_id, hdf.select(dataset_id))]
-    # if dataset_id is None:
-    #     datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
-    # elif dataset_id == 'all':
-    #     datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
-    # else:
-    #     datasets = [(dataset_id, hdf.select(dataset_id))]
+    # match dataset_id:
+    #     case None:
+    #         datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
+    #     case 'all':
+    #         datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
+    #     case _:
+    #         datasets = [(dataset_id, hdf.select(dataset_id))]
+    if dataset_id is None:
+        datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
+    elif dataset_id == 'all':
+        datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
+    else:
+        datasets = [(dataset_id, hdf.select(dataset_id))]
     meta = [HdfDataMeta(name=k,
                         type=SDC_TYPE_CONVERSIONS[v.info()[3]],
                         shape=tuple(v.info()[2]),
@@ -1064,10 +1064,10 @@ def read_h4_meta(ifile: Path | str,
 
 
 def read_h5_by_value(*xi,
-                     ifile: Path | str,
+                     ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
-                     ) -> np.ndarray | Tuple[np.ndarray]:
+                     ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
     """
     Read data from an HDF5 (.h5) file by value(s).
 
@@ -1135,10 +1135,10 @@ def read_h5_by_value(*xi,
 
 
 def read_h4_by_value(*xi,
-                     ifile: Path | str,
+                     ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
-                     ) -> np.ndarray | Tuple[np.ndarray]:
+                     ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
     """
     Read data from an HDF4 (.hdf) file by value(s).
 
@@ -1207,10 +1207,10 @@ def read_h4_by_value(*xi,
 
 
 def read_h5_by_index(*xi,
-                     ifile: Path | str,
+                     ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
-                     ) -> np.ndarray | Tuple[np.ndarray]:
+                     ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
     """
     Read data from an HDF5 (.h5) file by index ranges.
 
@@ -1270,10 +1270,10 @@ def read_h5_by_index(*xi,
 
 
 def read_h4_by_index(*xi,
-                     ifile: Path | str,
+                     ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
-                     ) -> np.ndarray | Tuple[np.ndarray]:
+                     ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
     """
     Read data from an HDF4 (.hdf) file by index ranges.
 
@@ -1453,23 +1453,23 @@ def np_interpolate_slice_from_hdf(*xi, by_index=False, **kwargs):
             scales = tuple(index_scales)
     f_ = np.transpose(f)
     slice_type = sum([yi is not None for yi in xi])
-    match slice_type:
-        case 1:
-            return _np_linear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
-        case 2:
-            return _np_bilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
-        case 3:
-            return _np_trilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
-        case _:
-            raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
-    # if slice_type == 1:
-    #     return _np_linear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
-    # elif slice_type == 2:
-    #     return _np_bilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
-    # elif slice_type == 3:
-    #     return _np_trilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
-    # else:
-    #     raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
+    # match slice_type:
+    #     case 1:
+    #         return _np_linear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+    #     case 2:
+    #         return _np_bilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+    #     case 3:
+    #         return _np_trilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+    #     case _:
+    #         raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
+    if slice_type == 1:
+        return _np_linear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+    elif slice_type == 2:
+        return _np_bilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+    elif slice_type == 3:
+        return _np_trilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+    else:
+        raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
 
 
 def interpolate_positions_from_hdf(*xi, **kwargs):
