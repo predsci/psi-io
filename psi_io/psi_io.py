@@ -1463,11 +1463,11 @@ def np_interpolate_slice_from_hdf(*xi, by_index=False, **kwargs):
     #     case _:
     #         raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
     if slice_type == 1:
-        return _np_linear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+        return _np_linear_interpolation(xi, scales, f_).T, *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
     elif slice_type == 2:
-        return _np_bilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+        return _np_bilinear_interpolation(xi, scales, f_).T, *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
     elif slice_type == 3:
-        return _np_trilinear_interpolation(xi, scales, f_), *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
+        return _np_trilinear_interpolation(xi, scales, f_).T, *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
     else:
         raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
 
