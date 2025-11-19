@@ -1,36 +1,47 @@
-# While psi-io should be easy to pip install, it requires HDF libraries.
-#
-# Generally we recommend installing the python HDF packages using conda.
-# This makes it simpler to ensure that the underlying HDF5 and HDF4 libraries
-# are properly set up and linked to the python interfaces.
-#
-# Here is a minimal conda recipe for the psi-io dependencies that are
-# currently required to build the project. If you only wish to pip install
-# the project, you can remove everything past the minimal dependencies.
-#
-# To create the development environment:
-#   $ conda env create -f environment.yml
-#   $ conda activate psi-io-dev
-#
-# To remove the development environment:
-#   $ conda remove --name psi-io-dev --all
-#
-name: psi-io-dev
 channels:
-  - defaults
   - conda-forge
 dependencies:
-  # Minimal Dependencies
-  - python>=3.10
-  - h5py
-  - numpy
+  # -------- Core Python --------
+  - python=3.13
 
-  # Optional Dependencies
-  - pyhdf
-  - scipy
-
-  # Development Dependencies
+  # -------- Build toolchain --------
   - setuptools
   - python-build
+
+  # -------- Libraries --------
+  - hdf5
+  - hdf4
+
+  # -------- Python Runtime --------
+  - numpy                 # package dependency
+  - h5py                  # psi-io dependency
+  - pyhdf                 # optional hdf4 support
+  - scipy                 # optional dependency
+
+  # -------- Testing / QA --------
+  - pytest
+  - pytest-cov
+  - mypy
+  - ruff
+  - coverage
+  - nox
+
+  # -------- Docs --------
+  - sphinx
+  - sphinx-book-theme
+  - sphinx-gallery
+  - sphinx-copybutton
+  - matplotlib
+  - pooch
+
+  # -------- Scripts --------
+  - packaging
+
+  # -------- Publish --------
   - twine
+
+  # -------- Pip installs --------
   - pip
+  - pip:
+      - pthree    # Documentation building
+

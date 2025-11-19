@@ -281,10 +281,10 @@ addopts = [
   "-E"
 ]
 
-# Environment (mapflpy) configuration
+# Environment (psi_io) configuration
 # -----------------------------------
 [tool.psi_io]
 conda = [
   "hdf5",
-  "zlib"
+  "hdf4"
 ]
