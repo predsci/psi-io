@@ -1,48 +1,290 @@
-[build-system]
-requires = ["setuptools >= 77.0.3"]
-build-backend = "setuptools.build_meta"
+# PyProject Configuration
+# =======================
 
+# Build System
+# ------------
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools >= 77.0.3"]
+
+# Project Metadata
+# ----------------
 [project]
 name = "psi-io"
-description = "Readers and writers for data formats used by Predictive Science Inc."
+version = "1.0.0"
+description = "Readers and writers for HDF data used by Predictive Science Inc."
 authors = [
   {name = "Predictive Science Inc.", email = "webmaster@predsci.com"},
   {name = "Ronald M. Caplan"},
   {name = "Ryder Davidson"},
   {name = "Cooper Downs"},
 ]
-version = "1.0.0"
-readme = "README.md"
+readme = "README.rst"
 license = "Apache-2.0"
 license-files = ["LICENSE.txt"]
-keywords = ["solar physics", "space physics", "heliophysics", "solar", "sun",
-  "science", "magnetohydrodynamic", "mas", "predsci", "psi"]
+keywords = [
+  "solar physics",
+  "space physics",
+  "heliophysics",
+  "magnetohydrodynamic",
+  "science",
+  "mas",
+  "predsci",
+  "psi",
+  "modeling",
+  "fortran"
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "Natural Language :: English",
+  "Programming Language :: Python",
   "Programming Language :: Python :: 3",
-  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: Unix",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Typing :: Typed",
   "Topic :: Scientific/Engineering :: Astronomy",
   "Topic :: Scientific/Engineering :: Physics",
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "h5py",
+  "h5py",
+  "numpy"
 ]
 
+# Project URLS
+# ------------
 [project.urls]
-Homepage = "https://pypi.org/project/psi-io"
-Repository = "https://github.com/predsci/psi-io"
+homepage = "https://predsci.com/"
+documentation = "https://predsci.com/doc/psi-io"
+repository = "https://github.com/predsci/psi-io"
 
+# Project Dependencies
+# --------------------
 [project.optional-dependencies]
 hdf4 = [
-    "pyhdf",
+  "pyhdf>=0.11.6"
 ]
 interp = [
-    "scipy",
+  "scipy",
 ]
-all = ["psi-io[hdf4,interp]"]
+data = [
+  "pooch==1.8.2",
+  "matplotlib==3.10.7",
+  "scipy"
+]
+build = [
+  "python-build",
+  "packaging"
+]
+test = [
+  "pytest>=8.4.0",
+  "pytest-cov"
+]
+types = [
+  "mypy>=1.15"
+]
+lint = [
+  "ruff>=0.11.7"
+]
+docs = [
+  "sphinx==8.2.3",
+  "sphinx-book-theme==1.1.4",
+  "sphinx-gallery==0.19.0",
+  "sphinx-copybutton==0.5.2",
+  "pooch==1.8.2",
+  "matplotlib==3.10.7",
+  "scipy",
+  "pthree==1.0.1"
+]
+dev = [
+  "nox>=2025.11.12",
+]
+all = [
+  "psi-io[hdf4,interp,data,build,test,types,lint,docs,dev]",
+]
 
+# Tools & Extensions
+# ==================
+
+# Setuptools configuration
+# ------------------------
 [tool.setuptools.packages.find]
-exclude = ["local_testing"]
+include = [
+  "psi_io",
+  "psi_io.*"
+]
+exclude = [
+  "tests",
+  "docs",
+  "examples",
+  "tools"
+]
+
+# Testing (pytest) configuration
+# ------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+  "-ra",
+  "--cov=psi_io",
+  "--cov-report=term-missing",
+  "--maxfail=1",
+  "--import-mode=importlib",
+]
+
+# Coverage (pytest-cov) configuration
+# -----------------------------------
+[tool.coverage.run]
+branch = true
+source = ["psi_io"]
+parallel = true
+relative_files = true
+omit = [
+  "tests/*",
+  "docs/_build/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "def __repr__",
+]
+
+# Typing (mypy) configuration
+# ---------------------------
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+files = ["psi_io"]
+
+[[tool.mypy.overrides]]
+module = "psi_io.*"
+ignore_missing_imports = false
+
+# Linting (ruff) configuration
+# ----------------------------
+[tool.ruff]
+fix = false
+unsafe-fixes = false
+line-length = 100
+src = ["psi_io"]
+extend-exclude = [
+  "docs",
+  ".nox",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".pytest_cache",
+  "src",
+  "tests"
+]
+
+[tool.ruff.lint]
+explicit-preview-rules = true
+preview = true
+extend-select = [
+  "A",     # flake8-builtins
+  "AIR",   # Airflow
+  "ANN",   # flake8-annotations
+  "ARG",   # flake8-unused-arguments
+  "ASYNC", # flake8-async
+  "B",     # flake8-bugbear
+  "BLE",   # flake8-blind-except
+  "C4",    # flake8-comprehensions
+  "C90",   # mccabe
+  "COM",   # flake8-commas
+  # "CPY",   # flake8-copyright  # TODO: enable when out of preview
+  "D",     # pydocstyle
+  "DJ",    # flake8-django
+  # "DOC",   # pydocstyle  # TODO: enable when out of preview
+  "DTZ",   # flake8-datetimez
+  "E",     # pycodestyle
+  "EM",    # flake8-errmsg
+  "ERA",   # Eradicate
+  "EXE",   # flake8-executable
+  "F",     # Pyflakes
+  "FA",    # flake8-future-annotations
+  "FBT",   # flake8-boolean-trap
+  "FIX",   # flake8-fixme
+  "FLY",   # flynt
+  "FURB",  # refurb
+  "G",     # flake8-logging-format
+  "I",     # isort
+  "ICN",   # flake8-import-conventions
+  "INP",   # flake8-no-pep420
+  "INT",   # flake8-gettext
+  "ISC",   # flake8-implicit-str-concat
+  "LOG",   # flake8-logging
+  "N",     # pep8-naming
+  "NPY",   # NumPy-specific rules
+  "PERF",  # Perflint
+  "PGH",   # pygrep-hooks
+  "PIE",   # flake8-pie
+  "PL",    # Pylint
+  "PT",    # flake8-pytest-style
+  "PTH",   # flake8-use-pathlib
+  "PYI",   # flake8-pyi
+  "Q",     # flake8-quotes
+  "RET",   # flake8-return
+  "RSE",   # flake8-raise
+  "RUF",   # Ruff-specific rules
+  "S",     # flake8-bandit
+  "SIM",   # flake8-simplify
+  "SLOT",  # flake8-slots
+  "T10",   # flake8-debugger
+  "T20",   # flake8-print
+  "TD",    # flake8-todos
+  "TID",   # flake8-tidy-imports
+  "TRY",   # tryceratops
+  "UP",    # pyupgrade
+  "W",     # pycodestyle
+  "YTT",   # flake8-2020
+]
+ignore = [
+  "B905",    #`zip()` without an explicit `strict=` parameter
+  "C408",    # Unnecessary `dict()` call (rewrite as a literal)
+  "NPY002", # Replace legacy `np.random.rand` call with `np.random.Generator`
+]
+
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.isort]
+known-first-party = ["psi_io"]
+combine-as-imports = true
+force-single-line = true
+force-sort-within-sections = true
+required-imports = [
+  "from __future__ import annotations",
+]
+
+# Documentation (sphinx) configuration
+# ------------------------------------
+[tool.sphinx_build]
+addopts = [
+  "-b", "html",
+  "-a",
+  "-E"
+]
+
+# Environment (mapflpy) configuration
+# -----------------------------------
+[tool.psi_io]
+conda = [
+  "hdf5",
+  "zlib"
+]
