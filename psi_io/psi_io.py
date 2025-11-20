@@ -66,13 +66,13 @@ except ImportError:
 
 
 # Functions to stop execution if a package doesn't exist.
-def except_no_pyhdf():
+def _except_no_pyhdf():
     if not H4_AVAILABLE:
         raise ImportError('The pyhdf package is required to read/write HDF4 .hdf files!')
     return
 
 
-def except_no_scipy():
+def _except_no_scipy():
     if not SCIPY_AVAILABLE:
         raise ImportError('The scipy package is required for the interpolation routines!')
     return
@@ -81,7 +81,89 @@ def except_no_scipy():
 # -----------------------------------------------------------------------------
 # "Classic" HDF reading and writing routines adapted from psihdf.py or psi_io.py.
 # -----------------------------------------------------------------------------
-def rdh5(h5_filename):
+
+
+def rdhdf_1d(hdf_filename):
+    """Read a 1D PSI-style HDF5 or HDF4 file.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales.
+    f: ndarray
+        1D array of data.
+    """
+    x, y, z, f = _rdhdf(hdf_filename)
+
+    return (x, f)
+
+
+def rdhdf_2d(hdf_filename):
+    """Read a 2D PSI-style HDF5 or HDF4 file.
+
+    The data in the HDF file is assumed to be ordered X,Y in Fortran order.
+
+    Each dimension is assumed to have a 1D "scale" associated with it that
+    describes the rectilinear grid coordinates in each dimension.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    f: ndarray
+        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+    """
+    x, y, z, f = _rdhdf(hdf_filename)
+
+    if (hdf_filename.endswith('h5')):
+        return (x, y, f)
+    return (y, x, f)
+
+
+def rdhdf_3d(hdf_filename):
+    """Read a 3D PSI-style HDF5 or HDF4 file.
+
+    The data in the HDF file is assumed to be ordered X,Y,Z in Fortran order.
+
+    Each dimension is assumed to have a 1D "scale" associated with it that
+    describes the rectilinear grid coordinates in each dimension.
+
+    Parameters
+    ----------
+    hdf_filename : Path or str
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+
+    Returns
+    -------
+    x: ndarray
+        1D array of scales in the X dimension.
+    y: ndarray
+        1D array of scales in the Y dimension.
+    z: ndarray
+        1D array of scales in the Z dimension.
+    f: ndarray
+        3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+    """
+    x, y, z, f = _rdhdf(hdf_filename)
+    if (hdf_filename.endswith('h5')):
+        return (x, y, z, f)
+
+    return (z, y, x, f)
+
+
+def _rdh5(h5_filename):
     """Base reader for 1D, 2D, and 3D HDF5 files.
 
     Generally this function should not be called directly.
@@ -119,18 +201,18 @@ def rdh5(h5_filename):
     return (x, y, z, f)
 
 
-def rdhdf(hdf_filename):
+def _rdhdf(hdf_filename):
     """Base reader for 1D, 2D, and 3D HDF4 files.
 
     Generally this function should not be called directly.
     Use `rdhdf_1d`, `rdhdf_2d`, or `rdhdf_3d` instead.
     """
     if (hdf_filename.endswith('h5')):
-        x, y, z, f = rdh5(hdf_filename)
+        x, y, z, f = _rdh5(hdf_filename)
         return (x, y, z, f)
 
     # Check for HDF4
-    except_no_pyhdf()
+    _except_no_pyhdf()
 
     x = np.array([])
     y = np.array([])
@@ -172,41 +254,37 @@ def rdhdf(hdf_filename):
     return (x, y, z, f)
 
 
-def rdhdf_1d(hdf_filename):
-    """Read a 1D PSI-style HDF5 or HDF4 file.
+def wrhdf_1d(hdf_filename, x, f):
+    """Write a 1D PSI-style HDF5 or HDF4 file.
 
     Parameters
     ----------
     hdf_filename : Path or str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
-
-    Returns
-    -------
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
     x: ndarray
         1D array of scales.
     f: ndarray
         1D array of data.
     """
-    x, y, z, f = rdhdf(hdf_filename)
+    x = np.asarray(x)
+    y = np.array([])
+    z = np.array([])
+    f = np.asarray(f)
+    _wrhdf(hdf_filename, x, y, z, f)
 
-    return (x, f)
 
+def wrhdf_2d(hdf_filename, x, y, f):
+    """Write a 2D PSI-style HDF5 or HDF4 file.
 
-def rdhdf_2d(hdf_filename):
-    """Read a 2D PSI-style HDF5 or HDF4 file.
+    The data in the HDF file will appear as X,Y in Fortran order.
 
-    The data in the HDF file is assumed to be ordered X,Y in Fortran order.
-
-    Each dimension is assumed to have a 1D "scale" associated with it that
+    Each dimension requires a 1D "scale" associated with it that
     describes the rectilinear grid coordinates in each dimension.
 
     Parameters
     ----------
     hdf_filename : Path or str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
-
-    Returns
-    -------
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
     x: ndarray
         1D array of scales in the X dimension.
     y: ndarray
@@ -214,28 +292,28 @@ def rdhdf_2d(hdf_filename):
     f: ndarray
         2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
     """
-    x, y, z, f = rdhdf(hdf_filename)
-
+    x = np.asarray(x)
+    y = np.asarray(y)
+    z = np.array([])
+    f = np.asarray(f)
     if (hdf_filename.endswith('h5')):
-        return (x, y, f)
-    return (y, x, f)
+        _wrhdf(hdf_filename, x, y, z, f)
+        return
+    _wrhdf(hdf_filename, y, x, z, f)
 
 
-def rdhdf_3d(hdf_filename):
-    """Read a 3D PSI-style HDF5 or HDF4 file.
+def wrhdf_3d(hdf_filename, x, y, z, f):
+    """Write a 3D PSI-style HDF5 or HDF4 file.
 
-    The data in the HDF file is assumed to be ordered X,Y,Z in Fortran order.
+    The data in the HDF file will appear as X,Y,Z in Fortran order.
 
-    Each dimension is assumed to have a 1D "scale" associated with it that
+    Each dimension requires a 1D "scale" associated with it that
     describes the rectilinear grid coordinates in each dimension.
 
     Parameters
     ----------
     hdf_filename : Path or str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
-
-    Returns
-    -------
+        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
     x: ndarray
         1D array of scales in the X dimension.
     y: ndarray
@@ -243,16 +321,19 @@ def rdhdf_3d(hdf_filename):
     z: ndarray
         1D array of scales in the Z dimension.
     f: ndarray
-        3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
     """
-    x, y, z, f = rdhdf(hdf_filename)
+    x = np.asarray(x)
+    y = np.asarray(y)
+    z = np.asarray(z)
+    f = np.asarray(f)
     if (hdf_filename.endswith('h5')):
-        return (x, y, z, f)
+        _wrhdf(hdf_filename, x, y, z, f)
+        return
+    _wrhdf(hdf_filename, z, y, x, f)
 
-    return (z, y, x, f)
 
-
-def wrh5(h5_filename, x, y, z, f):
+def _wrh5(h5_filename, x, y, z, f):
     """Base writer for 1D, 2D, and 3D HDF5 files.
 
     Generally this function should not be called directly.
@@ -307,18 +388,18 @@ def wrh5(h5_filename, x, y, z, f):
     h5file.close()
 
 
-def wrhdf(hdf_filename, x, y, z, f):
+def _wrhdf(hdf_filename, x, y, z, f):
     """Base writer for 1D, 2D, and 3D HDF4 files.
 
     Generally this function should not be called directly.
     Use `wrhdf_1d`, `wrhdf_2d`, or `wrhdf_3d` instead.
     """
     if (hdf_filename.endswith('h5')):
-        wrh5(hdf_filename, x, y, z, f)
+        _wrh5(hdf_filename, x, y, z, f)
         return
 
     # Check for HDF4
-    except_no_pyhdf()
+    _except_no_pyhdf()
 
     # Create an HDF file
     sd_id = h4.SD(hdf_filename, h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
@@ -387,85 +468,6 @@ def wrhdf(hdf_filename, x, y, z, f):
     sd_id.end()
 
 
-def wrhdf_1d(hdf_filename, x, f):
-    """Write a 1D PSI-style HDF5 or HDF4 file.
-
-    Parameters
-    ----------
-    hdf_filename : Path or str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
-    x: ndarray
-        1D array of scales.
-    f: ndarray
-        1D array of data.
-    """
-    x = np.asarray(x)
-    y = np.array([])
-    z = np.array([])
-    f = np.asarray(f)
-    wrhdf(hdf_filename, x, y, z, f)
-
-
-def wrhdf_2d(hdf_filename, x, y, f):
-    """Write a 2D PSI-style HDF5 or HDF4 file.
-
-    The data in the HDF file will appear as X,Y in Fortran order.
-
-    Each dimension requires a 1D "scale" associated with it that
-    describes the rectilinear grid coordinates in each dimension.
-
-    Parameters
-    ----------
-    hdf_filename : Path or str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
-    x: ndarray
-        1D array of scales in the X dimension.
-    y: ndarray
-        1D array of scales in the Y dimension.
-    f: ndarray
-        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
-    """
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.array([])
-    f = np.asarray(f)
-    if (hdf_filename.endswith('h5')):
-        wrhdf(hdf_filename, x, y, z, f)
-        return
-    wrhdf(hdf_filename, y, x, z, f)
-
-
-def wrhdf_3d(hdf_filename, x, y, z, f):
-    """Write a 3D PSI-style HDF5 or HDF4 file.
-
-    The data in the HDF file will appear as X,Y,Z in Fortran order.
-
-    Each dimension requires a 1D "scale" associated with it that
-    describes the rectilinear grid coordinates in each dimension.
-
-    Parameters
-    ----------
-    hdf_filename : Path or str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
-    x: ndarray
-        1D array of scales in the X dimension.
-    y: ndarray
-        1D array of scales in the Y dimension.
-    z: ndarray
-        1D array of scales in the Z dimension.
-    f: ndarray
-        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
-    """
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.asarray(z)
-    f = np.asarray(f)
-    if (hdf_filename.endswith('h5')):
-        wrhdf(hdf_filename, x, y, z, f)
-        return
-    wrhdf(hdf_filename, z, y, x, f)
-
-
 def get_scales_1d(filename):
     """Wrapper to return the scales of a 1D PSI style HDF5 or HDF4 dataset.
 
@@ -482,9 +484,9 @@ def get_scales_1d(filename):
         1D array of scales in the X dimension.
     """
     if filename.endswith('h5'):
-        x = get_scales_h5(filename)
+        x = _get_scales_h5(filename)
     elif filename.endswith('hdf'):
-        x = get_scales_h4(filename)
+        x = _get_scales_h4(filename)
     return x
 
 
@@ -508,9 +510,9 @@ def get_scales_2d(filename):
         1D array of scales in the Y dimension.
     """
     if filename.endswith('h5'):
-        x, y = get_scales_h5(filename)
+        x, y = _get_scales_h5(filename)
     elif filename.endswith('hdf'):
-        x, y = get_scales_h4(filename)
+        x, y = _get_scales_h4(filename)
     return x, y
 
 
@@ -536,19 +538,19 @@ def get_scales_3d(filename):
         1D array of scales in the Z dimension.
     """
     if filename.endswith('h5'):
-        x, y, z = get_scales_h5(filename)
+        x, y, z = _get_scales_h5(filename)
     elif filename.endswith('hdf'):
-        x, y, z = get_scales_h4(filename)
+        x, y, z = _get_scales_h4(filename)
     return x, y, z
 
 
-def get_scales_h4(hdf_filename):
+def _get_scales_h4(hdf_filename):
     """Base 1D scale reader for 1D, 2D, and 3D HDF4 files.
 
     Generally this function should not be called directly.
     Use `get_scales_1d`, `get_scales_2d`, or `get_scales_3d` instead.
     """
-    except_no_pyhdf()
+    _except_no_pyhdf()
     # get the file info
     try:
         sd_id = h4.SD(hdf_filename)
@@ -591,7 +593,7 @@ def get_scales_h4(hdf_filename):
         return scale3, scale2, scale1
 
 
-def get_scales_h5(h5_filename):
+def _get_scales_h5(h5_filename):
     """Base 1D scale reader for 1D, 2D, and 3D HDF5 files.
 
     Here the arrays are converted to 64 bit for better compatibility with numpy,
@@ -705,11 +707,117 @@ def read_hdf_meta(ifile: Union[Path, str],
 
     """
     if ifile.endswith('.h5'):
-        return read_h5_meta(ifile, dataset_id=dataset_id)
+        return _read_h5_meta(ifile, dataset_id=dataset_id)
     elif ifile.endswith('.hdf'):
-        return read_h4_meta(ifile, dataset_id=dataset_id)
+        return _read_h4_meta(ifile, dataset_id=dataset_id)
     else:
         raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
+
+def _read_h5_meta(ifile: Union[Path, str],
+                  dataset_id: Optional[Union[str, Literal['all']]] = None
+                  ):
+    """
+    Read metadata from an HDF5 (.h5) file.
+
+    Parameters
+    ----------
+    ifile : Path or str
+       The path to the HDF5 file to read.
+    dataset_id : str or {'all'}, optional
+       The identifier of the dataset for which to read metadata.
+       If 'all', metadata for all datasets is returned.
+       If None, a default dataset ('Data') is used.
+
+    Returns
+    -------
+    List[HdfDataMeta]
+       A list of metadata objects corresponding to the specified datasets.
+
+    Notes
+    -----
+    This function reads the dataset(s) and their associated scales from the HDF5 file.
+
+    """
+    with h5.File(ifile, 'r') as hdf:
+        # match dataset_id:
+        #     case None:
+        #         datasets = [('Data', hdf['Data'])]
+        #     case 'all':
+        #         datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
+        #     case _:
+        #         datasets = [(dataset_id, hdf[dataset_id])]
+        if dataset_id is None:
+            datasets = [('Data', hdf['Data'])]
+        elif dataset_id == 'all':
+            datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
+        else:
+            datasets = [(dataset_id, hdf[dataset_id])]
+        meta = [HdfDataMeta(name=k,
+                            type=v.dtype,
+                            shape=v.shape,
+                            scales=[HdfScaleMeta(dim.label,
+                                                 dim[0].dtype,
+                                                 dim[0].shape,
+                                                 dim[0][0],
+                                                 dim[0][-1])
+                                    for dim in v.dims]
+                            )
+                for k, v in datasets]
+        return meta
+
+def _read_h4_meta(ifile: Union[Path, str],
+                  dataset_id: Optional[Union[str, Literal['all']]] = None
+                  ):
+    """
+    Read metadata from an HDF4 (.hdf) file.
+
+    Parameters
+    ----------
+    ifile : Path or str
+        The path to the HDF4 file to read.
+    dataset_id : str or {'all'}, optional
+        The identifier of the dataset for which to read metadata.
+        If 'all', metadata for all datasets is returned.
+        If None, a default dataset ('Data-Set-2') is used.
+
+    Returns
+    -------
+    List[HdfDataMeta]
+        A list of metadata objects corresponding to the specified datasets.
+
+    Notes
+    -----
+    This function reads the dataset(s) and their associated scales from the HDF4 file.
+
+    """
+    _except_no_pyhdf()
+    hdf = h4.SD(ifile)
+    # match dataset_id:
+    #     case None:
+    #         datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
+    #     case 'all':
+    #         datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
+    #     case _:
+    #         datasets = [(dataset_id, hdf.select(dataset_id))]
+    if dataset_id is None:
+        datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
+    elif dataset_id == 'all':
+        datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if
+                    not hdf.select(k).iscoordvar()]
+    else:
+        datasets = [(dataset_id, hdf.select(dataset_id))]
+    meta = [HdfDataMeta(name=k,
+                        type=SDC_TYPE_CONVERSIONS[v.info()[3]],
+                        shape=tuple(v.info()[2]),
+                        scales=[HdfScaleMeta(k_,
+                                             SDC_TYPE_CONVERSIONS[v_[3]],
+                                             (v_[0],),
+                                             hdf.select(k_)[0],
+                                             hdf.select(k_)[-1])
+                                for k_, v_ in v.dimensions(full=1).items()][::-1]
+                        )
+            for k, v in datasets]
+    return meta
 
 
 def read_rtp_meta(ifile: Union[ Path, str]) -> Dict:
@@ -744,11 +852,73 @@ def read_rtp_meta(ifile: Union[ Path, str]) -> Dict:
 
     """
     if ifile.endswith('.h5'):
-        return read_h5_rtp(ifile)
+        return _read_h5_rtp(ifile)
     elif ifile.endswith('.hdf'):
-        return read_h4_rtp(ifile)
+        return _read_h4_rtp(ifile)
     else:
         raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
+
+
+def _read_h5_rtp(ifile: Union[ Path, str]):
+    """
+    Read the scale metadata for PSI's HDF5 (.h5) 3D cubes. This function assumes that the
+    dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
+    to dimension r, t, p respectively.
+
+    Parameters
+    ----------
+    ifile : Path or str
+        The path to the HDF file to read.
+
+    Returns
+    -------
+    Dict
+        A dictionary containing the RTP metadata.
+        The value for each key ('r', 't', and 'p') is a tuple containing:
+            1. The scale length
+            2. The scale's value at the first index
+            3. The scale's value at the last index
+    Notes
+    -----
+    This function extracts the shape, first, and last values for the dimensions 'dim1',
+    'dim2', and 'dim3' corresponding to 'r', 't', and 'p'.
+
+    """
+    with h5.File(ifile, 'r') as hdf:
+        return {dim[0]: (hdf[dim[1]].shape[0], hdf[dim[1]][0], hdf[dim[1]][-1]) for dim in
+                zip('rtp', ('dim1', 'dim2', 'dim3'))}
+
+
+def _read_h4_rtp(ifile: Union[ Path, str]):
+    """
+    Read the scale metadata for PSI's HDF4 (.hdf) 3D cubes. This function assumes that the
+    dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
+    to dimension r, t, p respectively.
+
+    Parameters
+    ----------
+    ifile : Path or str
+        The path to the HDF file to read.
+
+    Returns
+    -------
+    Dict
+        A dictionary containing the RTP metadata.
+        The value for each key ('r', 't', and 'p') is a tuple containing:
+            1. The scale length
+            2. The scale's value at the first index
+            3. The scale's value at the last index
+    Notes
+    -----
+    This function extracts the shape, first, and last values for the dimensions 'dim1',
+    'dim2', and 'dim3' corresponding to 'r', 't', and 'p'.
+
+    """
+    _except_no_pyhdf()
+    hdf = h4.SD(ifile)
+    data = hdf.select('Data-Set-2')
+    return {dim[0]: (dim[1][1][0], hdf.select(dim[1][0])[0], hdf.select(dim[1][0])[-1]) for dim in
+            zip('ptr', (data.dimensions(full=1).items()))}
 
 
 def read_hdf_by_value(*xi: Union[ float, Tuple[float, float], None],
@@ -830,241 +1000,14 @@ def read_hdf_by_value(*xi: Union[ float, Tuple[float, float], None],
 
     """
     if ifile.endswith('.h5'):
-        return read_h5_by_value(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
+        return _read_h5_by_value(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
     elif ifile.endswith('.hdf'):
-        return read_h4_by_value(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
+        return _read_h4_by_value(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
     else:
         raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
 
 
-def read_hdf_by_index(*xi,
-                      ifile: Union[ Path, str],
-                      dataset_id: Optional[str] = None,
-                      return_scales: bool = True,
-                      ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
-    """
-    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by index ranges.
-
-    Parameters
-    ----------
-    *xi : x0, x1,..., xn : int or tuple of int or None
-       Indices or ranges for each dimension of the `n` dimensional dataset.
-       Use None for a dimension to select all indices.
-       This function is the counterpart to `read_hdf_by_value` except that the
-       dataset is directly indexed at the provided values.
-    ifile : Path or str
-       The path to the HDF file to read.
-    dataset_id : str, optional
-       The identifier of the dataset to read.
-       If None, a default dataset is used.
-    return_scales : bool, optional
-       If True, the scales (coordinate arrays) for each dimension are also returned.
-
-    Returns
-    -------
-    np.ndarray or Tuple[np.ndarray]
-       The selected data array.
-       If `return_scales` is True, returns a tuple containing the data array
-       and the scales for each dimension.
-
-    Raises
-    ------
-    ValueError
-       If the file does not have a `.hdf` or `.h5` extension.
-
-    Notes
-    -----
-    This function delegates to `read_h5_by_index` for HDF5 files and `read_h4_by_index`
-    for HDF4 files based on the file extension.
-
-    This function assumes that the dataset is FORTRAN ordered *i.e.* for an array with
-    shape (i, j, ..., n): len(scale_0) == n, ..., len(scale_n-1) == j, len(scale_n) == i.
-    The main purpose of this is for compatability with PSI's data ecosystem.
-
-    This function is used to directly access a dataset/scale(s) at a specified index or
-    slice *e.g.* to fetch the subset of data at the first position of the radial scale
-    (with respect to a standard MAS 3D cube), one would pass: 0, None, None to the
-    function. The result would be a dataset of shape (n, m, 1).
-
-    """
-    if ifile.endswith('.h5'):
-        return read_h5_by_index(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
-    elif ifile.endswith('.hdf'):
-        return read_h4_by_index(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
-    else:
-        raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
-
-
-def read_h5_rtp(ifile: Union[ Path, str]):
-    """
-    Read the scale metadata for PSI's HDF5 (.h5) 3D cubes. This function assumes that the
-    dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
-    to dimension r, t, p respectively.
-
-    Parameters
-    ----------
-    ifile : Path or str
-        The path to the HDF file to read.
-
-    Returns
-    -------
-    Dict
-        A dictionary containing the RTP metadata.
-        The value for each key ('r', 't', and 'p') is a tuple containing:
-            1. The scale length
-            2. The scale's value at the first index
-            3. The scale's value at the last index
-    Notes
-    -----
-    This function extracts the shape, first, and last values for the dimensions 'dim1',
-    'dim2', and 'dim3' corresponding to 'r', 't', and 'p'.
-
-    """
-    with h5.File(ifile, 'r') as hdf:
-        return {dim[0]: (hdf[dim[1]].shape[0], hdf[dim[1]][0], hdf[dim[1]][-1]) for dim in
-                zip('rtp', ('dim1', 'dim2', 'dim3'))}
-
-
-def read_h4_rtp(ifile: Union[ Path, str]):
-    """
-    Read the scale metadata for PSI's HDF4 (.hdf) 3D cubes. This function assumes that the
-    dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
-    to dimension r, t, p respectively.
-
-    Parameters
-    ----------
-    ifile : Path or str
-        The path to the HDF file to read.
-
-    Returns
-    -------
-    Dict
-        A dictionary containing the RTP metadata.
-        The value for each key ('r', 't', and 'p') is a tuple containing:
-            1. The scale length
-            2. The scale's value at the first index
-            3. The scale's value at the last index
-    Notes
-    -----
-    This function extracts the shape, first, and last values for the dimensions 'dim1',
-    'dim2', and 'dim3' corresponding to 'r', 't', and 'p'.
-
-    """
-    except_no_pyhdf()
-    hdf = h4.SD(ifile)
-    data = hdf.select('Data-Set-2')
-    return {dim[0]: (dim[1][1][0], hdf.select(dim[1][0])[0], hdf.select(dim[1][0])[-1]) for dim in
-            zip('ptr', (data.dimensions(full=1).items()))}
-
-
-def read_h5_meta(ifile: Union[ Path, str],
-                 dataset_id: Optional[ Union[ str, Literal['all']]] = None
-                 ):
-    """
-    Read metadata from an HDF5 (.h5) file.
-
-    Parameters
-    ----------
-    ifile : Path or str
-       The path to the HDF5 file to read.
-    dataset_id : str or {'all'}, optional
-       The identifier of the dataset for which to read metadata.
-       If 'all', metadata for all datasets is returned.
-       If None, a default dataset ('Data') is used.
-
-    Returns
-    -------
-    List[HdfDataMeta]
-       A list of metadata objects corresponding to the specified datasets.
-
-    Notes
-    -----
-    This function reads the dataset(s) and their associated scales from the HDF5 file.
-
-    """
-    with h5.File(ifile, 'r') as hdf:
-        # match dataset_id:
-        #     case None:
-        #         datasets = [('Data', hdf['Data'])]
-        #     case 'all':
-        #         datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
-        #     case _:
-        #         datasets = [(dataset_id, hdf[dataset_id])]
-        if dataset_id is None:
-            datasets = [('Data', hdf['Data'])]
-        elif dataset_id == 'all':
-            datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
-        else:
-            datasets = [(dataset_id, hdf[dataset_id])]
-        meta = [HdfDataMeta(name=k,
-                            type=v.dtype,
-                            shape=v.shape,
-                            scales=[HdfScaleMeta(dim.label,
-                                                 dim[0].dtype,
-                                                 dim[0].shape,
-                                                 dim[0][0],
-                                                 dim[0][-1])
-                                    for dim in v.dims]
-                            )
-                for k, v in datasets]
-        return meta
-
-
-def read_h4_meta(ifile: Union[ Path, str],
-                 dataset_id: Optional[ Union[ str, Literal['all']]] = None
-                 ):
-    """
-    Read metadata from an HDF4 (.hdf) file.
-
-    Parameters
-    ----------
-    ifile : Path or str
-        The path to the HDF4 file to read.
-    dataset_id : str or {'all'}, optional
-        The identifier of the dataset for which to read metadata.
-        If 'all', metadata for all datasets is returned.
-        If None, a default dataset ('Data-Set-2') is used.
-
-    Returns
-    -------
-    List[HdfDataMeta]
-        A list of metadata objects corresponding to the specified datasets.
-
-    Notes
-    -----
-    This function reads the dataset(s) and their associated scales from the HDF4 file.
-
-    """
-    except_no_pyhdf()
-    hdf = h4.SD(ifile)
-    # match dataset_id:
-    #     case None:
-    #         datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
-    #     case 'all':
-    #         datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
-    #     case _:
-    #         datasets = [(dataset_id, hdf.select(dataset_id))]
-    if dataset_id is None:
-        datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
-    elif dataset_id == 'all':
-        datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar()]
-    else:
-        datasets = [(dataset_id, hdf.select(dataset_id))]
-    meta = [HdfDataMeta(name=k,
-                        type=SDC_TYPE_CONVERSIONS[v.info()[3]],
-                        shape=tuple(v.info()[2]),
-                        scales=[HdfScaleMeta(k_,
-                                             SDC_TYPE_CONVERSIONS[v_[3]],
-                                             (v_[0],),
-                                             hdf.select(k_)[0],
-                                             hdf.select(k_)[-1])
-                                for k_, v_ in v.dimensions(full=1).items()][::-1]
-                        )
-            for k, v in datasets]
-    return meta
-
-
-def read_h5_by_value(*xi,
+def _read_h5_by_value(*xi,
                      ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
@@ -1135,7 +1078,7 @@ def read_h5_by_value(*xi,
                 return data[tuple(slices)[::-1]]
 
 
-def read_h4_by_value(*xi,
+def _read_h4_by_value(*xi,
                      ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
@@ -1170,7 +1113,7 @@ def read_h4_by_value(*xi,
         `read_hdf_by_value`
 
     """
-    except_no_pyhdf()
+    _except_no_pyhdf()
     hdf = h4.SD(ifile)
     if dataset_id is None:
         dataset_id = 'Data-Set-2'
@@ -1207,7 +1150,68 @@ def read_h4_by_value(*xi,
             return data[tuple(slices)]
 
 
-def read_h5_by_index(*xi,
+
+def read_hdf_by_index(*xi,
+                      ifile: Union[ Path, str],
+                      dataset_id: Optional[str] = None,
+                      return_scales: bool = True,
+                      ) -> Union[ np.ndarray, Tuple[np.ndarray]]:
+    """
+    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by index ranges.
+
+    Parameters
+    ----------
+    *xi : x0, x1,..., xn : int or tuple of int or None
+       Indices or ranges for each dimension of the `n` dimensional dataset.
+       Use None for a dimension to select all indices.
+       This function is the counterpart to `read_hdf_by_value` except that the
+       dataset is directly indexed at the provided values.
+    ifile : Path or str
+       The path to the HDF file to read.
+    dataset_id : str, optional
+       The identifier of the dataset to read.
+       If None, a default dataset is used.
+    return_scales : bool, optional
+       If True, the scales (coordinate arrays) for each dimension are also returned.
+
+    Returns
+    -------
+    np.ndarray or Tuple[np.ndarray]
+       The selected data array.
+       If `return_scales` is True, returns a tuple containing the data array
+       and the scales for each dimension.
+
+    Raises
+    ------
+    ValueError
+       If the file does not have a `.hdf` or `.h5` extension.
+
+    Notes
+    -----
+    This function delegates to `read_h5_by_index` for HDF5 files and `read_h4_by_index`
+    for HDF4 files based on the file extension.
+
+    This function assumes that the dataset is FORTRAN ordered *i.e.* for an array with
+    shape (i, j, ..., n): len(scale_0) == n, ..., len(scale_n-1) == j, len(scale_n) == i.
+    The main purpose of this is for compatability with PSI's data ecosystem.
+
+    This function is used to directly access a dataset/scale(s) at a specified index or
+    slice *e.g.* to fetch the subset of data at the first position of the radial scale
+    (with respect to a standard MAS 3D cube), one would pass: 0, None, None to the
+    function. The result would be a dataset of shape (n, m, 1).
+
+    """
+    if ifile.endswith('.h5'):
+        return _read_h5_by_index(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
+    elif ifile.endswith('.hdf'):
+        return _read_h4_by_index(*xi, ifile=ifile, dataset_id=dataset_id, return_scales=return_scales)
+    else:
+        raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
+
+
+
+
+def _read_h5_by_index(*xi,
                      ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
@@ -1270,7 +1274,7 @@ def read_h5_by_index(*xi,
                 return data[tuple(slices)[::-1]]
 
 
-def read_h4_by_index(*xi,
+def _read_h4_by_index(*xi,
                      ifile: Union[ Path, str],
                      dataset_id: Optional[str] = None,
                      return_scales: bool = True,
@@ -1306,7 +1310,7 @@ def read_h4_by_index(*xi,
         `read_hdf_by_index`
 
     """
-    except_no_pyhdf()
+    _except_no_pyhdf()
     hdf = h4.SD(ifile)
     if dataset_id is None:
         dataset_id = 'Data-Set-2'
@@ -1368,7 +1372,7 @@ def instantiate_linear_interpolator(*args, **kwargs):
     interpolator = instantiate_linear_interpolator(f, x, y, bounds_error=False, fill_value=0)
 
     """
-    except_no_scipy()
+    _except_no_scipy()
     return RegularGridInterpolator(
         values=np.transpose(args[0]),
         points=args[1:],
