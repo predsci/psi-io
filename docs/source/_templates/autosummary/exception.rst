@@ -1,0 +1,4 @@
+{{ fullname }}
+{{ underline }}
+
+.. autoexception:: {{ fullname }}
