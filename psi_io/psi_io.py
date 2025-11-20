@@ -668,6 +668,7 @@ SDC_TYPE_CONVERSIONS = {
 """
 Helper structures for formatting metadata returned by `read_hdf_meta`
 """
+HDF_EXT_TYPE = Literal[".hdf", ".h5"]
 HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'imax'])
 HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'scales'])
 
