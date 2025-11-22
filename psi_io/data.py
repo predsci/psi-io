@@ -14,7 +14,7 @@ Carrington Rotation 2143.
 
 from __future__ import annotations
 
-from psi_io import HDF_EXT_TYPE
+from psi_io import HdfExtType, HDFEXT
 
 try:
     import pooch
@@ -87,12 +87,12 @@ def file_ids() -> list[str]:
     return list(FETCHER.registry.keys())
 
 
-def get_1d_data(hdf: HDF_EXT_TYPE = "h5") -> str:
+def get_1d_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the radial scale (1D) data file.
 
     Parameters
     ----------
-    hdf : HDF_EXT_TYPE, optional
+    hdf : HdfExtType, optional
         The HDF file format to fetch, by default "h5".
         Accepted values are "h5" for HDF5 and "hdf" for HDF4.
 
@@ -101,18 +101,18 @@ def get_1d_data(hdf: HDF_EXT_TYPE = "h5") -> str:
     str
         Path to the downloaded radial scale data file.
     """
-    if hdf not in {"h5", "hdf"}:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be 'h5' or 'hdf'.")
-    filename = f"h4h5-files/rscale.{hdf}"
+    if hdf not in HDFEXT:
+        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
+    filename = f"h4h5-files/rscale{hdf}"
     return FETCHER.fetch(filename)
 
 
-def get_2d_data(hdf: HDF_EXT_TYPE = "h5") -> str:
+def get_2d_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the coronal hole map (2D) data file.
 
     Parameters
     ----------
-    hdf : HDF_EXT_TYPE, optional
+    hdf : HdfExtType, optional
         The HDF file format to fetch, by default "h5".
         Accepted values are "h5" for HDF5 and "hdf" for HDF4.
 
@@ -121,18 +121,18 @@ def get_2d_data(hdf: HDF_EXT_TYPE = "h5") -> str:
     str
         Path to the downloaded coronal hole map data file.
     """
-    if hdf not in {"h5", "hdf"}:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be 'h5' or 'hdf'.")
-    filename = f"h4h5-files/chmap.{hdf}"
+    if hdf not in HDFEXT:
+        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
+    filename = f"h4h5-files/chmap{hdf}"
     return FETCHER.fetch(filename)
 
 
-def get_3d_data(hdf: HDF_EXT_TYPE = "h5") -> str:
+def get_3d_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the radial magnetic field (3D) data file.
 
     Parameters
     ----------
-    hdf : HDF_EXT_TYPE, optional
+    hdf : HdfExtType, optional
         The HDF file format to fetch, by default "h5".
         Accepted values are "h5" for HDF5 and "hdf" for HDF4.
 
@@ -141,18 +141,18 @@ def get_3d_data(hdf: HDF_EXT_TYPE = "h5") -> str:
     str
         Path to the downloaded radial magnetic field data file.
     """
-    if hdf not in {"h5", "hdf"}:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be 'h5' or 'hdf'.")
-    filename = f"h4h5-files/br.{hdf}"
+    if hdf not in HDFEXT:
+        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
+    filename = f"h4h5-files/br{hdf}"
     return FETCHER.fetch(filename)
 
 
-def get_fieldline_data(hdf: HDF_EXT_TYPE = "h5") -> str:
+def get_fieldline_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the magnetic fieldline (2D) data file.
 
     Parameters
     ----------
-    hdf : HDF_EXT_TYPE, optional
+    hdf : HdfExtType, optional
         The HDF file format to fetch, by default "h5".
         Accepted values are "h5" for HDF5 and "hdf" for HDF4.
 
@@ -161,7 +161,7 @@ def get_fieldline_data(hdf: HDF_EXT_TYPE = "h5") -> str:
     str
         Path to the downloaded magnetic fieldline data file.
     """
-    if hdf not in {"h5", "hdf"}:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be 'h5' or 'hdf'.")
-    filename = f"h4h5-files/fieldline.{hdf}"
+    if hdf not in HDFEXT:
+        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
+    filename = f"h4h5-files/fieldline{hdf}"
     return FETCHER.fetch(filename)
