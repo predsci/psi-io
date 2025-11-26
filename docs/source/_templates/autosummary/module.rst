@@ -1,6 +1,6 @@
 {# expects pkgtree, fullname, name in context #}
 
-{{ fullname | escape | underline}}
+{{ name | escape | underline}}
 
 .. automodule:: {{ fullname }}
    :no-members:

@@ -1,6 +1,6 @@
 {# ===== assumes pkgtree, fullname, name in context ===== #}
 
-{{ fullname | escape | underline }}
+{{ name | escape | underline }}
 
 .. autoclass:: {{ fullname }}
    :show-inheritance:

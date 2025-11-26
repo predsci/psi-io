@@ -105,7 +105,7 @@ root_package = 'psi_io'
 exclude_private = True
 exclude_tests = True
 exclude_dunder = True
-sort_members = True
+sort_members = False
 exclusions = []
 
 node_tree = build_node_tree(root_package,
@@ -128,6 +128,7 @@ autodoc_default_options = {
     "show-inheritance": True,
 }
 autodoc_type_aliases = {
+    "HdfScaleMeta": "HdfScaleMeta",
 }
 
 # ------------------------------------------------------------------------------
@@ -140,7 +141,10 @@ napoleon_preprocess_types = True
 napoleon_type_aliases = {
     "HdfScaleMeta": "~psi_io.psi_io.HdfScaleMeta",
     "HdfDataMeta": "~psi_io.psi_io.HdfScaleMeta",
-    "ndarray": "~numpy.ndarray",
+    "HdfExtType": "~psi_io.psi_io.HdfExtType",
+    "np.ndarray": "~numpy.ndarray",
+    "Path": "~pathlib.Path",
+    "RegularGridInterpolator": "~scipy.interpolate.RegularGridInterpolator",
 }
 
 # ------------------------------------------------------------------------------

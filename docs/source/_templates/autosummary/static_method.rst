@@ -1,4 +1,3 @@
-{{ fullname }}
-{{ underline }}
+{{ name | escape | underline}}
 
 .. automethod:: {{ fullname }}
