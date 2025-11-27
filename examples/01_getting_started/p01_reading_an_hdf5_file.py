@@ -18,7 +18,7 @@ if 'SPHINX_GALLERY_BUILD' not in os.environ:
 import matplotlib.pyplot as plt
 
 from psi_io import read_hdf_meta
-from psi_io.data import FETCHER
+from psi_io.data import get_3d_data
 
-data = FETCHER.fetch("2143-mast2-cor/br002.h5")
-meta = read_hdf_meta(ifile=data)
+data = get_3d_data('.hdf')
+meta = read_hdf_meta(data)

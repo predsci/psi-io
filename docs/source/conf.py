@@ -122,29 +122,26 @@ autosummary_context = dict(pkgtree=node_tree_to_dict(node_tree))
 # ------------------------------------------------------------------------------
 extensions.append("sphinx.ext.autodoc")
 
-autodoc_typehints = "description"
+autodoc_typehints = "none"
 autodoc_member_order = 'bysource'
 autodoc_default_options = {
     "show-inheritance": True,
 }
-autodoc_type_aliases = {
-    "HdfScaleMeta": "HdfScaleMeta",
-}
 
 # ------------------------------------------------------------------------------
-# Napoleon Configuration
+# Numpydoc Configuration
 # ------------------------------------------------------------------------------
-extensions.append('sphinx.ext.napoleon')
+extensions.append("numpydoc")
 
-napoleon_use_ivar = True
-napoleon_preprocess_types = True
-napoleon_type_aliases = {
-    "HdfScaleMeta": "~psi_io.psi_io.HdfScaleMeta",
-    "HdfDataMeta": "~psi_io.psi_io.HdfScaleMeta",
-    "HdfExtType": "~psi_io.psi_io.HdfExtType",
-    "np.ndarray": "~numpy.ndarray",
-    "Path": "~pathlib.Path",
-    "RegularGridInterpolator": "~scipy.interpolate.RegularGridInterpolator",
+numpydoc_xref_param_type = True
+numpydoc_xref_ignore = {"optional", "default", "of", "or"}
+numpydoc_xref_aliases = {
+    "HdfScaleMeta": "psi_io.psi_io.HdfScaleMeta",
+    "HdfDataMeta": "psi_io.psi_io.HdfScaleMeta",
+    "HdfExtType": "psi_io.psi_io.HdfExtType",
+    "np.ndarray": "numpy.ndarray",
+    "Path": "pathlib.Path",
+    "RegularGridInterpolator": "scipy.interpolate.RegularGridInterpolator",
 }
 
 # ------------------------------------------------------------------------------

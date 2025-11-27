@@ -96,9 +96,9 @@ def rdhdf_1d(hdf_filename: str
 
     Returns
     -------
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales.
-    f: np.ndarray
+    f : np.ndarray
         1D array of data.
     """
     x, y, z, f = _rdhdf(hdf_filename)
@@ -122,11 +122,11 @@ def rdhdf_2d(hdf_filename: str
 
     Returns
     -------
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
-    y: np.ndarray
+    y : np.ndarray
         1D array of scales in the Y dimension.
-    f: np.ndarray
+    f : np.ndarray
         2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
     """
     x, y, z, f = _rdhdf(hdf_filename)
@@ -152,13 +152,13 @@ def rdhdf_3d(hdf_filename: str
 
     Returns
     -------
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
-    y: np.ndarray
+    y : np.ndarray
         1D array of scales in the Y dimension.
-    z: np.ndarray
+    z : np.ndarray
         1D array of scales in the Z dimension.
-    f: np.ndarray
+    f : np.ndarray
         3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
     """
     x, y, z, f = _rdhdf(hdf_filename)
@@ -216,8 +216,7 @@ def _rdhdf(hdf_filename: str
     :func:`rdhdf_1d`, :func:`rdhdf_2d`, :func:`rdhdf_3d`
     """
     if hdf_filename.endswith('h5'):
-        x, y, z, f = _rdh5(hdf_filename)
-        return x, y, z, f
+        return _rdh5(hdf_filename)
 
     # Check for HDF4
     _except_no_pyhdf()
@@ -259,7 +258,7 @@ def _rdhdf(hdf_filename: str
     z = np.array(z)
     f = np.array(f)
 
-    return (x, y, z, f)
+    return x, y, z, f
 
 
 def wrhdf_1d(hdf_filename: str,
@@ -271,9 +270,9 @@ def wrhdf_1d(hdf_filename: str,
     ----------
     hdf_filename : str
         The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales.
-    f: np.ndarray
+    f : np.ndarray
         1D array of data.
     """
     x = np.asarray(x)
@@ -298,11 +297,11 @@ def wrhdf_2d(hdf_filename: str,
     ----------
     hdf_filename : str
         The path to the 2D HDF5 (.h5) or HDF4 (.hdf) file to write.
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
-    y: np.ndarray
+    y : np.ndarray
         1D array of scales in the Y dimension.
-    f: np.ndarray
+    f : np.ndarray
         2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
     """
     x = np.asarray(x)
@@ -331,13 +330,13 @@ def wrhdf_3d(hdf_filename: str,
     ----------
     hdf_filename : str
         The path to the 3D HDF5 (.h5) or HDF4 (.hdf) file to write.
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
-    y: np.ndarray
+    y : np.ndarray
         1D array of scales in the Y dimension.
-    z: np.ndarray
+    z : np.ndarray
         1D array of scales in the Z dimension.
-    f: np.ndarray
+    f : np.ndarray
         3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
     """
     x = np.asarray(x)
@@ -422,8 +421,7 @@ def _wrhdf(hdf_filename: str,
     :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
     """
     if hdf_filename.endswith('h5'):
-        _wrh5(hdf_filename, x, y, z, f)
-        return
+        return _wrh5(hdf_filename, x, y, z, f)
 
     # Check for HDF4
     _except_no_pyhdf()
@@ -508,7 +506,7 @@ def get_scales_1d(filename: str
 
     Returns
     -------
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
     """
     if filename.endswith('h5'):
@@ -532,9 +530,9 @@ def get_scales_2d(filename: str
 
     Returns
     -------
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
-    y: np.ndarray
+    y : np.ndarray
         1D array of scales in the Y dimension.
     """
     if filename.endswith('h5'):
@@ -558,11 +556,11 @@ def get_scales_3d(filename: str
 
     Returns
     -------
-    x: np.ndarray
+    x : np.ndarray
         1D array of scales in the X dimension.
-    y: np.ndarray
+    y : np.ndarray
         1D array of scales in the Y dimension.
-    z: np.ndarray
+    z : np.ndarray
         1D array of scales in the Z dimension.
     """
     if filename.endswith('h5'):
@@ -761,16 +759,16 @@ def read_hdf_meta(ifile: Union[Path, str], /,
 
     Parameters
     ----------
-    ifile : Path or str
+    ifile : Path | str
         The path to the HDF file to read.
-    dataset_id : str, optional
+    dataset_id : str | None
         The identifier of the dataset for which to read metadata.
         If ``'all'``, metadata for all datasets is returned.
         If ``None``, the default PSI standard dataset_id is used.
 
     Returns
     -------
-    list of HdfDataMeta
+    out : list[HdfDataMeta]
         A list of metadata objects corresponding to the specified datasets.
 
     Raises
@@ -791,28 +789,7 @@ def read_hdf_meta(ifile: Union[Path, str], /,
 def _read_h5_meta(ifile: Union[Path, str], /,
                   dataset_id: Optional[Union[str, Literal['all']]] = None
                   ):
-    """
-    Read metadata from an HDF5 (.h5) file.
-
-    Parameters
-    ----------
-    ifile : Path or str
-       The path to the HDF5 file to read.
-    dataset_id : str, optional
-        The identifier of the dataset for which to read metadata.
-        If ``'all'``, metadata for all datasets is returned.
-        If ``None``, the default PSI standard dataset_id is used.
-
-    Returns
-    -------
-    list of HdfDataMeta
-       A list of metadata objects corresponding to the specified datasets.
-
-    Notes
-    -----
-    This function reads the dataset(s) and their associated scales from the HDF5 file.
-
-    """
+    """HDF5 (.h5) version of :func:`read_hdf_meta`."""
     with h5.File(ifile, 'r') as hdf:
         if dataset_id is None:
             datasets = [('Data', hdf['Data'])]
@@ -836,28 +813,7 @@ def _read_h5_meta(ifile: Union[Path, str], /,
 def _read_h4_meta(ifile: Union[Path, str], /,
                   dataset_id: Optional[Union[str, Literal['all']]] = None
                   ):
-    """
-    Read metadata from an HDF4 (.hdf) file.
-
-    Parameters
-    ----------
-    ifile : Path or str
-        The path to the HDF4 file to read.
-    dataset_id : str, optional
-        The identifier of the dataset for which to read metadata.
-        If ``'all'``, metadata for all datasets is returned.
-        If ``None``, the default PSI standard dataset_id is used.
-
-    Returns
-    -------
-    list of HdfDataMeta
-        A list of metadata objects corresponding to the specified datasets.
-
-    Notes
-    -----
-    This function reads the dataset(s) and their associated scales from the HDF4 file.
-
-    """
+    """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
     hdf = h4.SD(ifile)
     if dataset_id is None:
         datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
@@ -888,12 +844,12 @@ def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
 
     Parameters
     ----------
-    ifile : Path or str
+    ifile : Path | str
         The path to the HDF file to read.
 
     Returns
     -------
-    dict
+    out : dict
         A dictionary containing the RTP metadata.
         The value for each key ('r', 't', and 'p') is a tuple containing:
 
@@ -937,17 +893,22 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """
-    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by value(s).
+    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by value.
+
+    .. note::
+       For each dimension, the minimum number of elements returned is 2 *e.g.*
+       if 3 floats are passed (as positional `*xi` arguments) for a 3D dataset,
+       the resulting subset will have a shape of (2, 2, 2,) with scales of length 2.
 
     Parameters
     ----------
-    ifile : Path or str
+    ifile : Path | str
         The path to the HDF file to read.
-    *xi : float or tuple of float or None
+    *xi : float | tuple[float, float] | None
         Values or value ranges corresponding to each dimension of the `n`-dimensional
         dataset specified by the ``dataset_id``. If no arguments are passed, the
         entire dataset (and its scales) will be returned.
-    dataset_id : str, optional
+    dataset_id : str | None
         The identifier of the dataset to read.
         If None, a default dataset is used.
     return_scales : bool
@@ -955,7 +916,7 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
 
     Returns
     -------
-    np.ndarray or tuple of np.ndarray
+    out : np.ndarray | tuple[np.ndarray]
         The selected data array.
         If ``return_scales`` is True, returns a tuple containing the data array
         and the scales for each dimension.
@@ -965,45 +926,41 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
     ValueError
         If the file does not have a `.hdf` or `.h5` extension.
 
+    See Also
+    --------
+    read_hdf_by_index
+        Read HDF datasets by index ranges.
+    sp_interpolate_slice_from_hdf
+        Interpolate slices from HDF datasets using SciPy's
+        :class:`~scipy.interpolate.RegularGridInterpolator`
+    np_interpolate_slice_from_hdf
+        Perform linear, bilinear, or trilinear interpolation using vectorized numpy-based
+        routines.
+
     Notes
     -----
     This function delegates to :func:`_read_h5_by_value` for HDF5 files and
     :func:`_read_h4_by_value` for HDF4 files based on the file extension.
 
-    This function assumes that the dataset is Fortran (or column-major) ordered *i.e.*
-    for an :math:`n`-dimensional array with scales :math:`(x_0, x_1, ..., x_{n-1})`,
-    :math:`\lVert x \lVert`
-
-    shape (i, j, ..., n): len(scale_0) == n, ..., len(scale_n-1) == j, len(scale_n) == i.
-    The main purpose of this is for compatability with PSI's data ecosystem.
-
-
-
-
-
-
-
-
-    This function assumes that the dataset is Fortran ordered *i.e.* for an array with
-    shape (i, j, ..., n): len(scale_0) == n, ..., len(scale_n-1) == j, len(scale_n) == i.
-    The main purpose of this is for compatability with PSI's data ecosystem.
+    This function assumes that the dataset is Fortran (or column-major) ordered *viz.* for
+    compatibility with PSI's data ecosystem; as such, a given :math:`n`-dimensional array,
+    of shape :math:`(D_0, D_1, ..., D_{n-1})`, has scales :math:`(x_0, x_1, ..., x_{n-1})`,
+    such that :math:`| x_i | = | D_{(n-1)-i} |`. For example, a 3D dataset with shape
+    :math:`(D_p, D_t, D_r)` has scales :math:`r, t, p` corresponding to the radial, theta,
+    and phi dimensions respectively.
 
     This function extracts a subset of the given dataset/scales without reading the
-    entire data into memory. For a given scale `j` (x0, x1, ..., xj, ... xn), if:
+    entire data into memory. For a given scale :math:`x_j`, if:
 
-    - *i)* a single float is provided ("xj_value"), the function will return a 2-element
-      subset of scale `xj` where `xj[0] <= xj_value < xj[1]`.
-    - *ii)* a (float, float) tuple is provided ("xj_range"), the function will return an
-      m-element subset of scale `xj` where `xj[0] <= xj_range[0] and xj[m] > xj_range[1]
-    - *iii)* a None value is provided, the function will return the entire scale `xj`
+    - *i)* a single float is provided (:math:`a`), the function will return a 2-element
+      subset of the scale (:math:`xʹ_j`) such that :math:`xʹ_j[0] <= a < xʹ_j[1]`.
+    - *ii)* a (float, float) tuple is provided (:math:`a_0, a_1`), the function will return an
+      *m*-element subset of the scale (:math:`xʹ_j`) where
+      :math:`xʹ_j[0] <= a_0` and :math:`xʹ_j[m-1] > a_1`.
+    - *iii)* a **None** value is provided, the function will return the entire scale :math:`x_j`
 
     The returned subset can then be passed to a linear interpolation routine to extract the
     "slice" at the desired fixed dimensions.
-
-    .. attention::
-       For each dimension, the minimum number of elements returned will be 2 *e.g.*
-       if 3 floats are passed (as `\*xi`) for a 3D dataset, the resulting subset will have a shape
-       of (2, 2, 2,) with scales of length 2.
 
     Examples
     --------
@@ -1028,7 +985,7 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
     Extract the values between 3.2 and 6.4 (in the radial dimension) and with
     phi equal to 4.5
 
-    >>> f, r, t, p = read_hdf_by_value((3.2, 6.4), None, 4.5, ifile=get_3d_data())
+    >>> f, r, t, p = read_hdf_by_value(filepath, (3.2, 6.4), None, 4.5)
     >>> f.shape, r.shape, t.shape, p.shape
     ((2, 100, 15), (15,), (100,), (2,))
     """
@@ -1042,7 +999,6 @@ def _read_h5_by_value(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """HDF5 (.h5) version of :func:`read_hdf_by_value`."""
-
     with h5.File(ifile, 'r') as hdf:
         if dataset_id is None:
             dataset_id = 'Data'
@@ -1121,25 +1077,26 @@ def _read_h4_by_value(ifile: Union[Path, str], /,
 
 
 def read_hdf_by_index(ifile: Union[Path, str], /,
-                      *xi: Union[int, Tuple[int, int], None],
+                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """
-    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by index ranges.
+    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by index.
 
-    .. note::
-        This function is the counterpart to :func:`read_hdf_by_value` except that the
-       dataset is directly indexed at the provided values.
+    .. attention::
+       For each dimension, the *minimum* number of elements returned is 1 *e.g.*
+       if 3 ints are passed (as positional `*xi` arguments) for a 3D dataset,
+       the resulting subset will have a shape of (1, 1, 1,) with scales of length 1.
 
     Parameters
     ----------
-    ifile : Path or str
+    ifile : Path | str
        The path to the HDF file to read.
-    *xi : int or tuple of int or None
+    *xi : int | tuple[int | None, int | None] | None
        Indices or ranges for each dimension of the `n`-dimensional dataset.
        Use None for a dimension to select all indices.
-    dataset_id : str, optional
+    dataset_id : str | None
        The identifier of the dataset to read.
        If None, a default dataset is used.
     return_scales : bool
@@ -1147,7 +1104,7 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
 
     Returns
     -------
-    np.ndarray or tuple of np.ndarray
+    out : np.ndarray | tuple[np.ndarray]
        The selected data array.
        If ``return_scales`` is True, returns a tuple containing the data array
        and the scales for each dimension.
@@ -1157,20 +1114,54 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
     ValueError
        If the file does not have a `.hdf` or `.h5` extension.
 
+    See Also
+    --------
+    read_hdf_by_value
+        Read HDF datasets by value ranges.
+
     Notes
     -----
-    This function delegates to `read_h5_by_index` for HDF5 files and `read_h4_by_index`
-    for HDF4 files based on the file extension.
+    This function delegates to :func:`_read_h5_by_index` for HDF5 files and
+    :func:`_read_h4_by_index` for HDF4 files based on the file extension.
 
-    This function assumes that the dataset is FORTRAN ordered *i.e.* for an array with
-    shape (i, j, ..., n): len(scale_0) == n, ..., len(scale_n-1) == j, len(scale_n) == i.
-    The main purpose of this is for compatability with PSI's data ecosystem.
+    This function assumes that the dataset is Fortran (or column-major) ordered *viz.* for
+    compatibility with PSI's data ecosystem; as such, a given :math:`n`-dimensional array,
+    of shape :math:`(D_0, D_1, ..., D_{n-1})`, has scales :math:`(x_0, x_1, ..., x_{n-1})`,
+    such that :math:`| x_i | = | D_{(n-1)-i} |`. For example, a 3D dataset with shape
+    :math:`(D_p, D_t, D_r)` has scales :math:`r, t, p` corresponding to the radial, theta,
+    and phi dimensions respectively.
 
-    This function is used to directly access a dataset/scale(s) at a specified index or
-    slice *e.g.* to fetch the subset of data at the first position of the radial scale
-    (with respect to a standard MAS 3D cube), one would pass: 0, None, None to the
-    function. The result would be a dataset of shape (n, m, 1).
+    This function extracts a subset of the given dataset/scales without reading the
+    entire data into memory. For a given scale :math:`x_j`, an index, index range, or ``None``
+    can be provided; these inputs are forwarded through to Python's builtin :class:`slice` to
+    extract the desired subset of the scale(s) / dataset.
 
+    Examples
+    --------
+    Import a 3D HDF5 cube.
+
+    >>> from psi_io.data import get_3d_data
+    >>> from psi_io import read_hdf_by_index
+    >>> filepath = get_3d_data()
+
+    Extract a radial slice (at the first radial-scale index) from a 3D cube:
+
+    >>> f, r, t, p = read_hdf_by_value(filepath, 0, None, None)
+    >>> f.shape, r.shape, t.shape, p.shape
+    ((181, 100, 1), (1,), (100,), (181,))
+
+    Extract a phi slice at the 90th index from a 3D cube:
+
+    >>> f, r, t, p = read_hdf_by_value(filepath, None, None, 90)
+    >>> f.shape, r.shape, t.shape, p.shape
+    ((1, 100, 151), (151,), (100,), (1,))
+
+    Extract the values up to the 20th index (in the radial dimension) and with
+    phi indices from 10 to 25:
+
+    >>> f, r, t, p = read_hdf_by_value(filepath, (None, 20), None, (10, 25))
+    >>> f.shape, r.shape, t.shape, p.shape
+    ((15, 100, 20), (20,), (100,), (15,))
     """
     return _dispatch_by_ext(ifile, _read_h4_by_index, _read_h5_by_index,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
@@ -1179,7 +1170,7 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
 
 
 def _read_h5_by_index(ifile: Union[Path, str], /,
-                      *xi: Union[int, Tuple[int, int], None],
+                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
@@ -1212,7 +1203,7 @@ def _read_h5_by_index(ifile: Union[Path, str], /,
 
 
 def _read_h4_by_index(ifile: Union[Path, str], /,
-                      *xi: Union[int, Tuple[int, int], None],
+                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
@@ -1251,36 +1242,47 @@ def instantiate_linear_interpolator(*args, **kwargs):
 
     Parameters
     ----------
-    *args : variable length argument list
+    *args : sequence[array_like]
         The first argument is the data array.
         Subsequent arguments are the scales (coordinate arrays) for each dimension.
     **kwargs : dict
-        Additional keyword arguments to pass to `RegularGridInterpolator`.
+        Additional keyword arguments to pass to
+        :class:`~scipy.interpolate.RegularGridInterpolator`.
 
     Returns
     -------
-    RegularGridInterpolator
-        An instance of `scipy.interpolate.RegularGridInterpolator` initialized
+    out : RegularGridInterpolator
+        An instance of RegularGridInterpolator initialized
         with the provided data and scales.
 
     Notes
     -----
     This function transposes the data array and passes it along with the scales
-    to `RegularGridInterpolator`.
+    to RegularGridInterpolator. Given a PSI-style Fortran-ordered 3D dataset,
+    the resulting interpolator can be queried using (r, theta, phi) coordinates.
 
     Examples
     --------
-    interpolator = instantiate_linear_interpolator(read_hdf_by_value(5., None, None, ifile='path/to/hdf.h5'))
+    Import a 3D HDF5 cube.
 
-    # Or
+    >>> from psi_io.data import get_3d_data
+    >>> from psi_io import read_hdf_by_value
+    >>> from numpy import pi
+    >>> filepath = get_3d_data()
 
-    f, x, y = read_hdf_by_value(ifile='path/to/chmap.h5')
-    interpolator = instantiate_linear_interpolator(f, x, y, bounds_error=False, fill_value=0)
+    Read the dataset by value (at 15 R_sun in the radial dimension).
 
+    >>> data_and_scales = read_hdf_by_value(filepath, 15, None, None)
+    >>> interpolator = instantiate_linear_interpolator(*data_and_scales)
+
+    Interpolate at a specific position.
+
+    >>> interpolator((15, pi/2, pi))
+    0.0012864485109423877
     """
     _except_no_scipy()
     return RegularGridInterpolator(
-        values=np.transpose(args[0]),
+        values=args[0].T,
         points=args[1:],
         **kwargs)
 
@@ -1289,18 +1291,27 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
     """
     Interpolate a slice from HDF data using SciPy's `RegularGridInterpolator`.
 
+    .. note::
+       Slicing routines result in a dimensional reduction. The dimensions
+       that are fixed (i.e. provided as float values in `*xi`) are removed
+       from the output slice, while the dimensions that are not fixed
+       (*i.e.* provided as None in `*xi`) are retained.
+
     Parameters
     ----------
-    *xi : variable length argument list
-        Values or ranges for each dimension to select data.
+    *xi : sequence
+        Positional arguments passed-through to :func:`read_hdf_by_value`.
     **kwargs : dict
-        Keyword arguments to pass to `read_hdf_by_value`.
+        Keyword arguments passed-through to :func:`read_hdf_by_value`.
+        **NOTE: Instantiating a linear interpolator requires the** ``return_scales``
+        **keyword argument to be set to True; this function overrides
+        any provided value for** ``return_scales`` **to ensure this behavior.**
 
     Returns
     -------
-    np.ndarray
+    slice : np.ndarray
         The interpolated data slice.
-    list
+    scales : list
         A list of scales for the dimensions that were not fixed.
 
     Notes
@@ -1308,42 +1319,71 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
     This function reads data from an HDF file, creates a linear interpolator,
     and interpolates a slice based on the provided values.
 
+    .. note::
+       The returned slice is Fortran-ordered *e.g.* radial slices will have shape
+       (phi, theta), phi slices will have shape (r, theta), etc.
+
     Examples
     --------
-    # Fetch radial slice from 3D cube
-    slice_2d, t, p = sp_interpolate_slice_from_hdf(10., None, None, ifile='path/to/hdf.h5')
+    >>> from psi_io.data import get_3d_data
+    >>> from psi_io import sp_interpolate_slice_from_hdf
+    >>> from numpy import pi
+    >>> filepath = get_3d_data()
 
-    # Fetch a single point from 2D map
-    point_value = sp_interpolate_slice_from_hdf(3.14, 3.14, ifile='path/to/hdf.h5')
+    Fetch a 2D slice at r=15 from 3D map
 
+    >>> slice_, theta_scale, phi_scale = sp_interpolate_slice_from_hdf(filepath, 15, None, None)
+    >>> slice_.shape, theta_scale.shape, phi_scale.shape
+    ((181, 100), (100,), (181,))
+
+    Fetch a single point from 3D map
+
+    >>> point_value, *_ = sp_interpolate_slice_from_hdf(filepath, 1, pi/2, pi)
+    >>> point_value
+    6.084495480971823
     """
-    result = read_hdf_by_value(*xi, **kwargs)
+    filepath, *args = xi
+    kwargs.pop('return_scales', None)
+    result = read_hdf_by_value(filepath, *args, **kwargs)
     interpolator = instantiate_linear_interpolator(*result)
-    grid = [yi[0] if yi[0] is not None else yi[1] for yi in zip(xi, result[1:])]
+    grid = [yi[0] if yi[0] is not None else yi[1] for yi in zip(args, result[1:])]
     slice_ = interpolator(tuple(np.meshgrid(*grid, indexing='ij')))
-    indices = [0 if yi is not None else slice(None, None) for yi in xi]
-    return slice_[tuple(indices)], *[yi[1] for yi in zip(xi, result[1:]) if yi[0] is None]
+    indices = [0 if yi is not None else slice(None, None) for yi in args]
+    return slice_[tuple(indices)].T, *[yi[1] for yi in zip(args, result[1:]) if yi[0] is None]
 
 
-def np_interpolate_slice_from_hdf(*xi, by_index=False, **kwargs):
+def np_interpolate_slice_from_hdf(ifile, *xi, by_index=False, **kwargs):
     """
     Interpolate a slice from HDF data using linear interpolation.
 
+    .. note::
+       Slicing routines result in a dimensional reduction. The dimensions
+       that are fixed (i.e. provided as float values in `*xi`) are removed
+       from the output slice, while the dimensions that are not fixed
+       (*i.e.* provided as None in `*xi`) are retained.
+
     Parameters
     ----------
-    *xi : variable length argument list
-        Values or ranges for each dimension to select data.
-    by_index : bool, optional
+    ifile : Path | str
+        The path to the HDF file to read.
+    *xi : sequence
+        Positional arguments passed-through to :func:`read_hdf_by_value`.
+    by_index : bool
         Instead of using the scales for interpolation, use the grid indexes (0 indexed). E.g. to get the average
         of the first two layers in r, you would ask for an index value of 0.5. Default is False.
         (e.g. np_interpolate_slice_from_hdf(0.5, None, None, by_index=True, ifile=ifile) for a 3D file.)
     **kwargs : dict
-        Keyword arguments to pass to `read_hdf_by_value`.
+        Keyword arguments passed-through to :func:`read_hdf_by_value`.
+        **NOTE: Instantiating a linear interpolator requires the** ``return_scales``
+        **keyword argument to be set to True; this function overrides
+        any provided value for** ``return_scales`` **to ensure this behavior.**
 
     Returns
     -------
-    np.ndarray
+    slice : np.ndarray
         The interpolated data slice.
+    scales : list
+        A list of scales for the dimensions that were not fixed.
 
     Raises
     ------
@@ -1356,7 +1396,7 @@ def np_interpolate_slice_from_hdf(*xi, by_index=False, **kwargs):
     depending on the number of dimensions fixed in `xi`.
 
     """
-    f, *scales = read_hdf_by_value(*xi, **kwargs)
+    f, *scales = read_hdf_by_value(ifile, *xi, **kwargs)
     if by_index is True:
         index_scales = []
         for scale in scales:
@@ -1374,39 +1414,78 @@ def np_interpolate_slice_from_hdf(*xi, by_index=False, **kwargs):
         raise ValueError("Not a valid number of dimensions for supported linear interpolation methods")
 
 
-def interpolate_positions_from_hdf(*xi, **kwargs):
+def interpolate_positions_from_hdf(ifile, *xi, **kwargs):
     """
     Interpolate at a list of scale positions using SciPy's `RegularGridInterpolator`.
 
     Parameters
     ----------
-    *xi : x0, x1,..., xn : array-like
-       Iterable scale values for each dimension of the `n` dimensional dataset.
-       Each array should have the same shape *i.e.* (m, ) – the function composes
-       these array into a mxn column stack for interpolation.
+    ifile : Path | str
+        The path to the HDF file to read.
+    *xi : sequence[np.ndarray]
+       Iterable scale values for each dimension of the `n`-dimensional dataset.
+       Each array should have the same shape *i.e.* :math:`(m, )` – the function composes
+       these array into a :math:`m x n` column stack for interpolation.
     **kwargs : dict
-        Keyword arguments to pass to `read_hdf_by_value`.
+        Keyword arguments to pass to :func:`read_hdf_by_value`.
 
     Returns
     -------
-    np.ndarray
+    out : np.ndarray
         The interpolated values at the provided positions.
 
     Notes
     -----
     This function reads data from an HDF file, creates a linear interpolator,
-    and interpolates at the provided scale values. This function was designed
-    for use with mhdweb *viz.* for reading in a list of spacecraft positions
-    in r, t, p coordinates and interpolating a MAS file at those locations.
+    and interpolates at the provided scale values. For each dimension, the
+    minimum and maximum values from the provided arrays are used to read
+    the necessary subset of data from the HDF file *viz.* to avoid loading
+    the entire dataset into memory.
 
+    Examples
+    --------
+    Import a 3D HDF5 cube.
+
+    >>> from psi_io.data import get_3d_data
+    >>> from psi_io import interpolate_positions_from_hdf
+    >>> import numpy as np
+    >>> filepath = get_3d_data()
+
+    Set up positions to interpolate.
+
+    >>> r_vals = np.array([15, 20, 25])
+    >>> theta_vals = np.array([np.pi/4, np.pi/2, 3*np.pi/4])
+    >>> phi_vals = np.array([0, np.pi, 2*np.pi])
+
+    Interpolate at the specified positions.
+
+    >>> interpolate_positions_from_hdf(filepath, r_vals, theta_vals, phi_vals)
+    [0.0008402743657585175, 0.000723875405654482, -0.00041033233811179216]
     """
     xi_ = [(np.nanmin(i), np.nanmax(i)) for i in xi]
-    f, *scales = read_hdf_by_value(*xi_, **kwargs)
+    f, *scales = read_hdf_by_value(ifile, *xi_, **kwargs)
     interpolator = instantiate_linear_interpolator(f, *scales, bounds_error=False)
     return interpolator(np.stack(xi, axis=len(xi[0].shape)))
 
 
 def interpolate_point_from_1d_slice(xi, scalex, values):
+    """
+    Interpolate a point from a 1D slice using linear interpolation.
+
+    Parameters
+    ----------
+    xi : float
+        The scale value at which to interpolate.
+    scalex : np.ndarray
+        The scale (coordinate array) for the dimension.
+    values : np.ndarray
+        The data array to interpolate.
+
+    Returns
+    -------
+    out : np.ndarray
+        The interpolated data point.
+    """
     if scalex[0] > scalex[-1]:
         scalex, values = scalex[::-1], values[::-1]
     xi_ = int(np.searchsorted(scalex, xi))
@@ -1415,6 +1494,27 @@ def interpolate_point_from_1d_slice(xi, scalex, values):
 
 
 def interpolate_point_from_2d_slice(xi, yi, scalex, scaley, values):
+    """
+    Interpolate a point from a 2D slice using bilinear interpolation.
+
+    Parameters
+    ----------
+    xi : float
+        The scale value for the first dimension.
+    yi : float
+        The scale value for the second dimension.
+    scalex : np.ndarray
+        The scale (coordinate array) for the first dimension.
+    scaley : np.ndarray
+        The scale (coordinate array) for the second dimension.
+    values : np.ndarray
+        The data array to interpolate.
+
+    Returns
+    -------
+    out : np.ndarray
+        The interpolated data point.
+    """
     values = np.transpose(values)
     if scalex[0] > scalex[-1]:
         scalex, values = scalex[::-1], values[::-1, :]
