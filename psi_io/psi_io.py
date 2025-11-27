@@ -1352,7 +1352,7 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
     return slice_[tuple(indices)].T, *[yi[1] for yi in zip(args, result[1:]) if yi[0] is None]
 
 
-def np_interpolate_slice_from_hdf(ifile, *xi, by_index=False, **kwargs):
+def np_interpolate_slice_from_hdf(ifile, *xi, **kwargs):
     """
     Interpolate a slice from HDF data using linear interpolation.
 
@@ -1368,10 +1368,6 @@ def np_interpolate_slice_from_hdf(ifile, *xi, by_index=False, **kwargs):
         The path to the HDF file to read.
     *xi : sequence
         Positional arguments passed-through to :func:`read_hdf_by_value`.
-    by_index : bool
-        Instead of using the scales for interpolation, use the grid indexes (0 indexed). E.g. to get the average
-        of the first two layers in r, you would ask for an index value of 0.5. Default is False.
-        (e.g. np_interpolate_slice_from_hdf(0.5, None, None, by_index=True, ifile=ifile) for a 3D file.)
     **kwargs : dict
         Keyword arguments passed-through to :func:`read_hdf_by_value`.
         **NOTE: Instantiating a linear interpolator requires the** ``return_scales``
@@ -1397,11 +1393,11 @@ def np_interpolate_slice_from_hdf(ifile, *xi, by_index=False, **kwargs):
 
     """
     f, *scales = read_hdf_by_value(ifile, *xi, **kwargs)
-    if by_index is True:
-        index_scales = []
-        for scale in scales:
-            index_scales.append(np.arange(len(scale)))
-            scales = tuple(index_scales)
+    # if by_index is True:
+    #     index_scales = []
+    #     for scale in scales:
+    #         index_scales.append(np.arange(len(scale)))
+    #         scales = tuple(index_scales)
     f_ = np.transpose(f)
     slice_type = sum([yi is not None for yi in xi])
     if slice_type == 1:
