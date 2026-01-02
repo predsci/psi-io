@@ -14,6 +14,10 @@ Carrington Rotation 2143.
 
 from __future__ import annotations
 
+import inspect
+from functools import wraps
+from typing import Callable, ParamSpec, TypeVar
+
 from psi_io import HdfExtType, HDFEXT
 
 try:
@@ -75,6 +79,25 @@ FETCHER = pooch.create(
     that utilize the same asset hosting and caching mechanism.
 """
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
+def check_hdf_type(func: Callable[P, R]) -> Callable[P, R]:
+    sig = inspect.signature(func)
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+
+        hdf = bound.arguments["hdf"]  # assumes the param is literally named "hdf"
+        if hdf not in HDFEXT:
+            raise ValueError(f"Invalid HDF type {hdf!r}. Must be in {sorted(HDFEXT)}.")
+
+        return func(*bound.args, **bound.kwargs)
+
+    return wrapper
+
 
 def file_ids() -> list[str]:
     """List all available magnetic field files in the registry.
@@ -87,6 +110,7 @@ def file_ids() -> list[str]:
     return list(FETCHER.registry.keys())
 
 
+@check_hdf_type
 def get_1d_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the radial scale (1D) data file.
 
@@ -101,8 +125,6 @@ def get_1d_data(hdf: HdfExtType = ".h5") -> str:
     str
         Path to the downloaded radial scale data file.
     """
-    if hdf not in HDFEXT:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
     filename = f"h4h5-files/rscale{hdf}"
     return FETCHER.fetch(filename)
 
