@@ -41,7 +41,6 @@ Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
 """
 # Standard Python imports
 from collections import namedtuple
-from functools import wraps
 from pathlib import Path
 from types import MappingProxyType
 from typing import Optional, Literal, Tuple, Iterable, List, Dict, Union, Callable, Any
@@ -742,6 +741,27 @@ def _dispatch_by_ext(ifile: Union[Path, str],
                      hdf5_func: Callable,
                      *args: Any, **kwargs: Any
                      ):
+    """
+    Dispatch function to call HDF4 or HDF5 specific functions based on file extension.
+
+    Parameters
+    ----------
+    ifile : Path | str
+        The path to the HDF file.
+    hdf4_func : Callable
+        The function to call for HDF4 files.
+    hdf5_func : Callable
+        The function to call for HDF5 files.
+    *args : Any
+        Positional arguments to pass to the selected function.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+    ImportError
+        If the file is HDF4 and the `pyhdf` package is not available
+    """
     ipath = Path(ifile)
     if ipath.suffix == '.h5':
         return hdf5_func(ifile, *args, **kwargs)
@@ -752,7 +772,7 @@ def _dispatch_by_ext(ifile: Union[Path, str],
 
 
 def read_hdf_meta(ifile: Union[Path, str], /,
-                  dataset_id: Optional[Union[str, Literal['all']]] = None
+                  dataset_id: Optional[str] = None
                   ) -> List[HdfDataMeta]:
     """
     Read metadata from an HDF4 (.hdf) or HDF5 (.h5) file.
@@ -761,10 +781,9 @@ def read_hdf_meta(ifile: Union[Path, str], /,
     ----------
     ifile : Path | str
         The path to the HDF file to read.
-    dataset_id : str | None
+    dataset_id : str, optional
         The identifier of the dataset for which to read metadata.
-        If ``'all'``, metadata for all datasets is returned.
-        If ``None``, the default PSI standard dataset_id is used.
+        If ``None``, metadata for all datasets is returned.
 
     Returns
     -------
@@ -787,16 +806,14 @@ def read_hdf_meta(ifile: Union[Path, str], /,
 
 
 def _read_h5_meta(ifile: Union[Path, str], /,
-                  dataset_id: Optional[Union[str, Literal['all']]] = None
+                  dataset_id: Optional[str] = None
                   ):
     """HDF5 (.h5) version of :func:`read_hdf_meta`."""
     with h5.File(ifile, 'r') as hdf:
-        if dataset_id is None:
-            datasets = [('Data', hdf['Data'])]
-        elif dataset_id == 'all':
-            datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
-        else:
+        if dataset_id:
             datasets = [(dataset_id, hdf[dataset_id])]
+        else:
+            datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
         meta = [HdfDataMeta(name=k,
                             type=v.dtype,
                             shape=v.shape,
@@ -805,23 +822,21 @@ def _read_h5_meta(ifile: Union[Path, str], /,
                                                  dim[0].shape,
                                                  dim[0][0],
                                                  dim[0][-1])
-                                    for dim in v.dims]
+                                    for dim in v.dims if dim]
                             )
                 for k, v in datasets]
         return meta
 
 def _read_h4_meta(ifile: Union[Path, str], /,
-                  dataset_id: Optional[Union[str, Literal['all']]] = None
+                  dataset_id: Optional[str] = None
                   ):
     """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
     hdf = h4.SD(ifile)
-    if dataset_id is None:
-        datasets = [('Data-Set-2', hdf.select('Data-Set-2'))]
-    elif dataset_id == 'all':
+    if dataset_id:
+        datasets = [(dataset_id, hdf.select(dataset_id))]
+    else:
         datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if
                     not hdf.select(k).iscoordvar()]
-    else:
-        datasets = [(dataset_id, hdf.select(dataset_id))]
     meta = [HdfDataMeta(name=k,
                         type=SDC_TYPE_CONVERSIONS[v.info()[3]],
                         shape=tuple(v.info()[2]),
@@ -830,7 +845,8 @@ def _read_h4_meta(ifile: Union[Path, str], /,
                                              (v_[0],),
                                              hdf.select(k_)[0],
                                              hdf.select(k_)[-1])
-                                for k_, v_ in v.dimensions(full=1).items()][::-1]
+                                for k_, v_ in v.dimensions(full=1).items()
+                                if v_[3]][::-1]
                         )
             for k, v in datasets]
     return meta
@@ -1323,6 +1339,11 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
        The returned slice is Fortran-ordered *e.g.* radial slices will have shape
        (phi, theta), phi slices will have shape (r, theta), etc.
 
+    .. note::
+       SciPy's `RegularGridInterpolator` casts all input data to `float64` internally.
+       Therefore, PSI HDF datasets with single-precision (`float32`) data will be upcast
+       during interpolation.
+
     Examples
     --------
     >>> from psi_io.data import get_3d_data
@@ -1390,6 +1411,25 @@ def np_interpolate_slice_from_hdf(ifile, *xi, **kwargs):
     -----
     This function supports linear, bilinear, and trilinear interpolation
     depending on the number of dimensions fixed in `xi`.
+
+    Examples
+    --------
+    >>> from psi_io.data import get_3d_data
+    >>> from psi_io import np_interpolate_slice_from_hdf
+    >>> from numpy import pi
+    >>> filepath = get_3d_data()
+
+    Fetch a 2D slice at r=15 from 3D map
+
+    >>> slice_, theta_scale, phi_scale = np_interpolate_slice_from_hdf(filepath, 15, None, None)
+    >>> slice_.shape, theta_scale.shape, phi_scale.shape
+    ((181, 100), (100,), (181,))
+
+    Fetch a single point from 3D map
+
+    >>> point_value, *_ = np_interpolate_slice_from_hdf(filepath, 1, pi/2, pi)
+    >>> point_value
+    6.084496
 
     """
     f, *scales = read_hdf_by_value(ifile, *xi, **kwargs)
