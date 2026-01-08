@@ -777,13 +777,24 @@ def read_hdf_meta(ifile: Union[Path, str], /,
     """
     Read metadata from an HDF4 (.hdf) or HDF5 (.h5) file.
 
+    This function provides a unified interface to read metadata from both HDF4 and HDF5 files.
+
+    .. warning::
+       Unlike elsewhere in this module, the scales and datasets are read **as is**, *i.e.* without
+       reordering scales to match PSI's Fortran data ecosystem.
+
+    .. warning::
+       Unlike elsewhere in this module, when ``None`` is passed to ``dataset_id``, all (non-scale)
+       datasets are returned (instead of the default psi datasets *e.g.* 'Data-Set-2' or 'Data').
+       This will, effectively, return the standard PSI datasets when reading PSI-style HDF files.
+
     Parameters
     ----------
     ifile : Path | str
         The path to the HDF file to read.
     dataset_id : str, optional
         The identifier of the dataset for which to read metadata.
-        If ``None``, metadata for all datasets is returned.
+        If ``None``, metadata for **all** datasets is returned.
 
     Returns
     -------
@@ -799,6 +810,10 @@ def read_hdf_meta(ifile: Union[Path, str], /,
     -----
     This function delegates to :func:`_read_h5_meta` for HDF5 files and :func:`_read_h4_meta`
     for HDF4 files based on the file extension.
+
+    Although this function is designed to read metadata for dataset objects, it is possible to
+    read metadata for coordinate variables (scales) by passing their names to ``dataset_id``,
+    *e.g.* 'dim1', 'dim2', etc. However, this is not the intended use case.
     """
 
     return _dispatch_by_ext(ifile, _read_h4_meta, _read_h5_meta,
@@ -810,53 +825,66 @@ def _read_h5_meta(ifile: Union[Path, str], /,
                   ):
     """HDF5 (.h5) version of :func:`read_hdf_meta`."""
     with h5.File(ifile, 'r') as hdf:
+        # Raises KeyError if ``dataset_id`` not found
+        # If ``dataset_id`` is None, get all non-scale :class:`h5.Dataset`s
         if dataset_id:
-            datasets = [(dataset_id, hdf[dataset_id])]
+            datasets = (dataset_id, hdf[dataset_id]),
         else:
-            datasets = [(k, v) for k, v in hdf.items() if not v.is_scale]
-        meta = [HdfDataMeta(name=k,
+            datasets = ((k, v) for k, v in hdf.items() if not v.is_scale)
+
+        # One should avoid multiple calls to ``dimproxy[0]`` – *e.g.* ``dimproxy[0].dtype`` and
+        # ``dimproxy[0].shape`` – because the __getitem__ method creates and returns a new
+        # :class:`~h5.DimensionProxy` object each time it is called. [Does this matter? Probably not.]
+        return [HdfDataMeta(name=k,
                             type=v.dtype,
                             shape=v.shape,
-                            scales=[HdfScaleMeta(dim.label,
-                                                 dim[0].dtype,
-                                                 dim[0].shape,
-                                                 dim[0][0],
-                                                 dim[0][-1])
-                                    for dim in v.dims if dim]
-                            )
+                            scales=[HdfScaleMeta(name=dimproxy.label,
+                                                 type=dim.dtype,
+                                                 shape=dim.shape,
+                                                 imin=dim[0],
+                                                 imax=dim[-1])
+                                    for dimproxy in v.dims if dimproxy and (dim := dimproxy[0])])
                 for k, v in datasets]
-        return meta
+
 
 def _read_h4_meta(ifile: Union[Path, str], /,
                   dataset_id: Optional[str] = None
                   ):
     """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
     hdf = h4.SD(ifile)
+    # Raises HDF4Error if ``dataset_id`` not found
+    # If ``dataset_id`` is None, get all non-scale :class:`pyhdf.SD.SDS`s
     if dataset_id:
-        datasets = [(dataset_id, hdf.select(dataset_id))]
+        datasets = (dataset_id, hdf.select(dataset_id)),
     else:
-        datasets = [(k, hdf.select(k)) for k in hdf.datasets().keys() if
-                    not hdf.select(k).iscoordvar()]
-    meta = [HdfDataMeta(name=k,
+        datasets = ((k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar())
+
+    # The inner list comprehension differs in approach from the HDF5 version because calling
+    # ``dimensions(full=1)`` on an :class:`~pyhdf.SD.SDS` returns a dictionary of dimension
+    # dataset identifiers (keys) and tuples containing dimension metadata (values). Even if no
+    # coordinate-variable datasets are defined, this dictionary is still returned; the only
+    # indication that the datasets returned do not exist is that the "type" field (within the
+    # tuple of dimension metadata) is set to 0.
+
+    # Also, one cannot avoid multiple calls to ``hdf.select(k_)`` within the inner list comprehension
+    # because :class:`~pyhdf.SD.SDS` objects do not define a ``__bool__`` method, and the fallback
+    # behavior of Python is to assess if the __len__ method returns a non-zero value (which, in
+    # this case, always returns 0).
+    return [HdfDataMeta(name=k,
                         type=SDC_TYPE_CONVERSIONS[v.info()[3]],
-                        shape=tuple(v.info()[2]),
-                        scales=[HdfScaleMeta(k_,
-                                             SDC_TYPE_CONVERSIONS[v_[3]],
-                                             (v_[0],),
-                                             hdf.select(k_)[0],
-                                             hdf.select(k_)[-1])
-                                for k_, v_ in v.dimensions(full=1).items()
-                                if v_[3]][::-1]
-                        )
+                        shape=_cast_shape_tuple(v.info()[2]),
+                        scales=[HdfScaleMeta(name=k_,
+                                             type=SDC_TYPE_CONVERSIONS[v_[3]],
+                                             shape=_cast_shape_tuple(v_[0]),
+                                             imin=hdf.select(k_)[0],
+                                             imax=hdf.select(k_)[-1])
+                                for k_, v_ in v.dimensions(full=1).items() if v_[3]])
             for k, v in datasets]
-    return meta
 
 
 def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
     """
-    Read the scale metadata for PSI's 3D cubes. This function assumes that the
-    dataset has a shape (p, t, r) with radial, theta, and phi scales corresponding
-    to dimension r, t, p respectively.
+    Read the scale metadata for PSI's 3D cubes.
 
     Parameters
     ----------
@@ -890,17 +918,15 @@ def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
 def _read_h5_rtp(ifile: Union[ Path, str], /):
     """HDF5 (.h5) version of :func:`read_rtp_meta`."""
     with h5.File(ifile, 'r') as hdf:
-        return {dim[0]: (hdf[dim[1]].shape[0], hdf[dim[1]][0], hdf[dim[1]][-1]) for dim in
-                zip('rtp', ('dim1', 'dim2', 'dim3'))}
+        return {k: (hdf[v].size, hdf[v][0], hdf[v][-1])
+                for k, v in zip('rtp', ('dim1', 'dim2', 'dim3'),)}
 
 
 def _read_h4_rtp(ifile: Union[ Path, str], /):
     """HDF4 (.hdf) version of :func:`read_rtp_meta`."""
-    _except_no_pyhdf()
     hdf = h4.SD(ifile)
-    data = hdf.select('Data-Set-2')
-    return {dim[0]: (dim[1][1][0], hdf.select(dim[1][0])[0], hdf.select(dim[1][0])[-1]) for dim in
-            zip('ptr', (data.dimensions(full=1).items()))}
+    return {k: (hdf.select(v).info()[2], hdf.select(v)[0], hdf.select(v)[-1])
+            for k, v in zip('ptr', ('fakeDim0', 'fakeDim1', 'fakeDim2'),)}
 
 
 def read_hdf_by_value(ifile: Union[Path, str], /,
@@ -1183,8 +1209,6 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
 
 
-
-
 def _read_h5_by_index(ifile: Union[Path, str], /,
                       *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
@@ -1198,16 +1222,16 @@ def _read_h5_by_index(ifile: Union[Path, str], /,
 
         if not xi:
             if return_scales:
-                return data[:], *[dim[0][:] for dim in data.dims]
+                return np.asarray(data), *[np.asarray(dim[0]) for dim in data.dims if dim]
             else:
-                return np.array(data)
+                return np.asarray(data)
         else:
             assert len(xi) == data.ndim, f"len(xi) must equal the number of scales for {dataset_id}"
 
             slices = [None]*data.ndim
             for i, dim in enumerate(data.dims):
                 if xi[i] is None:
-                    slices[i] = slice(None, None)
+                    slices[i] = slice(None)
                 elif not isinstance(xi[i], Iterable):
                     slices[i] = slice(xi[i], xi[i] + 1)
                 else:
@@ -1713,3 +1737,30 @@ def _check_index_ranges(arr_size: int,
         return i0 - 2, i1
     else:
         return i0 - 1, i1 + 1
+
+
+def _cast_shape_tuple(input: Union[int, Iterable[int]]) -> tuple[int, ...]:
+    """
+    Cast an input to a tuple of integers.
+
+    Parameters
+    ----------
+    input : int | Iterable[int]
+        The input to cast.
+
+    Returns
+    -------
+    tuple[int]
+        The input cast as a tuple of integers.
+
+    Raises
+    ------
+    TypeError
+        If the input is neither an integer nor an iterable of integers.
+    """
+    if isinstance(input, int):
+        return (input,)
+    elif isinstance(input, Iterable):
+        return tuple(int(i) for i in input)
+    else:
+        raise TypeError("Input must be an integer or an iterable of integers.")
