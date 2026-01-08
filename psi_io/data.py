@@ -38,6 +38,7 @@ REGISTRY = {
     "h4h5-files/chmap.hdf": "sha256:fa2f1134aa4f1c9c0dd729b4e8f23f480bea5cb178e44e8da01bdffad09a2225",
     "h4h5-files/fieldline.hdf": "sha256:a4149783780e1ce44a8fe76a83c674e0a3082cd78c6a635b6c8e860e0fdd3891",
     "h4h5-files/br.hdf": "sha256:3a4b3174e5d6f45244bd25826890486b5659196b8fe093541c542375a88cdf52",
+    "h4h5-files/synchronic_map.h5": "sha256:170794a5a19684246339ca9782a2b89066b89661400ec48bb6fc0a082e0a2450"
 }
 """Registry of available magnetic field files with their SHA256 hashes. 
 
@@ -129,6 +130,7 @@ def get_1d_data(hdf: HdfExtType = ".h5") -> str:
     return FETCHER.fetch(filename)
 
 
+@check_hdf_type
 def get_2d_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the coronal hole map (2D) data file.
 
@@ -143,12 +145,11 @@ def get_2d_data(hdf: HdfExtType = ".h5") -> str:
     str
         Path to the downloaded coronal hole map data file.
     """
-    if hdf not in HDFEXT:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
     filename = f"h4h5-files/chmap{hdf}"
     return FETCHER.fetch(filename)
 
 
+@check_hdf_type
 def get_3d_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the radial magnetic field (3D) data file.
 
@@ -163,12 +164,11 @@ def get_3d_data(hdf: HdfExtType = ".h5") -> str:
     str
         Path to the downloaded radial magnetic field data file.
     """
-    if hdf not in HDFEXT:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
     filename = f"h4h5-files/br{hdf}"
     return FETCHER.fetch(filename)
 
 
+@check_hdf_type
 def get_fieldline_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the magnetic fieldline (2D) data file.
 
@@ -183,7 +183,26 @@ def get_fieldline_data(hdf: HdfExtType = ".h5") -> str:
     str
         Path to the downloaded magnetic fieldline data file.
     """
-    if hdf not in HDFEXT:
-        raise ValueError(f"Invalid HDF type '{hdf}'. Must be in {HDFEXT}.")
     filename = f"h4h5-files/fieldline{hdf}"
+    return FETCHER.fetch(filename)
+
+
+@check_hdf_type
+def get_synchronic_map_data(hdf: HdfExtType = ".h5") -> str:
+    """Fetch the synchronic map data file.
+
+    Parameters
+    ----------
+    hdf : HdfExtType, optional
+        The HDF file format to fetch, by default "h5".
+        Accepted values are "h5" for HDF5 and "hdf" for HDF4.
+
+    Returns
+    -------
+    str
+        Path to the downloaded synchronic map data file.
+    """
+    if hdf == ".hdf":
+        raise NotImplemented("Synchronic map data is only available in HDF5 format.")
+    filename = f"h4h5-files/synchronic_map{hdf}"
     return FETCHER.fetch(filename)
