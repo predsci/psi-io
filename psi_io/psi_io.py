@@ -39,6 +39,7 @@ Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
            generic positions (`interpolate_positions_from_hdf`).
 2025/06: CD: Prep for integration into psi-io package, HDF4 is now optional.
 """
+import math
 # Standard Python imports
 from collections import namedtuple
 from enum import Enum
@@ -49,6 +50,7 @@ from typing import Optional, Literal, Tuple, Iterable, List, Dict, Union, Callab
 # Required Packages
 import numpy as np
 import h5py as h5
+from numpy.ma.core import floor
 
 # -----------------------------------------------------------------------------
 # Optional Imports and Import Checking
@@ -509,10 +511,8 @@ def get_scales_1d(filename: str
     x : np.ndarray
         1D array of scales in the X dimension.
     """
-    if filename.endswith('h5'):
-        return _get_scales_h5(filename)
-    else:
-        return _get_scales_h4(filename)
+    return _dispatch_by_ext(filename, _get_scales_nd_h4, _get_scales_nd_h5,
+                            dimensionality=1)
 
 
 def get_scales_2d(filename: str
@@ -535,10 +535,8 @@ def get_scales_2d(filename: str
     y : np.ndarray
         1D array of scales in the Y dimension.
     """
-    if filename.endswith('h5'):
-        return _get_scales_h5(filename)
-    else:
-        return _get_scales_h4(filename)
+    return _dispatch_by_ext(filename, _get_scales_nd_h4, _get_scales_nd_h5,
+                            dimensionality=2)
 
 
 def get_scales_3d(filename: str
@@ -563,104 +561,46 @@ def get_scales_3d(filename: str
     z : np.ndarray
         1D array of scales in the Z dimension.
     """
-    if filename.endswith('h5'):
-        return _get_scales_h5(filename)
-    else:
-        return _get_scales_h4(filename)
+    return _dispatch_by_ext(filename, _get_scales_nd_h4, _get_scales_nd_h5,
+                            dimensionality=3)
 
 
-def _get_scales_h4(hdf_filename):
-    """Base 1D scale reader for 1D, 2D, and 3D HDF4 files.
-
-    Generally this function should not be called directly.
-    Use `get_scales_1d`, `get_scales_2d`, or `get_scales_3d` instead.
-    """
-    _except_no_pyhdf()
-    # get the file info
-    try:
-        sd_id = h4.SD(hdf_filename)
-    except:
-        raise Exception(f'### ERROR!!! get_scales_h4: COULD NOT OPEN\n'
-                        f' {hdf_filename}')
-
-    # open up the SDS assuming it is a PSI style file
-    sds_id = sd_id.select('Data-Set-2')
-
-    # get the dimensions of the dataset
-    dim_dict = sds_id.dimensions()
-    ndims = len(dim_dict)
-
-    # Get the scales. Check if they exist by looking at the 3rd
-    # element of dim.info(). 0 = none, 5 = float32, 6 = float64.
-    # see http://pysclint.sourceforge.net/pyhdf/pyhdf.SD.html#SD
-    # and http://pysclint.sourceforge.net/pyhdf/pyhdf.SD.html#SDC
-    for i in range(ndims):
-        dim = sds_id.dim(i)
-        if dim.info()[2] == 0:
-            raise Exception(f'  ERROR! Dim {i} does not have scales in \n {hdf_filename}')
-        if i == 0:
-            scale1 = np.array(dim.getscale())
-        elif i == 1:
-            scale2 = np.array(dim.getscale())
-        elif i == 2:
-            scale3 = np.array(dim.getscale())
-
-    # close the dataset
-    sd_id.end()
-
-    # note the scales are returned according to the C-Style array shape.
-    # instead return them in the fortran style order, which depends on the dimensionality
-    if ndims == 1:
-        return scale1
-    elif ndims == 2:
-        return scale2, scale1
-    elif ndims == 3:
-        return scale3, scale2, scale1
+def _get_scales_nd_h4(ifile: Union[ Path, str], /,
+                      dimensionality: int,
+                      dataset_id: Optional[str] = None,
+                      ):
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    ndim = data.info()[1]
+    if ndim != dimensionality:
+        err = f'Expected {dimensionality}D data, got {ndim}D data instead.'
+        raise ValueError(err)
+    scales = []
+    for k_, v_ in reversed(data.dimensions(full=1).items()):
+        if v_[3]:
+            scales.append(np.asarray(hdf.select(k_)))
+        else:
+            raise ValueError('Dimension has no scale associated with it.')
+    return tuple(scales)
 
 
-def _get_scales_h5(h5_filename):
-    """Base 1D scale reader for 1D, 2D, and 3D HDF5 files.
-
-    Here the arrays are converted to 64 bit for better compatibility with numpy,
-    which (weirdly) is generally as fast or faster than keeping float32.
-
-    Generally this function should not be called directly.
-    Use `get_scales_1d`, `get_scales_2d`, or `get_scales_3d` instead.
-    """
-    # get the file info
-    try:
-        h5file = h5.File(h5_filename, 'r')
-    except:
-        raise Exception(f'### ERROR!!! get_scales_h5: COULD NOT OPEN\n'
-                        f' {h5_filename}')
-
-    # here the scales are datasets at the main level (dim1, dim2, dim3, etc)
-    # --> we can just get those directly without wasing time on the dataset
-    keys = h5file.keys()
-
-    ndims = 0
-    if 'dim1' in keys:
-        scale1 = np.array(h5file['dim1'], dtype=np.float64)
-        ndims = ndims + 1
-    if 'dim2' in keys:
-        scale2 = np.array(h5file['dim2'], dtype=np.float64)
-        ndims = ndims + 1
-    if 'dim3' in keys:
-        scale3 = np.array(h5file['dim3'], dtype=np.float64)
-        ndims = ndims + 1
-
-    # close the file
-    h5file.close()
-
-    # note in the hdf5 format the dim1, dim2, dim3 names correspond to the
-    # fortran array ordering --> return them in this order (no flip like the
-    # HDF4 version of this subroutine).
-    if ndims == 1:
-        return scale1
-    elif ndims == 2:
-        return scale1, scale2
-    elif ndims == 3:
-        return scale1, scale2, scale3
+def _get_scales_nd_h5(ifile: Union[ Path, str], /,
+                      dimensionality: int,
+                      dataset_id: Optional[str] = None,
+                      ):
+    with h5.File(ifile, 'r') as hdf:
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        ndim = data.ndim
+        if ndim != dimensionality:
+            err = f'Expected {dimensionality}D data, got {ndim}D data instead.'
+            raise ValueError(err)
+        scales = []
+        for dim in data.dims:
+            if dim:
+                scales.append(np.asarray(dim[0]))
+            else:
+                raise ValueError(f'Dimension has no scale associated with it.')
+    return tuple(scales)
 
 
 # -----------------------------------------------------------------------------
@@ -959,11 +899,11 @@ def _read_h5_data(ifile: Union[Path, str], /,
                   ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        dataset = np.asarray(data)
         if return_scales:
-            out = np.asarray(data), *[np.asarray(dim[0]) for dim in data.dims if dim]
-        else:
-            out = np.asarray(data)
-        return out
+            scales = [np.asarray(dim[0]) for dim in data.dims if dim]
+            return dataset, *scales
+        return dataset
 
 
 def _read_h4_data(ifile: Union[Path, str], /,
@@ -973,7 +913,8 @@ def _read_h4_data(ifile: Union[Path, str], /,
     hdf = h4.SD(ifile)
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     if return_scales:
-        out = np.asarray(data), *[np.asarray(hdf.select(k_)) for k_, v_ in reversed(data.dimensions(full=1).items()) if v_[3]]
+        out = (np.asarray(data),
+               *[np.asarray(hdf.select(k_)) for k_, v_ in reversed(data.dimensions(full=1).items()) if v_[3]])
     else:
         out = np.asarray(data)
     return out
@@ -1078,16 +1019,16 @@ def _read_h5_by_index(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """ HDF5(.h5) version of :func:`read_hdf_by_index`."""
-    with h5.File(ifile, 'r') as hdf:
+    with (h5.File(ifile, 'r') as hdf):
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
             raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-        slices = [_parse_slice_inputs(slice_input) for slice_input in xi]
+        slices = [_parse_index_inputs(slice_input) for slice_input in xi]
+        dataset = data[tuple(reversed(slices))]
         if return_scales:
-            out = data[tuple(reversed(slices))], *[dim[0][si] for si, dim in zip(slices, data.dims) if dim]
-        else:
-            out = data[tuple(reversed(slices))]
-    return out
+            scales = [dim[0][si] for si, dim in zip(slices, data.dims) if dim]
+            return dataset, *scales
+        return dataset
 
 def _read_h4_by_index(ifile: Union[Path, str], /,
                       *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
@@ -1100,12 +1041,12 @@ def _read_h4_by_index(ifile: Union[Path, str], /,
     ndim = data.info()[1]
     if len(xi) != ndim:
         raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-    slices = [_parse_slice_inputs(slice_input) for slice_input in xi]
+    slices = [_parse_index_inputs(slice_input) for slice_input in xi]
+    dataset = data[tuple(reversed(slices))]
     if return_scales:
-        out = (data[tuple(reversed(slices))], *[hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]])
-    else:
-        out = data[tuple(reversed(slices))]
-    return out
+        scales = [hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]]
+        return dataset, *scales
+    return dataset
 
 
 def read_hdf_by_value(ifile: Union[Path, str], /,
@@ -1222,32 +1163,23 @@ def _read_h5_by_value(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """HDF5 (.h5) version of :func:`read_hdf_by_value`."""
-    with h5.File(ifile, 'r') as hdf:
+    with (h5.File(ifile, 'r') as hdf):
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
             raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-
-        slices = [None]*data.ndim
-        for i, dim in enumerate(data.dims):
-            dim_proxy = dim[0]
-            if xi[i] is None:
-                slices[i] = slice(None, None)
-            elif not isinstance(xi[i], Iterable):
-                insert_index = np.searchsorted(dim_proxy[:], xi[i])
-                slices[i] = slice(*_check_index_ranges(dim_proxy.size, insert_index, insert_index))
+        slices = []
+        for dimproxy, value in zip(data.dims, xi):
+            if dimproxy:
+                slices.append(_parse_value_inputs(dimproxy[0], value))
+            elif value is None:
+                slices.append(slice(None))
             else:
-                temp_range = list(xi[i])
-                if temp_range[0] is None:
-                    temp_range[0] = -np.inf
-                if temp_range[-1] is None:
-                    temp_range[-1] = np.inf
-                insert_indices = np.searchsorted(dim_proxy[:], temp_range)
-                slices[i] = slice(*_check_index_ranges(dim_proxy.size, *insert_indices))
+                raise ValueError("Cannot slice by value on dimension without scales")
+        dataset = data[tuple(reversed(slices))]
         if return_scales:
-            out = data[tuple(slices)[::-1]], *[dim[0][slices[i]] for i, dim in enumerate(data.dims)]
-        else:
-            out = data[tuple(slices)[::-1]]
-    return out
+            scales = [dim[0][si] for si, dim in zip(slices, data.dims) if dim]
+            return dataset, *scales
+        return dataset
 
 
 def _read_h4_by_value(ifile: Union[Path, str], /,
@@ -1261,30 +1193,65 @@ def _read_h4_by_value(ifile: Union[Path, str], /,
     ndim = data.info()[1]
     if len(xi) != ndim:
         raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-    xi = list(xi)[::-1]
-    slices = [None]*ndim
-    for i, dim in enumerate(data.dimensions().keys()):
-        dim_proxy = hdf.select(dim)
-        if xi[i] is None:
-            slices[i] = slice(None, None)
-        elif not isinstance(xi[i], Iterable):
-            insert_index = int(np.searchsorted(dim_proxy[:], xi[i]))
-            slices[i] = slice(*_check_index_ranges(dim_proxy.info()[2], insert_index, insert_index))
+    slices = []
+    for (k_, v_), value in zip(reversed(data.dimensions(full=1).items()), xi):
+        if v_[3] != 0:
+            slices.append(_parse_value_inputs(hdf.select(k_), value))
+        elif value is None:
+            slices.append(slice(None))
         else:
-            temp_range = list(xi[i])
-            if temp_range[0] is None:
-                temp_range[0] = -np.inf
-            if temp_range[-1] is None:
-                temp_range[-1] = np.inf
-            insert_indices = np.searchsorted(dim_proxy[:], temp_range)
-            slices[i] = slice(*_check_index_ranges(dim_proxy.info()[2], int(insert_indices[0]), int(insert_indices[1])))
+            raise ValueError("Cannot slice by value on dimension without scales")
+    dataset = data[tuple(reversed(slices))]
     if return_scales:
-        out = data[tuple(slices)], *[hdf.select(dim)[slices[i]] for i, dim in enumerate(data.dimensions().keys())][::-1]
-    else:
-        out = data[tuple(slices)]
+        scales = [hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]]
+        return dataset, *scales
+    return dataset
 
-    hdf.end()
-    return out
+
+def read_hdf_by_ivalue(ifile: Union[Path, str], /,
+                      *xi: Union[float, Tuple[float, float], None],
+                      dataset_id: Optional[str] = None,
+                      return_scales: bool = True,
+                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    if not xi:
+        return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
+    return _dispatch_by_ext(ifile, _read_h4_by_ivalue, _read_h5_by_ivalue,
+                            *xi, dataset_id=dataset_id, return_scales=return_scales)
+
+
+def _read_h5_by_ivalue(ifile: Union[Path, str], /,
+                       *xi: Union[float, Tuple[float, float], None],
+                       dataset_id: Optional[str] = None,
+                       return_scales: bool = True,
+                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    with (h5.File(ifile, 'r') as hdf):
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        if len(xi) != data.ndim:
+            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+        slices = [_parse_ivalue_inputs(*args) for args in zip(reversed(data.shape), xi)]
+        dataset = data[tuple(reversed(slices))]
+        if return_scales:
+            scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(data.shape))]
+            return dataset, *scales
+        return dataset
+
+
+def _read_h4_by_ivalue(ifile: Union[Path, str], /,
+                       *xi: Union[float, Tuple[float, float], None],
+                       dataset_id: Optional[str] = None,
+                       return_scales: bool = True,
+                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    ndim, shape = data.info()[1], _cast_shape_tuple(data.info()[2])
+    if len(xi) != ndim:
+        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+    slices = [_parse_ivalue_inputs(*args) for args in zip(reversed(shape), xi)]
+    dataset = data[tuple(reversed(slices))]
+    if return_scales:
+        scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(shape))]
+        return dataset, *scales
+    return dataset
 
 
 def instantiate_linear_interpolator(*args, **kwargs):
@@ -1408,7 +1375,11 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
     return slice_[tuple(indices)].T, *[yi[1] for yi in zip(args, result[1:]) if yi[0] is None]
 
 
-def np_interpolate_slice_from_hdf(ifile, *xi, **kwargs):
+def np_interpolate_slice_from_hdf(ifile: Union[Path, str], /,
+                       *xi: Union[float, Tuple[float, float], None],
+                       dataset_id: Optional[str] = None,
+                       by_index: bool = False,
+                       ):
     """
     Interpolate a slice from HDF data using linear interpolation.
 
@@ -1467,13 +1438,9 @@ def np_interpolate_slice_from_hdf(ifile, *xi, **kwargs):
     6.084496
 
     """
-    f, *scales = read_hdf_by_value(ifile, *xi, **kwargs)
-    # if by_index is True:
-    #     index_scales = []
-    #     for scale in scales:
-    #         index_scales.append(np.arange(len(scale)))
-    #         scales = tuple(index_scales)
-    f_ = np.transpose(f)
+    reader = read_hdf_by_value if not by_index else read_hdf_by_ivalue
+    data, *scales = reader(ifile, *xi, dataset_id=dataset_id, return_scales=True)
+    f_ = np.transpose(data)
     slice_type = sum([yi is not None for yi in xi])
     if slice_type == 1:
         return _np_linear_interpolation(xi, scales, f_).T, *[yi[1] for yi in zip(xi, scales) if yi[0] is None]
@@ -1716,8 +1683,8 @@ def _np_trilinear_interpolation(xi, scales, values):
 
 
 def _check_index_ranges(arr_size: int,
-                        i0: int,
-                        i1: int
+                        i0: Union[int, np.integer],
+                        i1: Union[int, np.integer]
                         ) -> Tuple[int, int]:
     """
     Adjust index ranges to ensure they cover at least two indices.
@@ -1742,6 +1709,7 @@ def _check_index_ranges(arr_size: int,
     two indices for interpolation purposes.
 
     """
+    i0, i1 = int(i0), int(i1)
     if i0 == 0:
         return (i0, i1 + 2) if i1 == 0 else (i0, i1 + 1)
     elif i0 == arr_size:
@@ -1777,7 +1745,7 @@ def _cast_shape_tuple(input: Union[int, Iterable[int]]) -> tuple[int, ...]:
         raise TypeError("Input must be an integer or an iterable of integers.")
 
 
-def _parse_slice_inputs(input: Union[int, slice, Iterable[Union[int, None]], None]) -> slice:
+def _parse_index_inputs(input: Union[int, slice, Iterable[Union[int, None]], None]) -> slice:
     """
     Parse various slice input formats into a standard slice object.
 
@@ -1802,8 +1770,6 @@ def _parse_slice_inputs(input: Union[int, slice, Iterable[Union[int, None]], Non
     """
     if isinstance(input, int):
         return slice(input, input + 1)
-    elif isinstance(input, slice):
-        return input
     elif isinstance(input, Iterable):
         return slice(*input)
     elif input is None:
@@ -1812,4 +1778,65 @@ def _parse_slice_inputs(input: Union[int, slice, Iterable[Union[int, None]], Non
         raise TypeError("Unsupported input type for slicing.")
 
 
-def _parse_value_inputs
+def _parse_value_inputs(dimproxy, value, scale_exists: bool = True) -> slice:
+    if value is None:
+        return slice(None)
+    if not scale_exists:
+        raise ValueError("Cannot parse value inputs when scale does not exist.")
+    dim = np.asarray(dimproxy)
+    if not isinstance(value, Iterable):
+        insert_index = np.searchsorted(dim, value)
+        return slice(*_check_index_ranges(dim.size, insert_index, insert_index))
+    else:
+        temp_range = list(value)
+        if temp_range[0] is None:
+            temp_range[0] = -np.inf
+        if temp_range[-1] is None:
+            temp_range[-1] = np.inf
+        insert_indices = np.searchsorted(dim, temp_range)
+        return slice(*_check_index_ranges(dim.size, *insert_indices))
+
+
+def _parse_ivalue_inputs(dimsize, input: Union[Union[int, float], slice, Iterable[Union[Union[int, float], None]], None]) -> slice:
+    """
+    Parse various slice input formats into a standard slice object.
+
+    Parameters
+    ----------
+    input : int | slice | Iterable[Union[int, None]] | None
+        The input to parse.
+    arr_size : int
+        The size of the array along the dimension.
+
+    Returns
+    -------
+    slice
+        The parsed slice object.
+
+    Raises
+    ------
+    TypeError
+        If the input type is unsupported.
+    ValueError
+        If the input iterable does not have exactly two elements.
+    """
+    if input is None:
+        return slice(None)
+    elif isinstance(input, (int, float)):
+        i0, i1 = math.floor(input), math.ceil(input)
+    elif isinstance(input, Iterable):
+        i0, i1 = math.floor(input[0]), math.ceil(input[1])
+    else:
+        raise TypeError("Unsupported input type for slicing.")
+
+    if i0 > i1:
+        i0, i1 = i1, i0
+    i0, i1 = max(0, i0), min(dimsize - 1, i1)
+    if i0 > i1:
+        i0, i1 = i1, i0
+    i0, i1 = max(0, i0), min(dimsize - 1, i1)
+    if (i1 - i0) < 2:
+        return slice(i0, i1 + 2 - (i1-i0))
+    else:
+        return slice(i0, i1)
+
