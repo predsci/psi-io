@@ -50,7 +50,6 @@ from typing import Optional, Literal, Tuple, Iterable, List, Dict, Union, Callab
 # Required Packages
 import numpy as np
 import h5py as h5
-from numpy.ma.core import floor
 
 # -----------------------------------------------------------------------------
 # Optional Imports and Import Checking
@@ -80,6 +79,117 @@ def _except_no_scipy():
     if not SCIPY_AVAILABLE:
         raise ImportError('The scipy package is required for the interpolation routines!')
     return
+
+
+SDC_TYPE_CONVERSIONS = MappingProxyType({
+    3: np.dtype("ubyte"),
+    4: np.dtype("byte"),
+    5: np.dtype("float32"),
+    6: np.dtype("float64"),
+    20: np.dtype("int8"),
+    21: np.dtype("uint8"),
+    22: np.dtype("int16"),
+    23: np.dtype("uint16"),
+    24: np.dtype("int32"),
+    25: np.dtype("uint32")
+})
+"""Helper dictionary for mapping HDF4 types to numpy dtypes"""
+
+
+PSI_DATA_ID = MappingProxyType({
+    'h4': 'Data-Set-2',
+    'h5': 'Data'
+})
+"""Mapping of PSI standard dataset names for HDF4 and HDF5 files"""
+
+
+PSI_SCALE_ID = MappingProxyType({
+    'h4': ('fakeDim0', 'fakeDim1', 'fakeDim2'),
+    'h5': ('dim1', 'dim2', 'dim3')
+})
+"""Mapping of PSI standard scale names for HDF4 and HDF5 files"""
+
+
+HDFEXT = {'.hdf', '.h5'}
+"""Set of possible HDF file extensions"""
+
+
+HdfExtType = Literal['.hdf', '.h5']
+"""Type alias for possible HDF file extensions"""
+
+
+HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'imax'])
+"""
+    Named tuples for HDF metadata
+
+    Parameters
+    ----------
+    name : str
+        The name of the scale.
+    type : str
+        The data type of the scale.
+    shape : Tuple[int, ...]
+        The shape of the scale.
+    imin : float
+        The minimum value of the scale.
+        This assumes the scale is monotonically increasing.
+    imax : float
+        The maximum value of the scale.
+        This assumes the scale is monotonically increasing.
+"""
+
+
+HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'scales'])
+"""
+    Named tuple for HDF dataset metadata
+
+    Parameters
+    ----------
+    name : str
+        The name of the dataset.
+    type : str
+        The data type of the dataset.
+    shape : tuple of int
+        The shape of the dataset.
+    scales : list of HdfScaleMeta
+        A list of scale metadata objects corresponding to each dimension of the dataset.
+        If the dataset has no scales, this list will be empty.
+"""
+
+
+def _dispatch_by_ext(ifile: Union[Path, str],
+                     hdf4_func: Callable,
+                     hdf5_func: Callable,
+                     *args: Any, **kwargs: Any
+                     ):
+    """
+    Dispatch function to call HDF4 or HDF5 specific functions based on file extension.
+
+    Parameters
+    ----------
+    ifile : Path | str
+        The path to the HDF file.
+    hdf4_func : Callable
+        The function to call for HDF4 files.
+    hdf5_func : Callable
+        The function to call for HDF5 files.
+    *args : Any
+        Positional arguments to pass to the selected function.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+    ImportError
+        If the file is HDF4 and the `pyhdf` package is not available
+    """
+    ipath = Path(ifile)
+    if ipath.suffix == '.h5':
+        return hdf5_func(ifile, *args, **kwargs)
+    if ipath.suffix == '.hdf':
+        _except_no_pyhdf()
+        return hdf4_func(ifile, *args, **kwargs)
+    raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
 
 
 # -----------------------------------------------------------------------------
@@ -158,109 +268,6 @@ def rdhdf_3d(hdf_filename: str
         3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
     """
     return _rdhdf_nd(hdf_filename, dimensionality=3)
-
-
-def _rdhdf_nd(hdf_filename: str, dimensionality: int) -> Tuple[np.ndarray, ...]:
-    f, *scales = read_hdf_data(hdf_filename)
-    if f.ndim != dimensionality:
-        err = f'Expected {dimensionality}D data, got {f.ndim}D data instead.'
-        raise ValueError(err)
-    scales = scales or (np.empty(0) for _ in f.shape)
-    return *scales, f
-
-
-# def _rdh5(h5_filename: str
-#           ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-#     """Base reader for 1D, 2D, and 3D HDF5 files.
-#
-#     See Also
-#     --------
-#     :func:`rdhdf_1d`, :func:`rdhdf_2d`, :func:`rdhdf_3d`
-#     """
-#     x = np.array([])
-#     y = np.array([])
-#     z = np.array([])
-#     f = np.array([])
-#
-#     h5file = h5.File(h5_filename, 'r')
-#     f = h5file['Data']
-#     dims = f.shape
-#     ndims = np.ndim(f)
-#
-#     # Get the scales if they exist:
-#     for i in range(0, ndims):
-#         if i == 0:
-#             if len(h5file['Data'].dims[0].keys()) != 0:
-#                 x = h5file['Data'].dims[0][0]
-#         elif i == 1:
-#             if len(h5file['Data'].dims[1].keys()) != 0:
-#                 y = h5file['Data'].dims[1][0]
-#         elif i == 2:
-#             if len(h5file['Data'].dims[2].keys()) != 0:
-#                 z = h5file['Data'].dims[2][0]
-#
-#     x = np.array(x)
-#     y = np.array(y)
-#     z = np.array(z)
-#     f = np.array(f)
-#
-#     h5file.close()
-#
-#     return x, y, z, f
-#
-#
-# def _rdhdf(hdf_filename: str
-#            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-#     """Base reader for 1D, 2D, and 3D HDF4 files.
-#
-#     See Also
-#     --------
-#     :func:`rdhdf_1d`, :func:`rdhdf_2d`, :func:`rdhdf_3d`
-#     """
-#     if hdf_filename.endswith('h5'):
-#         return _rdh5(hdf_filename)
-#
-#     # Check for HDF4
-#     _except_no_pyhdf()
-#
-#     x = np.array([])
-#     y = np.array([])
-#     z = np.array([])
-#     f = np.array([])
-#
-#     # Open the HDF file
-#     sd_id = h4.SD(hdf_filename)
-#
-#     # Read dataset.  In all PSI hdf4 files, the
-#     # data is stored in "Data-Set-2":
-#     sds_id = sd_id.select('Data-Set-2')
-#     f = sds_id.get()
-#
-#     # Get number of dimensions:
-#     ndims = np.ndim(f)
-#
-#     # Get the scales. Check if theys exist by looking at the 3rd
-#     # element of dim.info(). 0 = none, 5 = float32, 6 = float64.
-#     # see http://pysclint.sourceforge.net/pyhdf/pyhdf.SD.html#SD
-#     # and http://pysclint.sourceforge.net/pyhdf/pyhdf.SD.html#SDC
-#     for i in range(0, ndims):
-#         dim = sds_id.dim(i)
-#         if dim.info()[2] != 0:
-#             if i == 0:
-#                 x = dim.getscale()
-#             elif i == 1:
-#                 y = dim.getscale()
-#             elif i == 2:
-#                 z = dim.getscale()
-#
-#     sd_id.end()
-#
-#     x = np.array(x)
-#     y = np.array(y)
-#     z = np.array(z)
-#     f = np.array(f)
-#
-#     return x, y, z, f
 
 
 def wrhdf_1d(hdf_filename: str,
@@ -351,150 +358,6 @@ def wrhdf_3d(hdf_filename: str,
         _wrhdf(hdf_filename, z, y, x, f)
 
 
-def _wrh5(h5_filename: str,
-          x: np.ndarray,
-          y: np.ndarray,
-          z: np.ndarray,
-          f: np.ndarray) -> None:
-    """Base writer for 1D, 2D, and 3D HDF5 files.
-
-    See Also
-    --------
-    :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
-    """
-    h5file = h5.File(h5_filename, 'w')
-
-    # Create the dataset (Data is the name used by the psi data)).
-    h5file.create_dataset("Data", data=f)
-
-    # Make sure the scales are desired by checking x type, which can
-    # be None or None converted by np.asarray (have to trap seperately)
-    if x is None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-    if x.any() == None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-
-    # Make sure scales are the same precision as data.
-    x = x.astype(f.dtype)
-    y = y.astype(f.dtype)
-    z = z.astype(f.dtype)
-
-    # Get number of dimensions:
-    ndims = np.ndim(f)
-
-    # Set the scales:
-    for i in range(0, ndims):
-        if i == 0 and len(x) != 0:
-            dim = h5file.create_dataset("dim1", data=x)
-            #            h5file['Data'].dims.create_scale(dim,'dim1')
-            dim.make_scale('dim1')
-            h5file['Data'].dims[0].attach_scale(dim)
-            h5file['Data'].dims[0].label = 'dim1'
-        if i == 1 and len(y) != 0:
-            dim = h5file.create_dataset("dim2", data=y)
-            #            h5file['Data'].dims.create_scale(dim,'dim2')
-            dim.make_scale('dim2')
-            h5file['Data'].dims[1].attach_scale(dim)
-            h5file['Data'].dims[1].label = 'dim2'
-        elif i == 2 and len(z) != 0:
-            dim = h5file.create_dataset("dim3", data=z)
-            #            h5file['Data'].dims.create_scale(dim,'dim3')
-            dim.make_scale('dim3')
-            h5file['Data'].dims[2].attach_scale(dim)
-            h5file['Data'].dims[2].label = 'dim3'
-
-    # Close the file:
-    h5file.close()
-
-
-def _wrhdf(hdf_filename: str,
-          x: np.ndarray,
-          y: np.ndarray,
-          z: np.ndarray,
-          f: np.ndarray) -> None:
-    """Base writer for 1D, 2D, and 3D HDF4 files.
-
-    See Also
-    --------
-    :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
-    """
-    if hdf_filename.endswith('h5'):
-        return _wrh5(hdf_filename, x, y, z, f)
-
-    # Check for HDF4
-    _except_no_pyhdf()
-
-    # Create an HDF file
-    sd_id = h4.SD(hdf_filename, h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
-
-    # Due to bug, need to only write 64-bit.
-    f = f.astype(np.float64)
-    ftype = h4.SDC.FLOAT64
-
-    #    if f.dtype == np.float32:
-    #        ftype = h4.SDC.FLOAT32
-    #    elif f.dtype == np.float64:
-    #        ftype = h4.SDC.FLOAT64
-
-    # Create the dataset (Data-Set-2 is the name used by the psi data)).
-    sds_id = sd_id.create("Data-Set-2", ftype, f.shape)
-
-    # Get number of dimensions:
-    ndims = np.ndim(f)
-
-    # Make sure the scales are desired by checking x type, which can
-    # be None or None converted by np.asarray (have to trap seperately)
-    if x is None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-    if x.any() == None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-
-    # Due to python hdf4 bug, need to use double scales only.
-
-    x = x.astype(np.float64)
-    y = y.astype(np.float64)
-    z = z.astype(np.float64)
-
-    # Set the scales (or don't if x is none or length zero)
-    for i in range(0, ndims):
-        dim = sds_id.dim(i)
-        if i == 0 and len(x) != 0:
-            if x.dtype == np.float32:
-                stype = h4.SDC.FLOAT32
-            elif x.dtype == np.float64:
-                stype = h4.SDC.FLOAT64
-            dim.setscale(stype, x)
-        elif i == 1 and len(y) != 0:
-            if y.dtype == np.float32:
-                stype = h4.SDC.FLOAT32
-            elif y.dtype == np.float64:
-                stype = h4.SDC.FLOAT64
-            dim.setscale(stype, y)
-        elif i == 2 and len(z) != 0:
-            if z.dtype == np.float32:
-                stype = h4.SDC.FLOAT32
-            elif z.dtype == np.float64:
-                stype = h4.SDC.FLOAT64
-            dim.setscale(stype, z)
-
-    # Write the data:
-    sds_id.set(f)
-
-    # Close the dataset:
-    sds_id.endaccess()
-
-    # Flush and close the HDF file:
-    sd_id.end()
-
-
 def get_scales_1d(filename: str
                   ) -> np.ndarray:
     """Wrapper to return the scales of a 1D PSI style HDF5 or HDF4 dataset.
@@ -565,166 +428,9 @@ def get_scales_3d(filename: str
                             dimensionality=3)
 
 
-def _get_scales_nd_h4(ifile: Union[ Path, str], /,
-                      dimensionality: int,
-                      dataset_id: Optional[str] = None,
-                      ):
-    hdf = h4.SD(ifile)
-    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
-    ndim = data.info()[1]
-    if ndim != dimensionality:
-        err = f'Expected {dimensionality}D data, got {ndim}D data instead.'
-        raise ValueError(err)
-    scales = []
-    for k_, v_ in reversed(data.dimensions(full=1).items()):
-        if v_[3]:
-            scales.append(np.asarray(hdf.select(k_)))
-        else:
-            raise ValueError('Dimension has no scale associated with it.')
-    return tuple(scales)
-
-
-def _get_scales_nd_h5(ifile: Union[ Path, str], /,
-                      dimensionality: int,
-                      dataset_id: Optional[str] = None,
-                      ):
-    with h5.File(ifile, 'r') as hdf:
-        data = hdf[dataset_id or PSI_DATA_ID['h5']]
-        ndim = data.ndim
-        if ndim != dimensionality:
-            err = f'Expected {dimensionality}D data, got {ndim}D data instead.'
-            raise ValueError(err)
-        scales = []
-        for dim in data.dims:
-            if dim:
-                scales.append(np.asarray(dim[0]))
-            else:
-                raise ValueError(f'Dimension has no scale associated with it.')
-    return tuple(scales)
-
-
 # -----------------------------------------------------------------------------
-# NEWER ALTERNATIVE METHODS FOR SLICING & INTERPOLATING HDFs
+# "Updated" HDF reading and slicing routines for Hdf4 and Hdf5 datasets.
 # -----------------------------------------------------------------------------
-# These methods are aimed at eliminating the need for
-# reading entire datasets into memory when the objective
-# is to inspect only a small subset of the data e.g.
-# producing 1D or 2D slices.
-#
-# More examples and use cases are forthcoming, along
-# with benchmarking tests and further documentation.
-# -----------------------------------------------------------------------------
-
-
-SDC_TYPE_CONVERSIONS = MappingProxyType({
-    3: np.dtype("ubyte"),
-    4: np.dtype("byte"),
-    5: np.dtype("float32"),
-    6: np.dtype("float64"),
-    20: np.dtype("int8"),
-    21: np.dtype("uint8"),
-    22: np.dtype("int16"),
-    23: np.dtype("uint16"),
-    24: np.dtype("int32"),
-    25: np.dtype("uint32")
-})
-"""Helper dictionary for mapping HDF4 types to numpy dtypes"""
-
-
-PSI_DATA_ID = MappingProxyType({
-    'h4': 'Data-Set-2',
-    'h5': 'Data'
-})
-"""Mapping of PSI standard dataset names for HDF4 and HDF5 files"""
-
-
-PSI_SCALE_ID = MappingProxyType({
-    'h4': ('fakeDim0', 'fakeDim1', 'fakeDim2'),
-    'h5': ('dim1', 'dim2', 'dim3')
-})
-"""Mapping of PSI standard scale names for HDF4 and HDF5 files"""
-
-
-HDFEXT = {'.hdf', '.h5'}
-"""Set of possible HDF file extensions"""
-
-
-HdfExtType = Literal['.hdf', '.h5']
-"""Type alias for possible HDF file extensions"""
-
-
-HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'imax'])
-"""
-    Named tuples for HDF metadata
-    
-    Parameters
-    ----------
-    name : str
-        The name of the scale.
-    type : str
-        The data type of the scale.
-    shape : Tuple[int, ...]
-        The shape of the scale.
-    imin : float
-        The minimum value of the scale.
-        This assumes the scale is monotonically increasing.
-    imax : float
-        The maximum value of the scale.
-        This assumes the scale is monotonically increasing.
-"""
-
-
-HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'scales'])
-"""
-    Named tuple for HDF dataset metadata
-    
-    Parameters
-    ----------
-    name : str
-        The name of the dataset.
-    type : str
-        The data type of the dataset.
-    shape : tuple of int
-        The shape of the dataset.
-    scales : list of HdfScaleMeta
-        A list of scale metadata objects corresponding to each dimension of the dataset.
-        If the dataset has no scales, this list will be empty.
-"""
-
-
-def _dispatch_by_ext(ifile: Union[Path, str],
-                     hdf4_func: Callable,
-                     hdf5_func: Callable,
-                     *args: Any, **kwargs: Any
-                     ):
-    """
-    Dispatch function to call HDF4 or HDF5 specific functions based on file extension.
-
-    Parameters
-    ----------
-    ifile : Path | str
-        The path to the HDF file.
-    hdf4_func : Callable
-        The function to call for HDF4 files.
-    hdf5_func : Callable
-        The function to call for HDF5 files.
-    *args : Any
-        Positional arguments to pass to the selected function.
-
-    Raises
-    ------
-    ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
-    ImportError
-        If the file is HDF4 and the `pyhdf` package is not available
-    """
-    ipath = Path(ifile)
-    if ipath.suffix == '.h5':
-        return hdf5_func(ifile, *args, **kwargs)
-    if ipath.suffix == '.hdf':
-        _except_no_pyhdf()
-        return hdf4_func(ifile, *args, **kwargs)
-    raise ValueError("File must be HDF4 (.hdf) or HDF5 (.h5)")
 
 
 def read_hdf_meta(ifile: Union[Path, str], /,
@@ -776,68 +482,6 @@ def read_hdf_meta(ifile: Union[Path, str], /,
                             dataset_id=dataset_id)
 
 
-def _read_h5_meta(ifile: Union[Path, str], /,
-                  dataset_id: Optional[str] = None
-                  ):
-    """HDF5 (.h5) version of :func:`read_hdf_meta`."""
-    with h5.File(ifile, 'r') as hdf:
-        # Raises KeyError if ``dataset_id`` not found
-        # If ``dataset_id`` is None, get all non-scale :class:`h5.Dataset`s
-        if dataset_id:
-            datasets = (dataset_id, hdf[dataset_id]),
-        else:
-            datasets = ((k, v) for k, v in hdf.items() if not v.is_scale)
-
-        # One should avoid multiple calls to ``dimproxy[0]`` – *e.g.* ``dimproxy[0].dtype`` and
-        # ``dimproxy[0].shape`` – because the __getitem__ method creates and returns a new
-        # :class:`~h5.DimensionProxy` object each time it is called. [Does this matter? Probably not.]
-        return [HdfDataMeta(name=k,
-                            type=v.dtype,
-                            shape=v.shape,
-                            scales=[HdfScaleMeta(name=dimproxy.label,
-                                                 type=dim.dtype,
-                                                 shape=dim.shape,
-                                                 imin=dim[0],
-                                                 imax=dim[-1])
-                                    for dimproxy in v.dims if dimproxy and (dim := dimproxy[0])])
-                for k, v in datasets]
-
-
-def _read_h4_meta(ifile: Union[Path, str], /,
-                  dataset_id: Optional[str] = None
-                  ):
-    """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
-    hdf = h4.SD(ifile)
-    # Raises HDF4Error if ``dataset_id`` not found
-    # If ``dataset_id`` is None, get all non-scale :class:`pyhdf.SD.SDS`s
-    if dataset_id:
-        datasets = (dataset_id, hdf.select(dataset_id)),
-    else:
-        datasets = ((k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar())
-
-    # The inner list comprehension differs in approach from the HDF5 version because calling
-    # ``dimensions(full=1)`` on an :class:`~pyhdf.SD.SDS` returns a dictionary of dimension
-    # dataset identifiers (keys) and tuples containing dimension metadata (values). Even if no
-    # coordinate-variable datasets are defined, this dictionary is still returned; the only
-    # indication that the datasets returned do not exist is that the "type" field (within the
-    # tuple of dimension metadata) is set to 0.
-
-    # Also, one cannot avoid multiple calls to ``hdf.select(k_)`` within the inner list comprehension
-    # because :class:`~pyhdf.SD.SDS` objects do not define a ``__bool__`` method, and the fallback
-    # behavior of Python is to assess if the __len__ method returns a non-zero value (which, in
-    # this case, always returns 0).
-    return [HdfDataMeta(name=k,
-                        type=SDC_TYPE_CONVERSIONS[v.info()[3]],
-                        shape=_cast_shape_tuple(v.info()[2]),
-                        scales=[HdfScaleMeta(name=k_,
-                                             type=SDC_TYPE_CONVERSIONS[v_[3]],
-                                             shape=_cast_shape_tuple(v_[0]),
-                                             imin=hdf.select(k_)[0],
-                                             imax=hdf.select(k_)[-1])
-                                for k_, v_ in v.dimensions(full=1).items() if v_[3]])
-            for k, v in datasets]
-
-
 def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
     """
     Read the scale metadata for PSI's 3D cubes.
@@ -871,53 +515,12 @@ def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
     return _dispatch_by_ext(ifile, _read_h4_rtp, _read_h5_rtp)
 
 
-def _read_h5_rtp(ifile: Union[ Path, str], /):
-    """HDF5 (.h5) version of :func:`read_rtp_meta`."""
-    with h5.File(ifile, 'r') as hdf:
-        return {k: (hdf[v].size, hdf[v][0], hdf[v][-1])
-                for k, v in zip('rtp', PSI_SCALE_ID['h5'])}
-
-
-def _read_h4_rtp(ifile: Union[ Path, str], /):
-    """HDF4 (.hdf) version of :func:`read_rtp_meta`."""
-    hdf = h4.SD(ifile)
-    return {k: (hdf.select(v).info()[2], hdf.select(v)[0], hdf.select(v)[-1])
-            for k, v in zip('ptr', PSI_SCALE_ID['h4'])}
-
-
 def read_hdf_data(ifile: Union[Path, str], /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Tuple[np.ndarray]:
     return _dispatch_by_ext(ifile, _read_h4_data, _read_h5_data,
                             dataset_id=dataset_id, return_scales=return_scales)
-
-
-def _read_h5_data(ifile: Union[Path, str], /,
-                  dataset_id: Optional[str] = None,
-                  return_scales: bool = True,
-                  ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    with h5.File(ifile, 'r') as hdf:
-        data = hdf[dataset_id or PSI_DATA_ID['h5']]
-        dataset = np.asarray(data)
-        if return_scales:
-            scales = [np.asarray(dim[0]) for dim in data.dims if dim]
-            return dataset, *scales
-        return dataset
-
-
-def _read_h4_data(ifile: Union[Path, str], /,
-                  dataset_id: Optional[str] = None,
-                  return_scales: bool = True,
-                  ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    hdf = h4.SD(ifile)
-    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
-    if return_scales:
-        out = (np.asarray(data),
-               *[np.asarray(hdf.select(k_)) for k_, v_ in reversed(data.dimensions(full=1).items()) if v_[3]])
-    else:
-        out = np.asarray(data)
-    return out
 
 
 def read_hdf_by_index(ifile: Union[Path, str], /,
@@ -1011,42 +614,6 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
     return _dispatch_by_ext(ifile, _read_h4_by_index, _read_h5_by_index,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
-
-
-def _read_h5_by_index(ifile: Union[Path, str], /,
-                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
-                      dataset_id: Optional[str] = None,
-                      return_scales: bool = True,
-                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """ HDF5(.h5) version of :func:`read_hdf_by_index`."""
-    with (h5.File(ifile, 'r') as hdf):
-        data = hdf[dataset_id or PSI_DATA_ID['h5']]
-        if len(xi) != data.ndim:
-            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-        slices = [_parse_index_inputs(slice_input) for slice_input in xi]
-        dataset = data[tuple(reversed(slices))]
-        if return_scales:
-            scales = [dim[0][si] for si, dim in zip(slices, data.dims) if dim]
-            return dataset, *scales
-        return dataset
-
-def _read_h4_by_index(ifile: Union[Path, str], /,
-                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
-                      dataset_id: Optional[str] = None,
-                      return_scales: bool = True,
-                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """HDF4(.hdf) version of :func:`read_hdf_by_index`."""
-    hdf = h4.SD(ifile)
-    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
-    ndim = data.info()[1]
-    if len(xi) != ndim:
-        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-    slices = [_parse_index_inputs(slice_input) for slice_input in xi]
-    dataset = data[tuple(reversed(slices))]
-    if return_scales:
-        scales = [hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]]
-        return dataset, *scales
-    return dataset
 
 
 def read_hdf_by_value(ifile: Union[Path, str], /,
@@ -1157,57 +724,6 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
 
 
-def _read_h5_by_value(ifile: Union[Path, str], /,
-                      *xi: Union[float, Tuple[float, float], None],
-                      dataset_id: Optional[str] = None,
-                      return_scales: bool = True,
-                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """HDF5 (.h5) version of :func:`read_hdf_by_value`."""
-    with (h5.File(ifile, 'r') as hdf):
-        data = hdf[dataset_id or PSI_DATA_ID['h5']]
-        if len(xi) != data.ndim:
-            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-        slices = []
-        for dimproxy, value in zip(data.dims, xi):
-            if dimproxy:
-                slices.append(_parse_value_inputs(dimproxy[0], value))
-            elif value is None:
-                slices.append(slice(None))
-            else:
-                raise ValueError("Cannot slice by value on dimension without scales")
-        dataset = data[tuple(reversed(slices))]
-        if return_scales:
-            scales = [dim[0][si] for si, dim in zip(slices, data.dims) if dim]
-            return dataset, *scales
-        return dataset
-
-
-def _read_h4_by_value(ifile: Union[Path, str], /,
-                      *xi: Union[float, Tuple[float, float], None],
-                      dataset_id: Optional[str] = None,
-                      return_scales: bool = True,
-                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """HDF4 (.hdf) version of :func:`read_hdf_by_value`."""
-    hdf = h4.SD(ifile)
-    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
-    ndim = data.info()[1]
-    if len(xi) != ndim:
-        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-    slices = []
-    for (k_, v_), value in zip(reversed(data.dimensions(full=1).items()), xi):
-        if v_[3] != 0:
-            slices.append(_parse_value_inputs(hdf.select(k_), value))
-        elif value is None:
-            slices.append(slice(None))
-        else:
-            raise ValueError("Cannot slice by value on dimension without scales")
-    dataset = data[tuple(reversed(slices))]
-    if return_scales:
-        scales = [hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]]
-        return dataset, *scales
-    return dataset
-
-
 def read_hdf_by_ivalue(ifile: Union[Path, str], /,
                       *xi: Union[float, Tuple[float, float], None],
                       dataset_id: Optional[str] = None,
@@ -1217,41 +733,6 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
     return _dispatch_by_ext(ifile, _read_h4_by_ivalue, _read_h5_by_ivalue,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
-
-
-def _read_h5_by_ivalue(ifile: Union[Path, str], /,
-                       *xi: Union[float, Tuple[float, float], None],
-                       dataset_id: Optional[str] = None,
-                       return_scales: bool = True,
-                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    with (h5.File(ifile, 'r') as hdf):
-        data = hdf[dataset_id or PSI_DATA_ID['h5']]
-        if len(xi) != data.ndim:
-            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-        slices = [_parse_ivalue_inputs(*args) for args in zip(reversed(data.shape), xi)]
-        dataset = data[tuple(reversed(slices))]
-        if return_scales:
-            scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(data.shape))]
-            return dataset, *scales
-        return dataset
-
-
-def _read_h4_by_ivalue(ifile: Union[Path, str], /,
-                       *xi: Union[float, Tuple[float, float], None],
-                       dataset_id: Optional[str] = None,
-                       return_scales: bool = True,
-                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    hdf = h4.SD(ifile)
-    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
-    ndim, shape = data.info()[1], _cast_shape_tuple(data.info()[2])
-    if len(xi) != ndim:
-        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
-    slices = [_parse_ivalue_inputs(*args) for args in zip(reversed(shape), xi)]
-    dataset = data[tuple(reversed(slices))]
-    if return_scales:
-        scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(shape))]
-        return dataset, *scales
-    return dataset
 
 
 def instantiate_linear_interpolator(*args, **kwargs):
@@ -1563,6 +1044,422 @@ def interpolate_point_from_2d_slice(xi, yi, scalex, scaley, values):
     return _np_bilinear_interpolation([xi, yi], [scalex[sx_], scaley[sy_]], values[(sx_, sy_)])
 
 
+def _rdhdf_nd(hdf_filename: str, dimensionality: int) -> Tuple[np.ndarray, ...]:
+    f, *scales = read_hdf_data(hdf_filename)
+    if f.ndim != dimensionality:
+        err = f'Expected {dimensionality}D data, got {f.ndim}D data instead.'
+        raise ValueError(err)
+    scales = scales or (np.empty(0) for _ in f.shape)
+    return *scales, f
+
+
+def _wrh5(h5_filename: str,
+          x: np.ndarray,
+          y: np.ndarray,
+          z: np.ndarray,
+          f: np.ndarray) -> None:
+    """Base writer for 1D, 2D, and 3D HDF5 files.
+
+    See Also
+    --------
+    :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
+    """
+    h5file = h5.File(h5_filename, 'w')
+
+    # Create the dataset (Data is the name used by the psi data)).
+    h5file.create_dataset("Data", data=f)
+
+    # Make sure the scales are desired by checking x type, which can
+    # be None or None converted by np.asarray (have to trap seperately)
+    if x is None:
+        x = np.array([], dtype=f.dtype)
+        y = np.array([], dtype=f.dtype)
+        z = np.array([], dtype=f.dtype)
+    if x.any() == None:
+        x = np.array([], dtype=f.dtype)
+        y = np.array([], dtype=f.dtype)
+        z = np.array([], dtype=f.dtype)
+
+    # Make sure scales are the same precision as data.
+    x = x.astype(f.dtype)
+    y = y.astype(f.dtype)
+    z = z.astype(f.dtype)
+
+    # Get number of dimensions:
+    ndims = np.ndim(f)
+
+    # Set the scales:
+    for i in range(0, ndims):
+        if i == 0 and len(x) != 0:
+            dim = h5file.create_dataset("dim1", data=x)
+            #            h5file['Data'].dims.create_scale(dim,'dim1')
+            dim.make_scale('dim1')
+            h5file['Data'].dims[0].attach_scale(dim)
+            h5file['Data'].dims[0].label = 'dim1'
+        if i == 1 and len(y) != 0:
+            dim = h5file.create_dataset("dim2", data=y)
+            #            h5file['Data'].dims.create_scale(dim,'dim2')
+            dim.make_scale('dim2')
+            h5file['Data'].dims[1].attach_scale(dim)
+            h5file['Data'].dims[1].label = 'dim2'
+        elif i == 2 and len(z) != 0:
+            dim = h5file.create_dataset("dim3", data=z)
+            #            h5file['Data'].dims.create_scale(dim,'dim3')
+            dim.make_scale('dim3')
+            h5file['Data'].dims[2].attach_scale(dim)
+            h5file['Data'].dims[2].label = 'dim3'
+
+    # Close the file:
+    h5file.close()
+
+
+def _wrhdf(hdf_filename: str,
+          x: np.ndarray,
+          y: np.ndarray,
+          z: np.ndarray,
+          f: np.ndarray) -> None:
+    """Base writer for 1D, 2D, and 3D HDF4 files.
+
+    See Also
+    --------
+    :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
+    """
+    if hdf_filename.endswith('h5'):
+        return _wrh5(hdf_filename, x, y, z, f)
+
+    # Check for HDF4
+    _except_no_pyhdf()
+
+    # Create an HDF file
+    sd_id = h4.SD(hdf_filename, h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
+
+    # Due to bug, need to only write 64-bit.
+    f = f.astype(np.float64)
+    ftype = h4.SDC.FLOAT64
+
+    #    if f.dtype == np.float32:
+    #        ftype = h4.SDC.FLOAT32
+    #    elif f.dtype == np.float64:
+    #        ftype = h4.SDC.FLOAT64
+
+    # Create the dataset (Data-Set-2 is the name used by the psi data)).
+    sds_id = sd_id.create("Data-Set-2", ftype, f.shape)
+
+    # Get number of dimensions:
+    ndims = np.ndim(f)
+
+    # Make sure the scales are desired by checking x type, which can
+    # be None or None converted by np.asarray (have to trap seperately)
+    if x is None:
+        x = np.array([], dtype=f.dtype)
+        y = np.array([], dtype=f.dtype)
+        z = np.array([], dtype=f.dtype)
+    if x.any() == None:
+        x = np.array([], dtype=f.dtype)
+        y = np.array([], dtype=f.dtype)
+        z = np.array([], dtype=f.dtype)
+
+    # Due to python hdf4 bug, need to use double scales only.
+
+    x = x.astype(np.float64)
+    y = y.astype(np.float64)
+    z = z.astype(np.float64)
+
+    # Set the scales (or don't if x is none or length zero)
+    for i in range(0, ndims):
+        dim = sds_id.dim(i)
+        if i == 0 and len(x) != 0:
+            if x.dtype == np.float32:
+                stype = h4.SDC.FLOAT32
+            elif x.dtype == np.float64:
+                stype = h4.SDC.FLOAT64
+            dim.setscale(stype, x)
+        elif i == 1 and len(y) != 0:
+            if y.dtype == np.float32:
+                stype = h4.SDC.FLOAT32
+            elif y.dtype == np.float64:
+                stype = h4.SDC.FLOAT64
+            dim.setscale(stype, y)
+        elif i == 2 and len(z) != 0:
+            if z.dtype == np.float32:
+                stype = h4.SDC.FLOAT32
+            elif z.dtype == np.float64:
+                stype = h4.SDC.FLOAT64
+            dim.setscale(stype, z)
+
+    # Write the data:
+    sds_id.set(f)
+
+    # Close the dataset:
+    sds_id.endaccess()
+
+    # Flush and close the HDF file:
+    sd_id.end()
+
+
+def _get_scales_nd_h5(ifile: Union[ Path, str], /,
+                      dimensionality: int,
+                      dataset_id: Optional[str] = None,
+                      ):
+    with h5.File(ifile, 'r') as hdf:
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        ndim = data.ndim
+        if ndim != dimensionality:
+            err = f'Expected {dimensionality}D data, got {ndim}D data instead.'
+            raise ValueError(err)
+        scales = []
+        for dim in data.dims:
+            if dim:
+                scales.append(dim[0][:])
+            else:
+                raise ValueError(f'Dimension has no scale associated with it.')
+    return tuple(scales)
+
+
+def _get_scales_nd_h4(ifile: Union[ Path, str], /,
+                      dimensionality: int,
+                      dataset_id: Optional[str] = None,
+                      ):
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    ndim = data.info()[1]
+    if ndim != dimensionality:
+        err = f'Expected {dimensionality}D data, got {ndim}D data instead.'
+        raise ValueError(err)
+    scales = []
+    for k_, v_ in reversed(data.dimensions(full=1).items()):
+        if v_[3]:
+            scales.append(hdf.select(k_)[:])
+        else:
+            raise ValueError('Dimension has no scale associated with it.')
+    return tuple(scales)
+
+
+def _read_h5_meta(ifile: Union[Path, str], /,
+                  dataset_id: Optional[str] = None
+                  ):
+    """HDF5 (.h5) version of :func:`read_hdf_meta`."""
+    with h5.File(ifile, 'r') as hdf:
+        # Raises KeyError if ``dataset_id`` not found
+        # If ``dataset_id`` is None, get all non-scale :class:`h5.Dataset`s
+        if dataset_id:
+            datasets = (dataset_id, hdf[dataset_id]),
+        else:
+            datasets = ((k, v) for k, v in hdf.items() if not v.is_scale)
+
+        # One should avoid multiple calls to ``dimproxy[0]`` – *e.g.* ``dimproxy[0].dtype`` and
+        # ``dimproxy[0].shape`` – because the __getitem__ method creates and returns a new
+        # :class:`~h5.DimensionProxy` object each time it is called. [Does this matter? Probably not.]
+        return [HdfDataMeta(name=k,
+                            type=v.dtype,
+                            shape=v.shape,
+                            scales=[HdfScaleMeta(name=dimproxy.label,
+                                                 type=dim.dtype,
+                                                 shape=dim.shape,
+                                                 imin=dim[0],
+                                                 imax=dim[-1])
+                                    for dimproxy in v.dims if dimproxy and (dim := dimproxy[0])])
+                for k, v in datasets]
+
+
+def _read_h4_meta(ifile: Union[Path, str], /,
+                  dataset_id: Optional[str] = None
+                  ):
+    """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
+    hdf = h4.SD(ifile)
+    # Raises HDF4Error if ``dataset_id`` not found
+    # If ``dataset_id`` is None, get all non-scale :class:`pyhdf.SD.SDS`s
+    if dataset_id:
+        datasets = (dataset_id, hdf.select(dataset_id)),
+    else:
+        datasets = ((k, hdf.select(k)) for k in hdf.datasets().keys() if not hdf.select(k).iscoordvar())
+
+    # The inner list comprehension differs in approach from the HDF5 version because calling
+    # ``dimensions(full=1)`` on an :class:`~pyhdf.SD.SDS` returns a dictionary of dimension
+    # dataset identifiers (keys) and tuples containing dimension metadata (values). Even if no
+    # coordinate-variable datasets are defined, this dictionary is still returned; the only
+    # indication that the datasets returned do not exist is that the "type" field (within the
+    # tuple of dimension metadata) is set to 0.
+
+    # Also, one cannot avoid multiple calls to ``hdf.select(k_)`` within the inner list comprehension
+    # because :class:`~pyhdf.SD.SDS` objects do not define a ``__bool__`` method, and the fallback
+    # behavior of Python is to assess if the __len__ method returns a non-zero value (which, in
+    # this case, always returns 0).
+    return [HdfDataMeta(name=k,
+                        type=SDC_TYPE_CONVERSIONS[v.info()[3]],
+                        shape=_cast_shape_tuple(v.info()[2]),
+                        scales=[HdfScaleMeta(name=k_,
+                                             type=SDC_TYPE_CONVERSIONS[v_[3]],
+                                             shape=_cast_shape_tuple(v_[0]),
+                                             imin=hdf.select(k_)[0],
+                                             imax=hdf.select(k_)[-1])
+                                for k_, v_ in v.dimensions(full=1).items() if v_[3]])
+            for k, v in datasets]
+
+
+def _read_h5_rtp(ifile: Union[ Path, str], /):
+    """HDF5 (.h5) version of :func:`read_rtp_meta`."""
+    with h5.File(ifile, 'r') as hdf:
+        return {k: (hdf[v].size, hdf[v][0], hdf[v][-1])
+                for k, v in zip('rtp', PSI_SCALE_ID['h5'])}
+
+
+def _read_h4_rtp(ifile: Union[ Path, str], /):
+    """HDF4 (.hdf) version of :func:`read_rtp_meta`."""
+    hdf = h4.SD(ifile)
+    return {k: (hdf.select(v).info()[2], hdf.select(v)[0], hdf.select(v)[-1])
+            for k, v in zip('ptr', PSI_SCALE_ID['h4'])}
+
+
+def _read_h5_data(ifile: Union[Path, str], /,
+                  dataset_id: Optional[str] = None,
+                  return_scales: bool = True,
+                  ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    with h5.File(ifile, 'r') as hdf:
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        dataset = data[:]
+        if return_scales:
+            scales = [dim[0][:] for dim in data.dims if dim]
+            return dataset, *scales
+        return dataset
+
+
+def _read_h4_data(ifile: Union[Path, str], /,
+                  dataset_id: Optional[str] = None,
+                  return_scales: bool = True,
+                  ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    if return_scales:
+        out = (data[:],
+               *[hdf.select(k_)[:] for k_, v_ in reversed(data.dimensions(full=1).items()) if v_[3]])
+    else:
+        out = data[:]
+    return out
+
+
+def _read_h5_by_index(ifile: Union[Path, str], /,
+                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
+                      dataset_id: Optional[str] = None,
+                      return_scales: bool = True,
+                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """ HDF5(.h5) version of :func:`read_hdf_by_index`."""
+    with (h5.File(ifile, 'r') as hdf):
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        if len(xi) != data.ndim:
+            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+        slices = [_parse_index_inputs(slice_input) for slice_input in xi]
+        dataset = data[tuple(reversed(slices))]
+        if return_scales:
+            scales = [dim[0][si] for si, dim in zip(slices, data.dims) if dim]
+            return dataset, *scales
+        return dataset
+
+def _read_h4_by_index(ifile: Union[Path, str], /,
+                      *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
+                      dataset_id: Optional[str] = None,
+                      return_scales: bool = True,
+                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF4(.hdf) version of :func:`read_hdf_by_index`."""
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    ndim = data.info()[1]
+    if len(xi) != ndim:
+        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+    slices = [_parse_index_inputs(slice_input) for slice_input in xi]
+    dataset = data[tuple(reversed(slices))]
+    if return_scales:
+        scales = [hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]]
+        return dataset, *scales
+    return dataset
+
+
+def _read_h5_by_value(ifile: Union[Path, str], /,
+                      *xi: Union[float, Tuple[float, float], None],
+                      dataset_id: Optional[str] = None,
+                      return_scales: bool = True,
+                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF5 (.h5) version of :func:`read_hdf_by_value`."""
+    with (h5.File(ifile, 'r') as hdf):
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        if len(xi) != data.ndim:
+            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+        slices = []
+        for dimproxy, value in zip(data.dims, xi):
+            if dimproxy:
+                slices.append(_parse_value_inputs(dimproxy[0], value))
+            elif value is None:
+                slices.append(slice(None))
+            else:
+                raise ValueError("Cannot slice by value on dimension without scales")
+        dataset = data[tuple(reversed(slices))]
+        if return_scales:
+            scales = [dim[0][si] for si, dim in zip(slices, data.dims) if dim]
+            return dataset, *scales
+        return dataset
+
+
+def _read_h4_by_value(ifile: Union[Path, str], /,
+                      *xi: Union[float, Tuple[float, float], None],
+                      dataset_id: Optional[str] = None,
+                      return_scales: bool = True,
+                      ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF4 (.hdf) version of :func:`read_hdf_by_value`."""
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    ndim = data.info()[1]
+    if len(xi) != ndim:
+        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+    slices = []
+    for (k_, v_), value in zip(reversed(data.dimensions(full=1).items()), xi):
+        if v_[3] != 0:
+            slices.append(_parse_value_inputs(hdf.select(k_), value))
+        elif value is None:
+            slices.append(slice(None))
+        else:
+            raise ValueError("Cannot slice by value on dimension without scales")
+    dataset = data[tuple(reversed(slices))]
+    if return_scales:
+        scales = [hdf.select(k_)[si] for si, (k_, v_) in zip(slices, reversed(data.dimensions(full=1).items())) if v_[3]]
+        return dataset, *scales
+    return dataset
+
+
+def _read_h5_by_ivalue(ifile: Union[Path, str], /,
+                       *xi: Union[float, Tuple[float, float], None],
+                       dataset_id: Optional[str] = None,
+                       return_scales: bool = True,
+                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    with (h5.File(ifile, 'r') as hdf):
+        data = hdf[dataset_id or PSI_DATA_ID['h5']]
+        if len(xi) != data.ndim:
+            raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+        slices = [_parse_ivalue_inputs(*args) for args in zip(reversed(data.shape), xi)]
+        dataset = data[tuple(reversed(slices))]
+        if return_scales:
+            scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(data.shape))]
+            return dataset, *scales
+        return dataset
+
+
+def _read_h4_by_ivalue(ifile: Union[Path, str], /,
+                       *xi: Union[float, Tuple[float, float], None],
+                       dataset_id: Optional[str] = None,
+                       return_scales: bool = True,
+                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    hdf = h4.SD(ifile)
+    data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
+    ndim, shape = data.info()[1], _cast_shape_tuple(data.info()[2])
+    if len(xi) != ndim:
+        raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
+    slices = [_parse_ivalue_inputs(*args) for args in zip(reversed(shape), xi)]
+    dataset = data[tuple(reversed(slices))]
+    if return_scales:
+        scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(shape))]
+        return dataset, *scales
+    return dataset
+
+
 def _np_linear_interpolation(xi, scales, values):
     """
     Perform linear interpolation over one dimension.
@@ -1783,7 +1680,7 @@ def _parse_value_inputs(dimproxy, value, scale_exists: bool = True) -> slice:
         return slice(None)
     if not scale_exists:
         raise ValueError("Cannot parse value inputs when scale does not exist.")
-    dim = np.asarray(dimproxy)
+    dim = dimproxy[:]
     if not isinstance(value, Iterable):
         insert_index = np.searchsorted(dim, value)
         return slice(*_check_index_ranges(dim.size, insert_index, insert_index))
@@ -1839,4 +1736,3 @@ def _parse_ivalue_inputs(dimsize, input: Union[Union[int, float], slice, Iterabl
         return slice(i0, i1 + 2 - (i1-i0))
     else:
         return slice(i0, i1)
-
