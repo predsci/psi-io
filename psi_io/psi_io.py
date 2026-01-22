@@ -1220,7 +1220,7 @@ def _get_scales_nd_h4(ifile: Union[ Path, str], /,
                       dimensionality: int,
                       dataset_id: Optional[str] = None,
                       ):
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim = data.info()[1]
     if ndim != dimensionality:
@@ -1266,7 +1266,7 @@ def _read_h4_meta(ifile: Union[Path, str], /,
                   dataset_id: Optional[str] = None
                   ):
     """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     # Raises HDF4Error if ``dataset_id`` not found
     # If ``dataset_id`` is None, get all non-scale :class:`pyhdf.SD.SDS`s
     if dataset_id:
@@ -1306,7 +1306,7 @@ def _read_h5_rtp(ifile: Union[ Path, str], /):
 
 def _read_h4_rtp(ifile: Union[ Path, str], /):
     """HDF4 (.hdf) version of :func:`read_rtp_meta`."""
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     return {k: (hdf.select(v).info()[2], hdf.select(v)[0], hdf.select(v)[-1])
             for k, v in zip('ptr', PSI_SCALE_ID['h4'])}
 
@@ -1328,7 +1328,7 @@ def _read_h4_data(ifile: Union[Path, str], /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     if return_scales:
         out = (data[:],
@@ -1361,7 +1361,7 @@ def _read_h4_by_index(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """HDF4(.hdf) version of :func:`read_hdf_by_index`."""
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim = data.info()[1]
     if len(xi) != ndim:
@@ -1405,7 +1405,7 @@ def _read_h4_by_value(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """HDF4 (.hdf) version of :func:`read_hdf_by_value`."""
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim = data.info()[1]
     if len(xi) != ndim:
@@ -1447,7 +1447,7 @@ def _read_h4_by_ivalue(ifile: Union[Path, str], /,
                        dataset_id: Optional[str] = None,
                        return_scales: bool = True,
                        ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    hdf = h4.SD(ifile)
+    hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim, shape = data.info()[1], _cast_shape_tuple(data.info()[2])
     if len(xi) != ndim:
