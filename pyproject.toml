@@ -134,11 +134,18 @@ exclude = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+markers = [
+  "h4: tests that exercise the HDF4 backend",
+  "h5: tests that exercise the HDF5 backend",
+  "benchmark: performance benchmark tests",
+  "read_hdf_by_index: tests for read_hdf_by_index function",
+  "read_hdf_by_value: tests for read_hdf_by_value function",
+]
 addopts = [
   "-ra",
   "--cov=psi_io",
   "--cov-report=term-missing",
-  "--maxfail=1",
+#  "--maxfail=1",
   "--import-mode=importlib",
 ]
 

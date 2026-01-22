@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 from types import MappingProxyType
 
 import h5py as h5
@@ -91,7 +89,3 @@ def generate_mock_files(ifile,
     # This is a placeholder function. Implement the logic to generate mock data files.
     return psi_io._dispatch_by_ext(ifile, _generate_mock_h4_data, _generate_mock_h5_data,
                                    ndim, dtype, scales)
-
-
-filepath = data.get_3d_data()
-d=1
