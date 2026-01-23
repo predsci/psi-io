@@ -5,6 +5,7 @@ from numpy.testing import assert_array_equal
 from psi_io import (read_hdf_data,
                     read_hdf_meta,
                     read_rtp_meta,
+                    write_hdf_data,
                     read_hdf_by_index,
                     read_hdf_by_value,
                     read_hdf_by_ivalue,
@@ -186,3 +187,15 @@ def test_rdhdf3d_by_read_hdf_data(hdf_version, datatype, generated_files):
     bydata_result = read_hdf_data(filepath)
     for r1d, rdata in zip((rdhdf_result[-1], *rdhdf_result[:-1]), bydata_result):
         assert_array_equal(r1d, rdata)
+
+
+def test_write_hdf_data_and_readback(tmp_path, hdf_version, datatype, dimensionality, scales_included, generated_files):
+    readback_fp = generated_files[datatype][dimensionality][scales_included]
+    fdata, *sdata = generate_mock_data(dimensionality, datatype, scales_included)
+    written_fp = tmp_path / f"test_output_{datatype}_{dimensionality}d_{'withscales' if scales_included else 'noscales'}{readback_fp.suffix}"
+    write_hdf_data(written_fp, fdata, *sdata)
+
+    written_data = read_hdf_data(written_fp)
+    comp_data = read_hdf_data(readback_fp)
+    for written_array, readback_array in zip(written_data, comp_data):
+        assert_array_equal(written_array, readback_array)

@@ -59,8 +59,21 @@ import h5py as h5
 try:
     import pyhdf.SD as h4
     H4_AVAILABLE = True
+    NPTYPES_TO_SDCTYPES = MappingProxyType({
+        "int8": h4.SDC.INT8,
+        "uint8": h4.SDC.UINT8,
+        "int16": h4.SDC.INT16,
+        "uint16": h4.SDC.UINT16,
+        "int32": h4.SDC.INT32,
+        "uint32": h4.SDC.UINT32,
+        "float16": h4.SDC.FLOAT32,
+        "float32": h4.SDC.FLOAT32,
+        "float64": h4.SDC.FLOAT64,
+    })
 except ImportError:
     H4_AVAILABLE = False
+    NPTYPES_TO_SDCTYPES = {}
+
 try:
     from scipy.interpolate import RegularGridInterpolator
     SCIPY_AVAILABLE = True
@@ -735,6 +748,15 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
 
 
+def write_hdf_data(ifile: Union[Path, str], /,
+                   data: np.ndarray,
+                   *scales: Iterable[np.ndarray],
+                   dataset_id: Optional[str] = None
+                   ) -> Path:
+    return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
+                            *scales, dataset_id=dataset_id)
+
+
 def instantiate_linear_interpolator(*args, **kwargs):
     """
     Instantiate a linear interpolator using the provided data and scales.
@@ -1161,6 +1183,12 @@ def _wrhdf(hdf_filename: str,
 
     # Due to python hdf4 bug, need to use double scales only.
 
+    # NOTE: this bug is due to an inability of SWIG (which is used to generate
+    # the C-to-python pyhdf bindings) to handle numpy types in the overloaded functions.
+    # The only reason that np.float64 works is that it is equivalent to
+    # the native python float type. This issue has been remedied below in the
+    # write_hdf functions.
+
     x = x.astype(np.float64)
     y = y.astype(np.float64)
     z = z.astype(np.float64)
@@ -1458,6 +1486,44 @@ def _read_h4_by_ivalue(ifile: Union[Path, str], /,
         scales = [np.arange(si.start or 0, si.stop or size) for si, size in zip(slices, reversed(shape))]
         return dataset, *scales
     return dataset
+
+
+def _write_h4_data(ifile: Union[Path, str], /,
+                   data: np.ndarray,
+                   *scales: Iterable[np.ndarray],
+                   dataset_id: Optional[str] = None
+                   ) -> Path:
+    dataid = dataset_id or PSI_DATA_ID['h4']
+    h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
+    sds_id = h4file.create(dataid, NPTYPES_TO_SDCTYPES[data.dtype.name], data.shape)
+
+    if scales:
+        for i, scale in enumerate(reversed(scales)):
+            sds_id.dim(i).setscale(NPTYPES_TO_SDCTYPES[scale.dtype.name], scale.tolist())
+
+    sds_id.set(data)
+    sds_id.endaccess()
+    h4file.end()
+
+    return ifile
+
+
+def _write_h5_data(ifile: Union[Path, str], /,
+                   data: np.ndarray,
+                   *scales: Iterable[np.ndarray],
+                   dataset_id: Optional[str] = None
+                   ) -> Path:
+    dataid = dataset_id or PSI_DATA_ID['h5']
+    with h5.File(ifile, "w") as h5file:
+        h5file.create_dataset(dataid, data=data, dtype=data.dtype, shape=data.shape)
+
+        if scales:
+            for i, scale in enumerate(scales):
+                h5file.create_dataset(f"dim{i+1}", data=scale, dtype=scale.dtype, shape=scale.shape)
+                h5file[dataid].dims[i].attach_scale(h5file[f"dim{i+1}"])
+                h5file[dataid].dims[i].label = f"dim{i+1}"
+
+    return ifile
 
 
 def _np_linear_interpolation(xi, scales, values):

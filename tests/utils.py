@@ -7,27 +7,9 @@ from psi_io import psi_io, data
 
 try:
     import pyhdf.SD as h4
-    SDC_TYPE_CONVERSIONS = MappingProxyType({
-        "int8": h4.SDC.INT8,
-        "uint8": h4.SDC.UINT8,
-        "int16": h4.SDC.INT16,
-        "uint16": h4.SDC.UINT16,
-        "int32": h4.SDC.INT32,
-        "uint32": h4.SDC.UINT32,
-        "float16": h4.SDC.FLOAT32,
-        "float32": h4.SDC.FLOAT32,
-        "float64": h4.SDC.FLOAT64,
-    })
 except ImportError:
     pass
 
-DATAKEYS = MappingProxyType({
-    "1d": data.get_1d_data,
-    "2d": data.get_2d_data,
-    "3d": data.get_3d_data,
-    "fl": data.get_fieldline_data,
-    # "sm": data.get_synchronic_map_data,
-})
 FILEEXT = MappingProxyType({
     "h4": ".hdf",
     "h5": ".h5",
@@ -52,11 +34,11 @@ def _generate_mock_h4_data(ifile, ndim, dtype, scales):
     fdata, *sdata = generate_mock_data(ndim, dtype, scales)
 
     h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
-    sds_id = h4file.create("Data-Set-2", SDC_TYPE_CONVERSIONS[dtype], fdata.shape)
+    sds_id = h4file.create("Data-Set-2", psi_io.NPTYPES_TO_SDCTYPES[dtype], fdata.shape)
 
     if scales:
         for i, scale in enumerate(reversed(sdata)):
-            sds_id.dim(i).setscale(SDC_TYPE_CONVERSIONS[dtype], scale.tolist())
+            sds_id.dim(i).setscale(psi_io.NPTYPES_TO_SDCTYPES[dtype], scale.tolist())
 
     sds_id.set(fdata)
     sds_id.endaccess()
