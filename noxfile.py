@@ -7,6 +7,7 @@ import json
 import platform
 import subprocess
 from pathlib import Path
+import shutil
 import nox
 
 nox.options.reuse_existing_virtualenvs = False
@@ -21,6 +22,7 @@ except FileNotFoundError as e:
     SYS_PYTHON = PY_VERSIONS[-1]
 
 PROJECT_NAME = pyproject["project"]["name"]
+MODULE_NAME = PROJECT_NAME.replace("-", "_")
 PROJECT_NAME_PATH = Path(__file__).parent.resolve()
 _ARTIFACTS = PROJECT_NAME_PATH / ".nox" / "_artifacts"
 
@@ -101,6 +103,7 @@ def build(session: nox.Session) -> None:
         "--wheel", "--outdir", WHEEL_DIR.as_posix(),
         external=False
     )
+    shutil.rmtree(PROJECT_NAME_PATH / "build", ignore_errors=True)
 
 
 @nox.session(python=SYS_PYTHON)
@@ -138,8 +141,8 @@ def test(session: nox.Session) -> None:
     tmp = session.create_tmp()
     session.chdir(tmp)
 
-    # For now, skip benchmarking tests on CI unless explicitly requested
-    session.run("pytest", PROJECT_NAME_PATH.as_posix(), "--benchmark-skip", *session.posargs)
+    # To skip benchmarking include --benchmark-skip in posargs
+    session.run("pytest", PROJECT_NAME_PATH.as_posix(), *session.posargs)
 
 
 @nox.session(venv_backend='conda|mamba|micromamba', python=SYS_PYTHON)
@@ -167,7 +170,7 @@ def types(session: nox.Session) -> None:
     """
     session.install(*pyproject["project"].get("optional-dependencies", {}).get("types", []))
 
-    session.run("mypy", *session.posargs)
+    session.run("mypy", MODULE_NAME, *session.posargs)
 
 
 @nox.session(python=SYS_PYTHON)
@@ -182,7 +185,7 @@ def lint(session: nox.Session) -> None:
     """
     session.install(*pyproject["project"].get("optional-dependencies", {}).get("lint", []))
 
-    session.run("ruff", "check", PROJECT_NAME, *session.posargs)
+    session.run("ruff", "check", MODULE_NAME, *session.posargs)
 
 
 @nox.session(python=SYS_PYTHON)
