@@ -2,13 +2,14 @@
 Module for fetching HDF5 assets used through examples.
 
 This module uses the ``pooch`` library to manage the downloading and caching of
-HDF5 files containing magnetic field data. It defines functions to fetch
-coronal and heliospheric magnetic field files, returning their paths in a
-named tuple for easy access.
+HDF4 and HDF5 files that adhere to PSI data conventions. It defines functions to
+fetch specific example datasets, including 1D radial scale data, 2D coronal hole
+maps, 3D radial magnetic field data, magnetic fieldline data, and synchronic maps
+used in coronal and heliospheric magnetic field modeling.
 
-Currently, the available Coronal and Heliospheric magnetic field files are hosted
-at https://www.predsci.com/doc/assets/ *viz.* a Thermo 2 steady-state run for
-Carrington Rotation 2143.
+Currently, these files are hosted on the PredSci documentation website:
+at https://www.predsci.com/doc/assets/ and are primarily intended for use in
+building examples in the PSI I/O and mapflpy packages.
 """
 
 
@@ -45,13 +46,6 @@ REGISTRY = {
 This registry is used by the pooch fetcher to verify the integrity of
 downloaded files, and is primarily intended for building sphinx-gallery
 examples that require MHD data files.
-
-The files listed here correspond to HDF4 and HDF5 versions of sample data
-where:
-- rscale (.hdf/.h5) contains a (1D) radial scale,
-- chmap (.hdf/.h5) contains a (2D) coronal hole map,
-- fieldline (.hdf/.h5) contains a (2D) magnetic fieldline
-- br (.hdf/.h5) contains a (3D) radial magnetic field data.
 """
 
 
@@ -80,14 +74,14 @@ FETCHER = pooch.create(
     that utilize the same asset hosting and caching mechanism.
 """
 
-P = ParamSpec("P")
-R = TypeVar("R")
+_P = ParamSpec("P")
+_R = TypeVar("R")
 
-def check_hdf_type(func: Callable[P, R]) -> Callable[P, R]:
+def check_hdf_type(func: Callable[_P, _R]) -> Callable[_P, _R]:
     sig = inspect.signature(func)
 
     @wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         bound = sig.bind(*args, **kwargs)
         bound.apply_defaults()
 
@@ -172,6 +166,10 @@ def get_3d_data(hdf: HdfExtType = ".h5") -> str:
 def get_fieldline_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the magnetic fieldline (2D) data file.
 
+    .. warning::
+        Unlike the other example data files, fieldline data files do not
+        contain scale datasets.
+
     Parameters
     ----------
     hdf : HdfExtType, optional
@@ -190,6 +188,11 @@ def get_fieldline_data(hdf: HdfExtType = ".h5") -> str:
 @check_hdf_type
 def get_synchronic_map_data(hdf: HdfExtType = ".h5") -> str:
     """Fetch the synchronic map data file.
+
+    .. warning::
+        Synchronic map data is only available in HDF5 format. Furthermore,
+        unlike the other example data files, synchronic map data files contain
+        additional datasets beyond the primary data and scales.
 
     Parameters
     ----------

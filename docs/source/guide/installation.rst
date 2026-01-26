@@ -18,11 +18,13 @@ To get started with **psi-io**, you can install it directly from PyPI:
 
 Required Dependencies
 ----------------------
-- `Python >= 3.10 <https://www.python.org/>`_
+- `Python >= 3.8 <https://www.python.org/>`_
 - `numpy <https://numpy.org/>`_
-- `psi-io <https://pypi.org/project/psi-io/>`_
+- `h5py <https://docs.h5py.org/en/stable/>`_
 
 Optional Dependencies
 ----------------------
-- `matplotlib <https://matplotlib.org/>`_
-- `pooch <https://www.fatiando.org/pooch/>`_
+- `matplotlib <https://matplotlib.org/>`_ (*viz.* for running examples)
+- `pooch <https://www.fatiando.org/pooch/>`_ (*viz.* for running examples)
+- `pyhdf <https://pypi.org/project/pyhdf/>`_ (for HDF4 support)
+- `scipy <https://scipy.org/>`_ (for advanced interpolation methods)

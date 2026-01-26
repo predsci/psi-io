@@ -87,7 +87,8 @@ build = [
 ]
 test = [
   "pytest>=8.4.0",
-  "pytest-cov"
+  "pytest-cov",
+  "pytest-benchmark"
 ]
 types = [
   "mypy>=1.15"
@@ -140,6 +141,7 @@ markers = [
   "benchmark: performance benchmark tests",
   "read_hdf_by_index: tests for read_hdf_by_index function",
   "read_hdf_by_value: tests for read_hdf_by_value function",
+  "read_hdf_by_ivalue: tests for read_hdf_by_ivalue function",
 ]
 addopts = [
   "-ra",

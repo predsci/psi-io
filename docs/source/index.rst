@@ -22,4 +22,5 @@ To get started, visit the :ref:`installation` guide. For a more in-depth analysi
     :hidden:
 
     API <api/index>
+    Guide <guide/index>
     Examples <gallery/index>

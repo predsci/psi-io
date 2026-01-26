@@ -17,8 +17,15 @@ if 'SPHINX_GALLERY_BUILD' not in os.environ:
 
 import matplotlib.pyplot as plt
 
-from psi_io import read_hdf_meta
+from psi_io import read_hdf_meta, read_hdf_meta, read_hdf_data
 from psi_io.data import get_3d_data
 
-data = get_3d_data('.hdf')
+data = get_3d_data()
 meta = read_hdf_meta(data)
+dset = read_hdf_data(data)
+
+ax = plt.figure().add_subplot()
+
+ax.pcolormesh( dset[3], dset[2], dset[0][..., 0].T, clim=[-10, 10], cmap='seismic', shading='gouraud')
+
+plt.show()

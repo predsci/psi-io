@@ -1,53 +1,28 @@
 """
 Routines for reading/writing PSI style HDF5 and HDF4 data files.
 
-- Use rdhdf_1d, rdhdf_2d, and rdhdf_3d for reading full datasets.
-
-- Use wrhdf_1d, wrhdf_2d, and wrhdf_3d for writing.
-
-- Use read_hdf_by_index or read_hdf_by_value for reading portions of datasets.
-
-- Use np_interpolate_slice_from_hdf or interpolate_positions_from_hdf for
-  slicing or interpolating directly to arbitrary positions.
-
-- The HDF type is determined by the filename extension (.hdf or .h5).
-
-Package Requirements:
-    - REQUIRED: h5py + HDF5 (for .h5). h5py is available in default conda.
-    - OPTIONAL: pyhdf + HDF4 (for .hdf), scipy (for special interpolation routines).
-    - It is easiest to install these with conda (from anaconda or miniconda),
-      but HDF4, HDF5, pyhdf, and h5py can be installed manually too.
-      - pyhdf is available in the conda-forge channel.
-      - h5py is available in the default conda channel.
-
-Notes:
-    1) Python uses C-style array indexing, while PSI tools use FORTRAN style
-       array indexing, so 3D fields f(r,t,p) in FORTRAN are read and manipulated
-       as f(p,t,r) in PYTHON. But we set the rdhdf_1d (2d) (3d) returns to resemble
-       how we call them in FORTRAN or IDL. So, if in doubt check the shapes.
-
-    2) Not all PSI FORTRAN tools can read HDF4 files written by the pyhdf.SD interface.
-      - If you have a problem, use the PSI tool "hdfsd2hdf" to convert.
-
 Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
 
 2023/09: Start with SVN version r454, 2023/09/12 by RC, Predictive Science Inc.
+
 2024/06: CD: add the get_scales subroutines.
+
 2024/11: RD: Major Update: Add several generic data loading capabilites for faster IO.
          - Read only the portions of data required (`read_hdf_by_index`, `read_hdf_by_value`).
          - Interpolate to slices along a given axes (`np_interpolate_slice_from_hdf`) or
            generic positions (`interpolate_positions_from_hdf`).
+
 2025/06: CD: Prep for integration into psi-io package, HDF4 is now optional.
 """
+
+from __future__ import annotations
+
 import math
-# Standard Python imports
 from collections import namedtuple
-from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Optional, Literal, Tuple, Iterable, List, Dict, Union, Callable, Any
 
-# Required Packages
 import numpy as np
 import h5py as h5
 
@@ -532,6 +507,45 @@ def read_hdf_data(ifile: Union[Path, str], /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Tuple[np.ndarray]:
+    """
+    Read data from an HDF4 (.hdf) or HDF5 (.h5) file.
+
+    Parameters
+    ----------
+    ifile : Path | str
+         The path to the HDF file to read.
+    dataset_id : str | None
+        The identifier of the dataset to read.
+        If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+    return_scales : bool
+        If True, the scales (coordinate arrays) for each dimension are also returned.
+
+    Returns
+    -------
+    out : np.ndarray | tuple[np.ndarray]
+        The data array.
+        If ``return_scales`` is True, returns a tuple containing the data array
+        and the scales for each dimension.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+
+    See Also
+    --------
+    read_hdf_by_index
+        Read HDF datasets by index.
+    read_hdf_by_value
+        Read HDF datasets by value ranges.
+    read_hdf_by_ivalue
+        Read HDF datasets by subindex values.
+
+    Notes
+    -----
+    This function delegates to :func:`_read_h5_data` for HDF5 files
+    and :func:`_read_h4_data` for HDF4 files based on the file extension.
+    """
     return _dispatch_by_ext(ifile, _read_h4_data, _read_h5_data,
                             dataset_id=dataset_id, return_scales=return_scales)
 
@@ -555,10 +569,12 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
        The path to the HDF file to read.
     *xi : int | tuple[int | None, int | None] | None
        Indices or ranges for each dimension of the `n`-dimensional dataset.
-       Use None for a dimension to select all indices.
+       Use None for a dimension to select all indices. If no arguments are passed,
+       the entire dataset (and its scales) will be returned – see
+       :func:`~psi_io.psi_io.read_hdf_data`.
     dataset_id : str | None
        The identifier of the dataset to read.
-       If None, a default dataset is used.
+       If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
     return_scales : bool
        If True, the scales (coordinate arrays) for each dimension are also returned.
 
@@ -578,6 +594,10 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
     --------
     read_hdf_by_value
         Read HDF datasets by value ranges.
+    read_hdf_by_ivalue
+        Read HDF datasets by subindex values.
+    read_hdf_data
+        Read entire HDF datasets.
 
     Notes
     -----
@@ -652,7 +672,7 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
         entire dataset (and its scales) will be returned.
     dataset_id : str | None
         The identifier of the dataset to read.
-        If None, a default dataset is used.
+        If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
     return_scales : bool
         If True, the scales for the specified dataset are also returned.
 
@@ -671,7 +691,11 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
     See Also
     --------
     read_hdf_by_index
-        Read HDF datasets by index ranges.
+        Read HDF datasets by index.
+    read_hdf_by_ivalue
+        Read HDF datasets by subindex values.
+    read_hdf_data
+        Read entire HDF datasets.
     sp_interpolate_slice_from_hdf
         Interpolate slices from HDF datasets using SciPy's
         :class:`~scipy.interpolate.RegularGridInterpolator`
@@ -742,6 +766,83 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """
+    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by value.
+
+    .. note::
+       For each dimension, the minimum number of elements returned is 2 *e.g.*
+       if 3 floats are passed (as positional `*xi` arguments) for a 3D dataset,
+       the resulting subset will have a shape of (2, 2, 2,) with scales of length 2.
+
+    Parameters
+    ----------
+    ifile : Path | str
+        The path to the HDF file to read.
+    *xi : float | tuple[float, float] | None
+        Values or value ranges corresponding to each dimension of the `n`-dimensional
+        dataset specified by the ``dataset_id``. If no arguments are passed, the
+        entire dataset (and its scales) will be returned.
+    dataset_id : str | None
+        The identifier of the dataset to read.
+        If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+    return_scales : bool
+        If True, arrays of indices for the specified dataset are also returned.
+        Note, regardless of whether the provided dataset has coordinate variables
+        (scales), the returned index arrays are always 0-based indices generated
+        through :func:`~numpy.arange`.
+
+    Returns
+    -------
+    out : np.ndarray | tuple[np.ndarray]
+        The selected data array.
+        If ``return_scales`` is True, returns a tuple containing the data array
+        and the scales for each dimension.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+
+    See Also
+    --------
+    read_hdf_by_index
+        Read HDF datasets by index.
+    read_hdf_data
+        Read entire HDF datasets.
+    sp_interpolate_slice_from_hdf
+        Interpolate slices from HDF datasets using SciPy's
+        :class:`~scipy.interpolate.RegularGridInterpolator`
+    np_interpolate_slice_from_hdf
+        Perform linear, bilinear, or trilinear interpolation using vectorized numpy-based
+        routines.
+
+    Notes
+    -----
+    This function delegates to :func:`_read_h5_by_ivalue` for HDF5 files and
+    :func:`_read_h4_by_ivalue` for HDF4 files based on the file extension.
+
+    This function assumes that the dataset is Fortran (or column-major) ordered *viz.* for
+    compatibility with PSI's data ecosystem; as such, a given :math:`n`-dimensional array,
+    of shape :math:`(D_0, D_1, ..., D_{n-1})`, has scales :math:`(x_0, x_1, ..., x_{n-1})`,
+    such that :math:`| x_i | = | D_{(n-1)-i} |`. For example, a 3D dataset with shape
+    :math:`(D_p, D_t, D_r)` has scales :math:`r, t, p` corresponding to the radial, theta,
+    and phi dimensions respectively.
+
+    This function extracts a subset of the given dataset/scales without reading the
+    entire data into memory. For a given scale :math:`x_j`, if:
+
+    - *i)* a single float is provided (:math:`a`), the function will return a 2-element
+      subset of the scale (:math:`xʹ_j`): :math:`xʹ_j[floor(a)], xʹ_j[ceil(a)]`.
+    - *ii)* a (float, float) tuple is provided (:math:`a_0, a_1`), the function will return an
+      *m*-element subset of the scale (:math:`xʹ_j`): :math:`xʹ_j[floor(a_0)], xʹ_j[ceil(a_1)]`
+    - *iii)* a **None** value is provided, the function will return the entire scale :math:`x_j`
+
+    The returned subset can then be passed to a linear interpolation routine to extract the
+    "slice" at the desired fixed dimensions.
+
+    .. warning::
+
+    """
     if not xi:
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
     return _dispatch_by_ext(ifile, _read_h4_by_ivalue, _read_h5_by_ivalue,
@@ -753,6 +854,51 @@ def write_hdf_data(ifile: Union[Path, str], /,
                    *scales: Iterable[np.ndarray],
                    dataset_id: Optional[str] = None
                    ) -> Path:
+    """
+    Write data to an HDF4 (.hdf) or HDF5 (.h5) file.
+
+    Following PSI conventions, the data array is assumed to be Fortran-ordered,
+    with the scales provided in the order corresponding to each dimension *e.g.* a
+    3D dataset with shape (Dp, Dt, Dr) has scales r, t, p corresponding to the
+    radial, theta, and phi dimensions respectively.
+
+    Parameters
+    ----------
+    ifile : Path | str
+        The path to the HDF file to write.
+    data : np.ndarray
+        The data array to write.
+    *scales : Iterable[np.ndarray]
+        The scales (coordinate arrays) for each dimension.
+    dataset_id : str | None
+        The identifier of the dataset to write.
+        If None, a default dataset is used ('Data-Set-2' for HDF
+        and 'Data' for HDF5).
+
+    Returns
+    -------
+    out : Path
+        The path to the written HDF file.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+
+    Notes
+    -----
+    This function delegates to :func:`_write_h5_data` for HDF5 files
+    and :func:`_write_h4_data` for HDF4 files based on the file extension.
+
+    See Also
+    --------
+    wrhdf_1d
+        Write 1D HDF files.
+    wrhdf_2d
+        Write 2D HDF files.
+    wrhdf_3d
+        Write 3D HDF files.
+    """
     return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
                             *scales, dataset_id=dataset_id)
 
@@ -890,19 +1036,21 @@ def np_interpolate_slice_from_hdf(ifile: Union[Path, str], /,
        Slicing routines result in a dimensional reduction. The dimensions
        that are fixed (i.e. provided as float values in `*xi`) are removed
        from the output slice, while the dimensions that are not fixed
-       (*i.e.* provided as None in `*xi`) are retained.
+       (*i.e.* provided as `None` in `*xi`) are retained.
 
     Parameters
     ----------
     ifile : Path | str
         The path to the HDF file to read.
     *xi : sequence
-        Positional arguments passed-through to :func:`read_hdf_by_value`.
-    **kwargs : dict
-        Keyword arguments passed-through to :func:`read_hdf_by_value`.
-        **NOTE: Instantiating a linear interpolator requires the** ``return_scales``
-        **keyword argument to be set to True; this function overrides
-        any provided value for** ``return_scales`` **to ensure this behavior.**
+        Positional arguments passed-through to reader function.
+    dataset_id : str | None
+        The identifier of the dataset to read.
+        If None, a default dataset is used ('Data-Set-2' for HDF
+        and 'Data' for HDF5).
+    by_index : bool
+        If True, use :func:`read_hdf_by_ivalue` to read data by subindex values.
+        If False, use :func:`read_hdf_by_value` to read data by value ranges.
 
     Returns
     -------
