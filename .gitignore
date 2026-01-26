@@ -97,6 +97,7 @@ local_testing/
 TEST*.xml
 .coverage
 .coverage.*
+.benchmarks
 htmlcov/
 coverage.xml
 
