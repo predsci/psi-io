@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 import nox
 
-nox.options.reuse_existing_virtualenvs = True
+nox.options.reuse_existing_virtualenvs = False
 pyproject = nox.project.load_toml()
 
 PY_VERSIONS = nox.project.python_versions(pyproject)
@@ -66,10 +66,10 @@ def _darwin_sdk_env() -> dict[str, str]:
 
 def _build_env(session: nox.Session) -> Path:
     """Build a wheel into ./dist and return its path."""
-    session.conda_install(
-        *pyproject["tool"][PROJECT_NAME].get("conda", []),
-        channel="conda-forge"
-    )
+    # session.conda_install(
+    #     *pyproject["tool"][PROJECT_NAME].get("conda", []),
+    #     channel="conda-forge"
+    # )
     session.env.update(_darwin_sdk_env())
 
 
@@ -133,12 +133,13 @@ def test(session: nox.Session) -> None:
     # Build wheel
     _dist_env(session)
     session.install(*pyproject["project"].get("optional-dependencies", {}).get("test", []))
+    session.install(*pyproject["project"].get("optional-dependencies", {}).get("hdf4", []))
 
     tmp = session.create_tmp()
     session.chdir(tmp)
 
-    # Pytest
-    session.run("pytest", PROJECT_NAME_PATH.as_posix(), *session.posargs)
+    # For now, skip benchmarking tests on CI unless explicitly requested
+    session.run("pytest", PROJECT_NAME_PATH.as_posix(), "--benchmark-skip", *session.posargs)
 
 
 @nox.session(venv_backend='conda|mamba|micromamba', python=SYS_PYTHON)
@@ -189,23 +190,24 @@ def docs(session: nox.Session) -> None:
     """Build Sphinx docs against the installed wheel."""
     _dist_env(session)
     session.install(*pyproject["project"].get("optional-dependencies", {}).get("docs", []))
+    session.install(*pyproject["project"].get("optional-dependencies", {}).get("hdf4", []))
     args = pyproject["tool"].get("sphinx_build", {}).get("addopts", [])
+    tmp = Path(session.create_tmp()).resolve()
+    session.chdir(tmp)
 
-    stamp = session.env_dir / ".mapflpy_tag.json"
+    stamp = tmp / ".psi-io.json"
     session.run(
         "python", "-c",
         (
             "import json; "
             "from importlib import metadata as md; "
-            "d=md.distribution('mapflpy'); "
-            "txt=d.read_text('WHEEL'); "
-            "tags=[]; "
+            "d=md.distribution('psi-io'); "
+            "txt=d.read_text('WHEEL') or ''; "
             "tags=[ln.split(':',1)[1].strip() for ln in txt.splitlines() if ln.startswith('Tag: ')]; "
-            "out={'tags': tags}; "
-            f"open('{stamp}','w').write(json.dumps(out))"
+            f"open(r'{stamp.as_posix()}', 'w', encoding='utf-8').write(json.dumps({{'tags': tags}}))"
         )
     )
-    tag = json.loads(Path(stamp).read_text())
+    tag = json.loads(stamp.read_text())
 
     out_dir = DOCDIST_DIR / f"html-{tag.get('tags', ['none'])[0]}"
     src_dir = PROJECT_NAME_PATH / "docs" / "source"

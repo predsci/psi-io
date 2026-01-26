@@ -5,12 +5,13 @@
 # ------------
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["setuptools >= 77.0.3"]
+requires = ["setuptools >= 74.0.0"]
 
 # Project Metadata
 # ----------------
 [project]
 name = "psi-io"
+#name = "psi-io-test"
 version = "1.1.0"
 description = "Readers and writers for HDF data used by Predictive Science Inc."
 authors = [
@@ -20,8 +21,7 @@ authors = [
   {name = "Cooper Downs"},
 ]
 readme = "README.rst"
-license = "Apache-2.0"
-license-files = ["LICENSE.txt"]
+license = { text = "Apache-2.0" }
 keywords = [
   "solar physics",
   "space physics",
@@ -101,6 +101,7 @@ docs = [
   "sphinx-book-theme==1.1.4",
   "sphinx-gallery==0.19.0",
   "sphinx-copybutton==0.5.2",
+  "numpydoc==1.9.0",
   "pooch==1.8.2",
   "matplotlib==3.10.7",
   "scipy",
@@ -130,6 +131,9 @@ exclude = [
   "tools"
 ]
 
+[tool.setuptools]
+license-files = ["LICENSE*"]
+
 # Testing (pytest) configuration
 # ------------------------------
 [tool.pytest.ini_options]
@@ -147,7 +151,7 @@ addopts = [
   "-ra",
   "--cov=psi_io",
   "--cov-report=term-missing",
-#  "--maxfail=1",
+  "--maxfail=1",
   "--import-mode=importlib",
 ]
 

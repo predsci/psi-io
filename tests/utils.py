@@ -3,7 +3,7 @@ from types import MappingProxyType
 import h5py as h5
 import numpy as np
 
-from psi_io import psi_io, data
+from psi_io import psi_io
 
 try:
     import pyhdf.SD as h4
