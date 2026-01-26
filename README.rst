@@ -11,11 +11,11 @@
    :target: https://opensource.org/license/apache-2-0/
    :alt: License
 
-.. |pyversions| image:: https://img.shields.io/pypi/pyversions/mapflpy.svg?logo=python&label=python&logoColor=white
+.. |pyversions| image:: https://img.shields.io/pypi/pyversions/psi-io.svg?logo=python&label=python&logoColor=white
    :target: https://pypi.org/project/psi-io
    :alt: Python Versions
 
-.. |deps| image:: https://img.shields.io/librariesio/github/predsci/mapflpy?logo=Libraries.io&logoColor=white
+.. |deps| image:: https://img.shields.io/librariesio/github/predsci/psi-io?logo=Libraries.io&logoColor=white
    :target: https://github.com/predsci/psi-io/blob/main/pyproject.toml
    :alt: Libraries.io
 
