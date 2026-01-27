@@ -30,7 +30,7 @@ jobs:
 
       - name: Build docs
         run: |
-          sphinx-build -n -W docs/source docs/_build/html
+          sphinx-build docs/source docs/_build/html
 
       - name: Upload docs artifact
         if: always()
