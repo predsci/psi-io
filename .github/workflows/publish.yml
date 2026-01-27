@@ -55,3 +55,11 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+
+      - name: Upload to GitHub releases
+        uses: softprops/action-gh-release@v2.4.1
+        with:
+          draft: false
+          generate_release_notes: false
+          files: |
+            dist/*

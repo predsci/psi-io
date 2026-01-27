@@ -84,6 +84,7 @@ def _dist_env(session: nox.Session) -> Path:
     session.run(
         "python", "-m", "pip", "install",
         "--no-index", f"--find-links={WHEELHOUSE_DIR}",
+        f"--find-links={WHEEL_DIR}",
         "--only-binary=:all:", "--report", "-",
         PROJECT_NAME,
     )
