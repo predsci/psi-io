@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: .python-version
+          python-version-file: .python-version
 
       - name: Build sdist
         run: |
@@ -55,7 +55,7 @@ jobs:
       # cibuildwheel itself manages build Pythons internally.
       - uses: actions/setup-python@v5
         with:
-          python-version: .python-version
+          python-version-file: .python-version
 
       - name: Build + test wheels (cibuildwheel)
         uses: pypa/cibuildwheel@v3.2.1
