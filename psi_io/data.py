@@ -74,8 +74,8 @@ FETCHER = pooch.create(
     that utilize the same asset hosting and caching mechanism.
 """
 
-_P = ParamSpec("P")
-_R = TypeVar("R")
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 def check_hdf_type(func: Callable[_P, _R]) -> Callable[_P, _R]:
     sig = inspect.signature(func)

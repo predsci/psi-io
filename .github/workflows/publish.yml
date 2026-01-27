@@ -1,0 +1,199 @@
+name: Publish Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - '*'
+
+permissions:
+  actions: read
+
+jobs:
+  build_sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: bash
+          cache-downloads: true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install nox
+        run: |
+          python -m pip install --upgrade pip
+          pip install nox[pbs]
+
+      - name: Set nox conda backend
+        run: echo "CONDA_EXE=micromamba" >> "$GITHUB_ENV"
+
+      - name: Build sdist
+        run: |
+          nox -s sdist
+
+      - name: Upload sdist artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: .nox/_artifacts/sdist/*.tar.gz
+          retention-days: 7
+
+
+  build_wheels:
+    name: Build wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs:
+      - build_sdist
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-22.04-arm
+          - macos-15-intel
+          - macos-15
+    steps:
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: bash
+          cache-downloads: true
+
+      - name: Checkout mapflpy
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nox[pbs]
+
+      - name: Set nox conda backend
+        run: echo "CONDA_EXE=micromamba" >> "$GITHUB_ENV"
+
+      - name: macOS SDK + nox conda backend
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          echo "CFLAGS=-isysroot $SDKROOT -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" >> "$GITHUB_ENV"
+          echo "CXXFLAGS=-isysroot $SDKROOT -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" >> "$GITHUB_ENV"
+          echo "FCFLAGS=-isysroot $SDKROOT -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-Wl,-syslibroot,$SDKROOT -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" >> "$GITHUB_ENV"
+
+      - name: Build wheels
+        run: |
+          nox -s build
+
+      - name: Repair wheels
+        run: |
+          nox -s repair
+
+      - name: Upload wheel artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: .nox/_artifacts/wheelhouse/*.whl
+          retention-days: 7
+
+
+  test_builds:
+    name: Test wheels for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    needs:
+      - build_wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-22.04-arm
+          - macos-15-intel
+          - macos-15
+    steps:
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: bash
+          cache-downloads: true
+
+      - name: Checkout mapflpy
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nox[pbs]
+
+      - name: Set nox conda backend
+        run: echo "CONDA_EXE=micromamba" >> "$GITHUB_ENV"
+
+      - name: Download prebuilt wheels
+        uses: actions/download-artifact@v6
+        with:
+          name: wheels-${{ matrix.os }}
+          path: .nox/_artifacts/wheelhouse
+
+      - name: Run tests
+        run: |
+          nox -s test
+   
+
+  publish:
+    name: Publish distributions
+    permissions:
+      contents: write
+      id-token: write
+    needs:
+      - test_builds
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Download sdist
+        uses: actions/download-artifact@v6
+        with:
+          name: sdist
+          path: dist
+
+      - name: Download wheels
+        uses: actions/download-artifact@v6
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - run: pwd && ls -alt . && ls -alt dist/
+
+      - name: Upload to GitHub releases
+        uses: softprops/action-gh-release@v2.4.1
+        with:
+          draft: false
+          generate_release_notes: false
+          files: |
+            dist/*
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.12.4
+        with:
+          packages-dir: dist
