@@ -13,9 +13,42 @@ Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
            generic positions (`interpolate_positions_from_hdf`).
 
 2025/06: CD: Prep for integration into psi-io package, HDF4 is now optional.
+
+2026/01: RD: Refactor legacy routines to use new generic routines where possible.
 """
 
 from __future__ import annotations
+
+__all__ = [
+    "read_hdf_meta",
+    "read_rtp_meta",
+
+    "get_scales_1d",
+    "get_scales_2d",
+    "get_scales_3d",
+
+    "read_hdf_by_index",
+    "read_hdf_by_value",
+    "read_hdf_by_ivalue",
+
+    "np_interpolate_slice_from_hdf",
+    "sp_interpolate_slice_from_hdf",
+    "interpolate_positions_from_hdf",
+
+    "instantiate_linear_interpolator",
+    "interpolate_point_from_1d_slice",
+    "interpolate_point_from_2d_slice",
+
+    "read_hdf_data",
+    "rdhdf_1d",
+    "rdhdf_2d",
+    "rdhdf_3d",
+
+    "write_hdf_data",
+    "wrhdf_1d",
+    "wrhdf_2d",
+    "wrhdf_3d",
+]
 
 import math
 from collections import namedtuple

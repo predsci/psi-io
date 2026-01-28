@@ -21,6 +21,7 @@ dependencies:
   # -------- Testing / QA --------
   - pytest
   - pytest-cov
+  - pytest-benchmark
   - mypy
   - ruff
   - coverage
@@ -31,6 +32,7 @@ dependencies:
   - sphinx-book-theme
   - sphinx-gallery
   - sphinx-copybutton
+  - numpydoc
   - matplotlib
   - pooch
 

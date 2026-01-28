@@ -19,7 +19,7 @@ import inspect
 from functools import wraps
 from typing import Callable, ParamSpec, TypeVar
 
-from psi_io import HdfExtType, HDFEXT
+from psi_io.psi_io import HdfExtType, HDFEXT
 
 try:
     import pooch
