@@ -3,11 +3,11 @@
    :alt: Predictive Science Inc.
    :width: 20px
 
-.. |pypi| image:: https://img.shields.io/pypi/v/mapflpy?logo=pypi&logoColor=white
+.. |pypi| image:: https://img.shields.io/pypi/v/psi-io?logo=pypi&logoColor=white
    :target: https://pypi.org/project/psi-io
    :alt: PyPI
 
-.. |license| image:: https://img.shields.io/pypi/l/mapflpy?logo=apache&logoColor=white
+.. |license| image:: https://img.shields.io/pypi/l/psi-io?logo=apache&logoColor=white
    :target: https://opensource.org/license/apache-2-0/
    :alt: License
 
@@ -19,12 +19,12 @@
    :target: https://github.com/predsci/psi-io/blob/main/pyproject.toml
    :alt: Libraries.io
 
-.. |publish| image:: https://github.com/predsci/mapflpy/actions/workflows/publish.yml/badge.svg?
-   :target: https://github.com/predsci/mapflpy/actions/workflows/publish.yml
+.. |publish| image:: https://github.com/predsci/psi-io/actions/workflows/publish.yml/badge.svg?
+   :target: https://github.com/predsci/psi-io/actions/workflows/publish.yml
    :alt: Publish workflow
 
-.. |docs| image:: https://github.com/predsci/mapflpy/actions/workflows/docs.yml/badge.svg?
-   :target: https://predsci.com/doc/mapflpy
+.. |docs| image:: https://github.com/predsci/psi-io/actions/workflows/docs.yml/badge.svg?
+   :target: https://predsci.com/doc/psi-io
    :alt: Docs workflow
 
 |pypi|
