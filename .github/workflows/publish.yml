@@ -12,7 +12,33 @@ permissions:
   contents: read
 
 jobs:
-  build_test:
+  test_version:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.8", "3.9", "3.10", "3.11", "3.12", "3.13" ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install -U pip build
+          python -m build --sdist --wheel --outdir dist
+
+      - name: Install wheel and run tests
+        run: |
+          python -m pip install -U pytest pytest-cov pytest-benchmark pyhdf
+          python -m pip install dist/*.whl
+          pytest
+
+  test_build_target:
+    needs: test_version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +64,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: build_test
+    needs: test_build_target
     runs-on: ubuntu-latest
     #if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     permissions:
