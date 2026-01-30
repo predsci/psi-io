@@ -5,8 +5,6 @@ This package is designed to standardize the reading and writing of HDF files wit
 (Predictive Science Inc.) data ecosystem. It provides a consistent interface for handling
 both HDF4 and HDF5 file formats (although the aim is to deprecate the latter in the future),
 and includes utilities for managing PSI-specific conventions.
-
-
 """
 from . import psi_io as _psi_io
 from .psi_io import *

@@ -872,9 +872,6 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
 
     The returned subset can then be passed to a linear interpolation routine to extract the
     "slice" at the desired fixed dimensions.
-
-    .. warning::
-
     """
     if not xi:
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
@@ -1553,7 +1550,7 @@ def _read_h5_by_index(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """ HDF5(.h5) version of :func:`read_hdf_by_index`."""
-    with (h5.File(ifile, 'r') as hdf):
+    with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
             raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
@@ -1589,7 +1586,7 @@ def _read_h5_by_value(ifile: Union[Path, str], /,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
     """HDF5 (.h5) version of :func:`read_hdf_by_value`."""
-    with (h5.File(ifile, 'r') as hdf):
+    with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
             raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
@@ -1639,7 +1636,7 @@ def _read_h5_by_ivalue(ifile: Union[Path, str], /,
                        dataset_id: Optional[str] = None,
                        return_scales: bool = True,
                        ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    with (h5.File(ifile, 'r') as hdf):
+    with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
             raise ValueError(f"len(xi) must equal the number of scales for {dataset_id}")
@@ -1707,7 +1704,7 @@ def _write_h5_data(ifile: Union[Path, str], /,
     return ifile
 
 
-def _np_linear_interpolation(xi, scales, values):
+def _np_linear_interpolation(xi: Iterable, scales: Iterable, values: np.ndarray):
     """
     Perform linear interpolation over one dimension.
 
@@ -1742,9 +1739,9 @@ def _np_bilinear_interpolation(xi, scales, values):
 
     Parameters
     ----------
-    xi : list
+    xi : Iterable
         List of values or None for each dimension.
-    scales : list
+    scales : Iterable
         List of scales (coordinate arrays) for each dimension.
     values : np.ndarray
         The data array to interpolate.
@@ -1862,7 +1859,8 @@ def _check_index_ranges(arr_size: int,
         return i0 - 1, i1 + 1
 
 
-def _cast_shape_tuple(input: Union[int, Iterable[int]]) -> tuple[int, ...]:
+def _cast_shape_tuple(input: Union[int, Iterable[int]]
+                      ) -> tuple[int, ...]:
     """
     Cast an input to a tuple of integers.
 
@@ -1889,7 +1887,8 @@ def _cast_shape_tuple(input: Union[int, Iterable[int]]) -> tuple[int, ...]:
         raise TypeError("Input must be an integer or an iterable of integers.")
 
 
-def _parse_index_inputs(input: Union[int, slice, Iterable[Union[int, None]], None]) -> slice:
+def _parse_index_inputs(input: Union[int, slice, Iterable[Union[int, None]], None]
+                        ) -> slice:
     """
     Parse various slice input formats into a standard slice object.
 
@@ -1922,7 +1921,10 @@ def _parse_index_inputs(input: Union[int, slice, Iterable[Union[int, None]], Non
         raise TypeError("Unsupported input type for slicing.")
 
 
-def _parse_value_inputs(dimproxy, value, scale_exists: bool = True) -> slice:
+def _parse_value_inputs(dimproxy,
+                        value,
+                        scale_exists: bool = True
+                        ) -> slice:
     if value is None:
         return slice(None)
     if not scale_exists:
@@ -1941,7 +1943,9 @@ def _parse_value_inputs(dimproxy, value, scale_exists: bool = True) -> slice:
         return slice(*_check_index_ranges(dim.size, *insert_indices))
 
 
-def _parse_ivalue_inputs(dimsize, input: Union[Union[int, float], slice, Iterable[Union[Union[int, float], None]], None]) -> slice:
+def _parse_ivalue_inputs(dimsize,
+                         input: Union[Union[int, float], slice, Iterable[Union[Union[int, float], None]], None]
+                         ) -> slice:
     """
     Parse various slice input formats into a standard slice object.
 
