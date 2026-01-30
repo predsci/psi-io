@@ -11,7 +11,7 @@ requires = ["setuptools >= 74.0.0"]
 # ----------------
 [project]
 name = "psi-io"
-version = "2.0.3"
+version = "2.0.4"
 description = "Readers and writers for HDF data used by Predictive Science Inc."
 authors = [
   {name = "Predictive Science Inc.", email = "webmaster@predsci.com"},
