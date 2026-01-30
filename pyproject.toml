@@ -86,7 +86,7 @@ build = [
   "packaging"
 ]
 test = [
-  "pytest>=8.4.0",
+  "pytest",
   "pytest-cov",
   "pytest-benchmark"
 ]

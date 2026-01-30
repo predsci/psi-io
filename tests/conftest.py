@@ -1,6 +1,7 @@
 import importlib
 import sys
 from pathlib import Path
+from typing import Dict
 
 import pytest
 
@@ -90,7 +91,7 @@ def data_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def generated_files(hdf_version, data_dir: Path) -> dict[str, Path]:
+def generated_files(hdf_version, data_dir: Path) -> Dict[str, Path]:
     """
     Create all test files once per test session and return their paths.
     """
@@ -121,7 +122,7 @@ def generated_files(hdf_version, data_dir: Path) -> dict[str, Path]:
 
 
 @pytest.fixture(scope="session")
-def combined_files(data_dir: Path) -> dict[str, Path]:
+def combined_files(data_dir: Path) -> Dict[str, Path]:
     """
     Create all test files once per test session and return their paths.
     """
@@ -155,7 +156,7 @@ def combined_files(data_dir: Path) -> dict[str, Path]:
 
 
 @pytest.fixture(scope="session")
-def expensive_file(hdf_version, data_dir: Path) -> dict[str, Path]:
+def expensive_file(hdf_version, data_dir: Path) -> Dict[str, Path]:
     large_filepath = data_dir / f"expensive_file{HDF_VERSION_MAPPINGS[hdf_version]['extension']}"
     if not large_filepath.exists():
         generate_mock_files(
@@ -168,7 +169,7 @@ def expensive_file(hdf_version, data_dir: Path) -> dict[str, Path]:
 
 
 @pytest.fixture(scope="session")
-def cheap_file(hdf_version, data_dir: Path) -> dict[str, Path]:
+def cheap_file(hdf_version, data_dir: Path) -> Dict[str, Path]:
     small_filepath = data_dir / f"cheap_file{HDF_VERSION_MAPPINGS[hdf_version]['extension']}"
     if not small_filepath.exists():
         generate_mock_files(
