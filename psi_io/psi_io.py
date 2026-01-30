@@ -73,8 +73,9 @@ try:
         "int16": h4.SDC.INT16,
         "uint16": h4.SDC.UINT16,
         "int32": h4.SDC.INT32,
+        # "int64": h4.SDC.INT32,        # Not supported by pyhdf
         "uint32": h4.SDC.UINT32,
-        "float16": h4.SDC.FLOAT32,
+        # "float16": h4.SDC.FLOAT32,    # Not supported by pyhdf
         "float32": h4.SDC.FLOAT32,
         "float64": h4.SDC.FLOAT64,
     })
@@ -233,6 +234,10 @@ def rdhdf_1d(hdf_filename: str
         1D array of scales.
     f : np.ndarray
         1D array of data.
+
+    See Also
+    --------
+    read_hdf_data : Generic HDF data reading routine.
     """
     return _rdhdf_nd(hdf_filename, dimensionality=1)
 
@@ -259,6 +264,10 @@ def rdhdf_2d(hdf_filename: str
         1D array of scales in the Y dimension.
     f : np.ndarray
         2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+
+    See Also
+    --------
+    read_hdf_data : Generic HDF data reading routine.
     """
     return _rdhdf_nd(hdf_filename, dimensionality=2)
 
@@ -287,6 +296,10 @@ def rdhdf_3d(hdf_filename: str
         1D array of scales in the Z dimension.
     f : np.ndarray
         3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+
+    See Also
+    --------
+    read_hdf_data : Generic HDF data reading routine.
     """
     return _rdhdf_nd(hdf_filename, dimensionality=3)
 
@@ -304,12 +317,20 @@ def wrhdf_1d(hdf_filename: str,
         1D array of scales.
     f : np.ndarray
         1D array of data.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+    KeyError
+        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
+        *viz.* float16 or int64.
+
+    See Also
+    --------
+    write_hdf_data : Generic HDF data writing routine.
     """
-    x = np.asarray(x)
-    y = np.array([])
-    z = np.array([])
-    f = np.asarray(f)
-    _wrhdf(hdf_filename, x, y, z, f)
+    return _wrhdf_nd(hdf_filename, f, x, dimensionality=1)
 
 
 def wrhdf_2d(hdf_filename: str,
@@ -333,15 +354,20 @@ def wrhdf_2d(hdf_filename: str,
         1D array of scales in the Y dimension.
     f : np.ndarray
         2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+    KeyError
+        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
+        *viz.* float16 or int64.
+
+    See Also
+    --------
+    write_hdf_data : Generic HDF data writing routine.
     """
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.array([])
-    f = np.asarray(f)
-    if hdf_filename.endswith('h5'):
-        _wrhdf(hdf_filename, x, y, z, f)
-    else:
-        _wrhdf(hdf_filename, y, x, z, f)
+    return _wrhdf_nd(hdf_filename, f, x, y, dimensionality=2)
 
 
 def wrhdf_3d(hdf_filename: str,
@@ -368,15 +394,20 @@ def wrhdf_3d(hdf_filename: str,
         1D array of scales in the Z dimension.
     f : np.ndarray
         3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a `.hdf` or `.h5` extension.
+    KeyError
+        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
+        *viz.* float16 or int64.
+
+    See Also
+    --------
+    write_hdf_data : Generic HDF data writing routine.
     """
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.asarray(z)
-    f = np.asarray(f)
-    if hdf_filename.endswith('h5'):
-        _wrhdf(hdf_filename, x, y, z, f)
-    else:
-        _wrhdf(hdf_filename, z, y, x, f)
+    return _wrhdf_nd(hdf_filename, f, x, y, z, dimensionality=3)
 
 
 def get_scales_1d(filename: str
@@ -881,7 +912,7 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
 
 def write_hdf_data(ifile: Union[Path, str], /,
                    data: np.ndarray,
-                   *scales: Iterable[np.ndarray],
+                   *scales: Iterable[Union[np.ndarray, None]],
                    dataset_id: Optional[str] = None
                    ) -> Path:
     """
@@ -898,7 +929,7 @@ def write_hdf_data(ifile: Union[Path, str], /,
         The path to the HDF file to write.
     data : np.ndarray
         The data array to write.
-    *scales : Iterable[np.ndarray]
+    *scales : Iterable[np.ndarray | None]
         The scales (coordinate arrays) for each dimension.
     dataset_id : str | None
         The identifier of the dataset to write.
@@ -914,11 +945,19 @@ def write_hdf_data(ifile: Union[Path, str], /,
     ------
     ValueError
         If the file does not have a `.hdf` or `.h5` extension.
+    KeyError
+        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
+        *viz.* float16 or int64.
 
     Notes
     -----
     This function delegates to :func:`_write_h5_data` for HDF5 files
     and :func:`_write_h4_data` for HDF4 files based on the file extension.
+
+    If no scales are provided, the dataset will be written without coordinate variables.
+    If scales are provided, the number of scales must be less than or equal to the number
+    of dimensions in the data array. To attach scales to specific dimensions only, provide
+    ``None`` for the dimensions without scales.
 
     See Also
     --------
@@ -1244,7 +1283,9 @@ def interpolate_point_from_2d_slice(xi, yi, scalex, scaley, values):
     return _np_bilinear_interpolation([xi, yi], [scalex[sx_], scaley[sy_]], values[(sx_, sy_)])
 
 
-def _rdhdf_nd(hdf_filename: str, dimensionality: int) -> Tuple[np.ndarray, ...]:
+def _rdhdf_nd(hdf_filename: str,
+              dimensionality: int
+              ) -> Tuple[np.ndarray, ...]:
     f, *scales = read_hdf_data(hdf_filename)
     if f.ndim != dimensionality:
         err = f'Expected {dimensionality}D data, got {f.ndim}D data instead.'
@@ -1253,154 +1294,15 @@ def _rdhdf_nd(hdf_filename: str, dimensionality: int) -> Tuple[np.ndarray, ...]:
     return *scales, f
 
 
-def _wrh5(h5_filename: str,
-          x: np.ndarray,
-          y: np.ndarray,
-          z: np.ndarray,
-          f: np.ndarray) -> None:
-    """Base writer for 1D, 2D, and 3D HDF5 files.
-
-    See Also
-    --------
-    :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
-    """
-    h5file = h5.File(h5_filename, 'w')
-
-    # Create the dataset (Data is the name used by the psi data)).
-    h5file.create_dataset("Data", data=f)
-
-    # Make sure the scales are desired by checking x type, which can
-    # be None or None converted by np.asarray (have to trap seperately)
-    if x is None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-    if x.any() == None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-
-    # Make sure scales are the same precision as data.
-    x = x.astype(f.dtype)
-    y = y.astype(f.dtype)
-    z = z.astype(f.dtype)
-
-    # Get number of dimensions:
-    ndims = np.ndim(f)
-
-    # Set the scales:
-    for i in range(0, ndims):
-        if i == 0 and len(x) != 0:
-            dim = h5file.create_dataset("dim1", data=x)
-            #            h5file['Data'].dims.create_scale(dim,'dim1')
-            dim.make_scale('dim1')
-            h5file['Data'].dims[0].attach_scale(dim)
-            h5file['Data'].dims[0].label = 'dim1'
-        if i == 1 and len(y) != 0:
-            dim = h5file.create_dataset("dim2", data=y)
-            #            h5file['Data'].dims.create_scale(dim,'dim2')
-            dim.make_scale('dim2')
-            h5file['Data'].dims[1].attach_scale(dim)
-            h5file['Data'].dims[1].label = 'dim2'
-        elif i == 2 and len(z) != 0:
-            dim = h5file.create_dataset("dim3", data=z)
-            #            h5file['Data'].dims.create_scale(dim,'dim3')
-            dim.make_scale('dim3')
-            h5file['Data'].dims[2].attach_scale(dim)
-            h5file['Data'].dims[2].label = 'dim3'
-
-    # Close the file:
-    h5file.close()
-
-
-def _wrhdf(hdf_filename: str,
-          x: np.ndarray,
-          y: np.ndarray,
-          z: np.ndarray,
-          f: np.ndarray) -> None:
-    """Base writer for 1D, 2D, and 3D HDF4 files.
-
-    See Also
-    --------
-    :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
-    """
-    if hdf_filename.endswith('h5'):
-        return _wrh5(hdf_filename, x, y, z, f)
-
-    # Check for HDF4
-    _except_no_pyhdf()
-
-    # Create an HDF file
-    sd_id = h4.SD(hdf_filename, h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
-
-    # Due to bug, need to only write 64-bit.
-    f = f.astype(np.float64)
-    ftype = h4.SDC.FLOAT64
-
-    #    if f.dtype == np.float32:
-    #        ftype = h4.SDC.FLOAT32
-    #    elif f.dtype == np.float64:
-    #        ftype = h4.SDC.FLOAT64
-
-    # Create the dataset (Data-Set-2 is the name used by the psi data)).
-    sds_id = sd_id.create("Data-Set-2", ftype, f.shape)
-
-    # Get number of dimensions:
-    ndims = np.ndim(f)
-
-    # Make sure the scales are desired by checking x type, which can
-    # be None or None converted by np.asarray (have to trap seperately)
-    if x is None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-    if x.any() == None:
-        x = np.array([], dtype=f.dtype)
-        y = np.array([], dtype=f.dtype)
-        z = np.array([], dtype=f.dtype)
-
-    # Due to python hdf4 bug, need to use double scales only.
-
-    # NOTE: this bug is due to an inability of SWIG (which is used to generate
-    # the C-to-python pyhdf bindings) to handle numpy types in the overloaded functions.
-    # The only reason that np.float64 works is that it is equivalent to
-    # the native python float type. This issue has been remedied below in the
-    # write_hdf functions.
-
-    x = x.astype(np.float64)
-    y = y.astype(np.float64)
-    z = z.astype(np.float64)
-
-    # Set the scales (or don't if x is none or length zero)
-    for i in range(0, ndims):
-        dim = sds_id.dim(i)
-        if i == 0 and len(x) != 0:
-            if x.dtype == np.float32:
-                stype = h4.SDC.FLOAT32
-            elif x.dtype == np.float64:
-                stype = h4.SDC.FLOAT64
-            dim.setscale(stype, x)
-        elif i == 1 and len(y) != 0:
-            if y.dtype == np.float32:
-                stype = h4.SDC.FLOAT32
-            elif y.dtype == np.float64:
-                stype = h4.SDC.FLOAT64
-            dim.setscale(stype, y)
-        elif i == 2 and len(z) != 0:
-            if z.dtype == np.float32:
-                stype = h4.SDC.FLOAT32
-            elif z.dtype == np.float64:
-                stype = h4.SDC.FLOAT64
-            dim.setscale(stype, z)
-
-    # Write the data:
-    sds_id.set(f)
-
-    # Close the dataset:
-    sds_id.endaccess()
-
-    # Flush and close the HDF file:
-    sd_id.end()
+def _wrhdf_nd(hdf_filename: str,
+              data: np.ndarray,
+              *scales: Iterable[Union[np.ndarray, None]],
+              dimensionality: int,
+              ) -> None:
+    if data.ndim != dimensionality:
+        err = f'Expected {dimensionality}D data, got {data.ndim}D data instead.'
+        raise ValueError(err)
+    write_hdf_data(hdf_filename, data, *scales)
 
 
 def _get_scales_nd_h5(ifile: Union[ Path, str], /,
@@ -1677,7 +1579,8 @@ def _write_h4_data(ifile: Union[Path, str], /,
 
     if scales:
         for i, scale in enumerate(reversed(scales)):
-            sds_id.dim(i).setscale(NPTYPES_TO_SDCTYPES[scale.dtype.name], scale.tolist())
+            if scale is not None:
+                sds_id.dim(i).setscale(NPTYPES_TO_SDCTYPES[scale.dtype.name], scale.tolist())
 
     sds_id.set(data)
     sds_id.endaccess()
@@ -1697,9 +1600,10 @@ def _write_h5_data(ifile: Union[Path, str], /,
 
         if scales:
             for i, scale in enumerate(scales):
-                h5file.create_dataset(f"dim{i+1}", data=scale, dtype=scale.dtype, shape=scale.shape)
-                h5file[dataid].dims[i].attach_scale(h5file[f"dim{i+1}"])
-                h5file[dataid].dims[i].label = f"dim{i+1}"
+                if scale is not None:
+                    h5file.create_dataset(f"dim{i+1}", data=scale, dtype=scale.dtype, shape=scale.shape)
+                    h5file[dataid].dims[i].attach_scale(h5file[f"dim{i+1}"])
+                    h5file[dataid].dims[i].label = f"dim{i+1}"
 
     return ifile
 
