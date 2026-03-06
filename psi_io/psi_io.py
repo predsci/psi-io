@@ -306,7 +306,8 @@ def rdhdf_3d(hdf_filename: str
 
 def wrhdf_1d(hdf_filename: str,
              x: np.ndarray,
-             f: np.ndarray) -> None:
+             f: np.ndarray,
+             **kwargs) -> None:
     """Write a 1D PSI-style HDF5 or HDF4 file.
 
     Parameters
@@ -317,6 +318,19 @@ def wrhdf_1d(hdf_filename: str,
         1D array of scales.
     f : np.ndarray
         1D array of data.
+    **kwargs
+        Additional keyword arguments passed through to the underlying
+        :func:`~psi_io.psi_io.write_hdf_data` routine, specifically:
+
+        - ``dataset_id`` : str | None
+            The identifier of the dataset to write.
+            If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+        - ``sync_dtype``: bool
+            If True, the data type of the scales will be matched to that of the data array.
+
+        Omitting these will yield the same behavior as the legacy routines, *i.e.* writing to
+        the default PSI dataset IDs for HDF4/HDF5 files and synchronizing datatypes between
+        the dataset and scales.
 
     Raises
     ------
@@ -326,17 +340,31 @@ def wrhdf_1d(hdf_filename: str,
         If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
         *viz.* float16 or int64.
 
+    Notes
+    -----
+    This routine is provided for backwards compatibility with existing PSI codes that
+    expect this API signature. While the underlying implementation has been refactored to
+    dispatch to the newer :func:`~psi_io.psi_io.write_hdf_data` routine – along with a
+    dimensionality check – the API signature and behavior has been largely preserved.
+
+    .. warning::
+       It is worth reiterating that this routine – when called with its default arguments –
+       will **write to the default PSI dataset IDs for HDF4/HDF5 files and synchronize datatypes
+       between the dataset and scales.** This behavior is crucial for interacting with certain
+       Fortran-based tools developed by PSI.
+
     See Also
     --------
     write_hdf_data : Generic HDF data writing routine.
     """
-    return _wrhdf_nd(hdf_filename, f, x, dimensionality=1)
+    return _wrhdf_nd(hdf_filename, f, x, dimensionality=1, **kwargs)
 
 
 def wrhdf_2d(hdf_filename: str,
              x: np.ndarray,
              y: np.ndarray,
-             f: np.ndarray) -> None:
+             f: np.ndarray,
+             **kwargs) -> None:
     """Write a 2D PSI-style HDF5 or HDF4 file.
 
     The data in the HDF file will appear as X,Y in Fortran order.
@@ -354,6 +382,19 @@ def wrhdf_2d(hdf_filename: str,
         1D array of scales in the Y dimension.
     f : np.ndarray
         2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+    **kwargs
+        Additional keyword arguments passed through to the underlying
+        :func:`~psi_io.psi_io.write_hdf_data` routine, specifically:
+
+        - ``dataset_id`` : str | None
+            The identifier of the dataset to write.
+            If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+        - ``sync_dtype``: bool
+            If True, the data type of the scales will be matched to that of the data array.
+
+        Omitting these will yield the same behavior as the legacy routines, *i.e.* writing to
+        the default PSI dataset IDs for HDF4/HDF5 files and synchronizing datatypes between
+        the dataset and scales.
 
     Raises
     ------
@@ -363,18 +404,32 @@ def wrhdf_2d(hdf_filename: str,
         If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
         *viz.* float16 or int64.
 
+    Notes
+    -----
+    This routine is provided for backwards compatibility with existing PSI codes that
+    expect this API signature. While the underlying implementation has been refactored to
+    dispatch to the newer :func:`~psi_io.psi_io.write_hdf_data` routine – along with a
+    dimensionality check – the API signature and behavior has been largely preserved.
+
+    .. warning::
+       It is worth reiterating that this routine – when called with its default arguments –
+       will **write to the default PSI dataset IDs for HDF4/HDF5 files and synchronize datatypes
+       between the dataset and scales.** This behavior is crucial for interacting with certain
+       Fortran-based tools developed by PSI.
+
     See Also
     --------
     write_hdf_data : Generic HDF data writing routine.
     """
-    return _wrhdf_nd(hdf_filename, f, x, y, dimensionality=2)
+    return _wrhdf_nd(hdf_filename, f, x, y, dimensionality=2, **kwargs)
 
 
 def wrhdf_3d(hdf_filename: str,
              x: np.ndarray,
              y: np.ndarray,
              z: np.ndarray,
-             f: np.ndarray) -> None:
+             f: np.ndarray,
+             **kwargs) -> None:
     """Write a 3D PSI-style HDF5 or HDF4 file.
 
     The data in the HDF file will appear as X,Y,Z in Fortran order.
@@ -394,6 +449,19 @@ def wrhdf_3d(hdf_filename: str,
         1D array of scales in the Z dimension.
     f : np.ndarray
         3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+    **kwargs
+        Additional keyword arguments passed through to the underlying
+        :func:`~psi_io.psi_io.write_hdf_data` routine, specifically:
+
+        - ``dataset_id`` : str | None
+            The identifier of the dataset to write.
+            If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+        - ``sync_dtype``: bool
+            If True, the data type of the scales will be matched to that of the data array.
+
+        Omitting these will yield the same behavior as the legacy routines, *i.e.* writing to
+        the default PSI dataset IDs for HDF4/HDF5 files and synchronizing datatypes between
+        the dataset and scales.
 
     Raises
     ------
@@ -403,11 +471,24 @@ def wrhdf_3d(hdf_filename: str,
         If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
         *viz.* float16 or int64.
 
+    Notes
+    -----
+    This routine is provided for backwards compatibility with existing PSI codes that
+    expect this API signature. While the underlying implementation has been refactored to
+    dispatch to the newer :func:`~psi_io.psi_io.write_hdf_data` routine – along with a
+    dimensionality check – the API signature and behavior has been largely preserved.
+
+    .. warning::
+       It is worth reiterating that this routine – when called with its default arguments –
+       will **write to the default PSI dataset IDs for HDF4/HDF5 files and synchronize datatypes
+       between the dataset and scales.** This behavior is crucial for interacting with certain
+       Fortran-based tools developed by PSI.
+
     See Also
     --------
     write_hdf_data : Generic HDF data writing routine.
     """
-    return _wrhdf_nd(hdf_filename, f, x, y, z, dimensionality=3)
+    return _wrhdf_nd(hdf_filename, f, x, y, z, dimensionality=3, **kwargs)
 
 
 def get_scales_1d(filename: str
@@ -913,7 +994,8 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
 def write_hdf_data(ifile: Union[Path, str], /,
                    data: np.ndarray,
                    *scales: Iterable[Union[np.ndarray, None]],
-                   dataset_id: Optional[str] = None
+                   dataset_id: Optional[str] = None,
+                   sync_dtype: bool = False,
                    ) -> Path:
     """
     Write data to an HDF4 (.hdf) or HDF5 (.h5) file.
@@ -933,8 +1015,13 @@ def write_hdf_data(ifile: Union[Path, str], /,
         The scales (coordinate arrays) for each dimension.
     dataset_id : str | None
         The identifier of the dataset to write.
-        If None, a default dataset is used ('Data-Set-2' for HDF
+        If None, a default dataset is used ('Data-Set-2' for HDF4
         and 'Data' for HDF5).
+    sync_dtype : bool
+        If True, the data type of the scales will be matched to that of the data array.
+        This argument is included to mimic the behavior of PSI's legacy HDF writing routines
+        and, more importantly, to ensure compatibility with certain Fortran tools within
+        the PSI ecosystem that require uniform precision between datasets and their scales.
 
     Returns
     -------
@@ -969,7 +1056,7 @@ def write_hdf_data(ifile: Union[Path, str], /,
         Write 3D HDF files.
     """
     return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
-                            *scales, dataset_id=dataset_id)
+                            *scales, dataset_id=dataset_id, sync_dtype=sync_dtype)
 
 
 def instantiate_linear_interpolator(*args, **kwargs):
@@ -1298,11 +1385,13 @@ def _wrhdf_nd(hdf_filename: str,
               data: np.ndarray,
               *scales: Iterable[Union[np.ndarray, None]],
               dimensionality: int,
+              sync_dtype: bool = True,
+              **kwargs
               ) -> None:
     if data.ndim != dimensionality:
         err = f'Expected {dimensionality}D data, got {data.ndim}D data instead.'
         raise ValueError(err)
-    write_hdf_data(hdf_filename, data, *scales)
+    write_hdf_data(hdf_filename, data, *scales, sync_dtype=sync_dtype, **kwargs)
 
 
 def _get_scales_nd_h5(ifile: Union[ Path, str], /,
@@ -1571,7 +1660,8 @@ def _read_h4_by_ivalue(ifile: Union[Path, str], /,
 def _write_h4_data(ifile: Union[Path, str], /,
                    data: np.ndarray,
                    *scales: Iterable[np.ndarray],
-                   dataset_id: Optional[str] = None
+                   dataset_id: Optional[str] = None,
+                   sync_dtype: bool = False,
                    ) -> Path:
     dataid = dataset_id or PSI_DATA_ID['h4']
     h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
@@ -1580,6 +1670,8 @@ def _write_h4_data(ifile: Union[Path, str], /,
     if scales:
         for i, scale in enumerate(reversed(scales)):
             if scale is not None:
+                if sync_dtype:
+                    scale = scale.astype(data.dtype)
                 sds_id.dim(i).setscale(NPTYPES_TO_SDCTYPES[scale.dtype.name], scale.tolist())
 
     sds_id.set(data)
@@ -1592,7 +1684,8 @@ def _write_h4_data(ifile: Union[Path, str], /,
 def _write_h5_data(ifile: Union[Path, str], /,
                    data: np.ndarray,
                    *scales: Iterable[np.ndarray],
-                   dataset_id: Optional[str] = None
+                   dataset_id: Optional[str] = None,
+                   sync_dtype: bool = False,
                    ) -> Path:
     dataid = dataset_id or PSI_DATA_ID['h5']
     with h5.File(ifile, "w") as h5file:
@@ -1601,6 +1694,8 @@ def _write_h5_data(ifile: Union[Path, str], /,
         if scales:
             for i, scale in enumerate(scales):
                 if scale is not None:
+                    if sync_dtype:
+                        scale = scale.astype(data.dtype)
                     h5file.create_dataset(f"dim{i+1}", data=scale, dtype=scale.dtype, shape=scale.shape)
                     h5file[dataid].dims[i].attach_scale(h5file[f"dim{i+1}"])
                     h5file[dataid].dims[i].label = f"dim{i+1}"
