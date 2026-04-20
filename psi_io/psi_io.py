@@ -67,21 +67,8 @@ import h5py as h5
 try:
     import pyhdf.SD as h4
     H4_AVAILABLE = True
-    NPTYPES_TO_SDCTYPES = MappingProxyType({
-        "int8": h4.SDC.INT8,
-        "uint8": h4.SDC.UINT8,
-        "int16": h4.SDC.INT16,
-        "uint16": h4.SDC.UINT16,
-        "int32": h4.SDC.INT32,
-        # "int64": h4.SDC.INT32,        # Not supported by pyhdf
-        "uint32": h4.SDC.UINT32,
-        # "float16": h4.SDC.FLOAT32,    # Not supported by pyhdf
-        "float32": h4.SDC.FLOAT32,
-        "float64": h4.SDC.FLOAT64,
-    })
 except ImportError:
     H4_AVAILABLE = False
-    NPTYPES_TO_SDCTYPES = {}
 
 try:
     from scipy.interpolate import RegularGridInterpolator
@@ -161,7 +148,7 @@ HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'ima
 """
 
 
-HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'scales'])
+HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'attr', 'scales'])
 """
     Named tuple for HDF dataset metadata
 
@@ -173,10 +160,81 @@ HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'scales'])
         The data type of the dataset.
     shape : tuple of int
         The shape of the dataset.
+    attr : dict
+        A dictionary of attributes associated with the dataset.
     scales : list of HdfScaleMeta
         A list of scale metadata objects corresponding to each dimension of the dataset.
         If the dataset has no scales, this list will be empty.
 """
+
+PathLike = Union[Path, str]
+
+DTYPE_TO_SDC = MappingProxyType({
+    "i": {
+        1: h4.SDC.INT8,
+        2: h4.SDC.INT16,
+        4: h4.SDC.INT32,
+    },
+    "u": {
+        1: h4.SDC.UINT8,
+        2: h4.SDC.UINT16,
+        4: h4.SDC.UINT32,
+    },
+    "f": {
+        4: h4.SDC.FLOAT32,
+        8: h4.SDC.FLOAT64,
+    },
+    "b": {
+        1: h4.SDC.UINT8
+    },
+    "U": h4.SDC.CHAR,
+    "S": h4.SDC.UCHAR
+})
+"""
+    Helper dictionary for mapping :class:`~numpy.dtypes`'s to HDF4 SDC types. 
+
+    The keys are :attr:`~numpy.dtype.kind`, and the values are either a direct 
+    mapping (for byte-string or unicode-string types) or a nested mapping of 
+    :attr:`~numpy.dtype.itemsize` to SDC type (for numeric types).
+"""
+
+
+def _dtype_to_sdc(dtype: np.dtype):
+    """Convert a numpy dtype to the corresponding HDF4 SDC type.
+
+    Parameters
+    ----------
+    dtype : np.dtype
+        The numpy dtype to convert.
+
+    Returns
+    -------
+    out : HDF4 SDC type
+        The corresponding HDF4 SDC type for the given numpy dtype.
+
+    Raises
+    ------
+    ImportError
+        If the `pyhdf` package is not available.
+    KeyError
+        If the dtype kind or itemsize is not supported by HDF4.
+    """
+    _except_no_pyhdf()
+    if dtype.kind in {"U", "S"}:
+        return DTYPE_TO_SDC[dtype.kind]
+
+    try:
+        return DTYPE_TO_SDC[dtype.kind][dtype.itemsize]
+    except KeyError as e:
+        if dtype.kind not in DTYPE_TO_SDC:
+            msg = (f"Unsupported dtype kind '{dtype.kind}' for HDF4. "
+                   f"Supported kinds are: {set(DTYPE_TO_SDC.keys())}")
+            raise KeyError(msg) from e
+        elif dtype.itemsize not in DTYPE_TO_SDC[dtype.kind]:
+            msg = (f"Unsupported itemsize '{dtype.itemsize}' for dtype kind '{dtype.kind}' in HDF4. "
+                   f"Supported itemsizes are: {set(DTYPE_TO_SDC[dtype.kind].keys())}")
+            raise KeyError(msg) from e
+        raise e
 
 
 def _dispatch_by_ext(ifile: Union[Path, str],
@@ -996,6 +1054,7 @@ def write_hdf_data(ifile: Union[Path, str], /,
                    *scales: Iterable[Union[np.ndarray, None]],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
+                   **kwargs
                    ) -> Path:
     """
     Write data to an HDF4 (.hdf) or HDF5 (.h5) file.
@@ -1022,6 +1081,8 @@ def write_hdf_data(ifile: Union[Path, str], /,
         This argument is included to mimic the behavior of PSI's legacy HDF writing routines
         and, more importantly, to ensure compatibility with certain Fortran tools within
         the PSI ecosystem that require uniform precision between datasets and their scales.
+    **kwargs
+        Key-value pairs of dataset attributes to attach to the dataset being written.
 
     Returns
     -------
@@ -1056,7 +1117,22 @@ def write_hdf_data(ifile: Union[Path, str], /,
         Write 3D HDF files.
     """
     return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
-                            *scales, dataset_id=dataset_id, sync_dtype=sync_dtype)
+                            *scales, dataset_id=dataset_id, sync_dtype=sync_dtype, **kwargs)
+
+
+def convert(ifile: Union[Path, str],
+           ofile: Optional[Union[Path, str]]=None) -> Path:
+    ifile = Path(ifile)
+    if not ofile:
+        ofile = ifile.with_suffix(".hdf") if ifile.suffix == ".h5" else ifile.with_suffix(".h5")
+    else:
+        ofile = Path(ofile)
+    ofile.parent.mkdir(parents=True, exist_ok=True)
+
+    meta_data = read_hdf_meta(ifile)
+    for dataset in meta_data:
+        data, *scales = read_hdf_data(ifile, dataset_id=dataset.name, return_scales=True)
+        write_hdf_data(ofile, data, *scales, dataset_id=dataset.dataset_id)
 
 
 def instantiate_linear_interpolator(*args, **kwargs):
@@ -1450,6 +1526,7 @@ def _read_h5_meta(ifile: Union[Path, str], /,
         return [HdfDataMeta(name=k,
                             type=v.dtype,
                             shape=v.shape,
+                            attr=dict(v.attrs),
                             scales=[HdfScaleMeta(name=dimproxy.label,
                                                  type=dim.dtype,
                                                  shape=dim.shape,
@@ -1485,6 +1562,7 @@ def _read_h4_meta(ifile: Union[Path, str], /,
     return [HdfDataMeta(name=k,
                         type=SDC_TYPE_CONVERSIONS[v.info()[3]],
                         shape=_cast_shape_tuple(v.info()[2]),
+                        attr=v.attributes(),
                         scales=[HdfScaleMeta(name=k_,
                                              type=SDC_TYPE_CONVERSIONS[v_[3]],
                                              shape=_cast_shape_tuple(v_[0]),
@@ -1662,17 +1740,23 @@ def _write_h4_data(ifile: Union[Path, str], /,
                    *scales: Iterable[np.ndarray],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
-                   ) -> Path:
+                   **kwargs) -> Path:
     dataid = dataset_id or PSI_DATA_ID['h4']
     h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
-    sds_id = h4file.create(dataid, NPTYPES_TO_SDCTYPES[data.dtype.name], data.shape)
+    sds_id = h4file.create(dataid, _dtype_to_sdc(data.dtype), data.shape)
 
     if scales:
         for i, scale in enumerate(reversed(scales)):
             if scale is not None:
                 if sync_dtype:
                     scale = scale.astype(data.dtype)
-                sds_id.dim(i).setscale(NPTYPES_TO_SDCTYPES[scale.dtype.name], scale.tolist())
+                sds_id.dim(i).setscale(_dtype_to_sdc(scale.dtype), scale.tolist())
+
+    if kwargs:
+        for k, v in kwargs.items():
+            npv = np.asarray(v)
+            attr_ = sds_id.attr(k)
+            attr_.set(_dtype_to_sdc(npv.dtype), npv.tolist())
 
     sds_id.set(data)
     sds_id.endaccess()
@@ -1686,10 +1770,10 @@ def _write_h5_data(ifile: Union[Path, str], /,
                    *scales: Iterable[np.ndarray],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
-                   ) -> Path:
+                   **kwargs) -> Path:
     dataid = dataset_id or PSI_DATA_ID['h5']
     with h5.File(ifile, "w") as h5file:
-        h5file.create_dataset(dataid, data=data, dtype=data.dtype, shape=data.shape)
+        dataset = h5file.create_dataset(dataid, data=data, dtype=data.dtype, shape=data.shape)
 
         if scales:
             for i, scale in enumerate(scales):
@@ -1699,6 +1783,10 @@ def _write_h5_data(ifile: Union[Path, str], /,
                     h5file.create_dataset(f"dim{i+1}", data=scale, dtype=scale.dtype, shape=scale.shape)
                     h5file[dataid].dims[i].attach_scale(h5file[f"dim{i+1}"])
                     h5file[dataid].dims[i].label = f"dim{i+1}"
+
+        if kwargs:
+            for key, value in kwargs.items():
+                dataset.attrs[key] = value
 
     return ifile
 
