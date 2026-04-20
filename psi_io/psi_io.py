@@ -54,7 +54,7 @@ import math
 from collections import namedtuple
 from pathlib import Path
 from types import MappingProxyType
-from typing import Optional, Literal, Tuple, Iterable, List, Dict, Union, Callable, Any
+from typing import Optional, Literal, Tuple, Sequence, List, Dict, Union, Callable, Any
 
 import numpy as np
 import h5py as h5
@@ -67,8 +67,37 @@ import h5py as h5
 try:
     import pyhdf.SD as h4
     H4_AVAILABLE = True
+    DTYPE_TO_SDC = MappingProxyType({
+        "i": {
+            1: h4.SDC.INT8,
+            2: h4.SDC.INT16,
+            4: h4.SDC.INT32,
+        },
+        "u": {
+            1: h4.SDC.UINT8,
+            2: h4.SDC.UINT16,
+            4: h4.SDC.UINT32,
+        },
+        "f": {
+            4: h4.SDC.FLOAT32,
+            8: h4.SDC.FLOAT64,
+        },
+        "b": {
+            1: h4.SDC.UINT8
+        },
+        "U": h4.SDC.CHAR,
+        "S": h4.SDC.UCHAR
+    })
+    """
+        Helper dictionary for mapping :class:`~numpy.dtypes`'s to HDF4 SDC types. 
+
+        The keys are :attr:`~numpy.dtype.kind`, and the values are either a direct 
+        mapping (for byte-string or unicode-string types) or a nested mapping of 
+        :attr:`~numpy.dtype.itemsize` to SDC type (for numeric types).
+    """
 except ImportError:
     H4_AVAILABLE = False
+    DTYPE_TO_SDC = {}
 
 try:
     from scipy.interpolate import RegularGridInterpolator
@@ -168,35 +197,7 @@ HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'attr', 'scale
 """
 
 PathLike = Union[Path, str]
-
-DTYPE_TO_SDC = MappingProxyType({
-    "i": {
-        1: h4.SDC.INT8,
-        2: h4.SDC.INT16,
-        4: h4.SDC.INT32,
-    },
-    "u": {
-        1: h4.SDC.UINT8,
-        2: h4.SDC.UINT16,
-        4: h4.SDC.UINT32,
-    },
-    "f": {
-        4: h4.SDC.FLOAT32,
-        8: h4.SDC.FLOAT64,
-    },
-    "b": {
-        1: h4.SDC.UINT8
-    },
-    "U": h4.SDC.CHAR,
-    "S": h4.SDC.UCHAR
-})
-"""
-    Helper dictionary for mapping :class:`~numpy.dtypes`'s to HDF4 SDC types. 
-
-    The keys are :attr:`~numpy.dtype.kind`, and the values are either a direct 
-    mapping (for byte-string or unicode-string types) or a nested mapping of 
-    :attr:`~numpy.dtype.itemsize` to SDC type (for numeric types).
-"""
+"""Type alias for file paths, accepting either :class:`pathlib.Path` or str"""
 
 
 def _dtype_to_sdc(dtype: np.dtype):
@@ -237,7 +238,7 @@ def _dtype_to_sdc(dtype: np.dtype):
         raise e
 
 
-def _dispatch_by_ext(ifile: Union[Path, str],
+def _dispatch_by_ext(ifile: PathLike,
                      hdf4_func: Callable,
                      hdf5_func: Callable,
                      *args: Any, **kwargs: Any
@@ -277,7 +278,7 @@ def _dispatch_by_ext(ifile: Union[Path, str],
 # -----------------------------------------------------------------------------
 
 
-def rdhdf_1d(hdf_filename: str
+def rdhdf_1d(hdf_filename: PathLike
              ) -> Tuple[np.ndarray, np.ndarray]:
     """Read a 1D PSI-style HDF5 or HDF4 file.
 
@@ -300,7 +301,7 @@ def rdhdf_1d(hdf_filename: str
     return _rdhdf_nd(hdf_filename, dimensionality=1)
 
 
-def rdhdf_2d(hdf_filename: str
+def rdhdf_2d(hdf_filename: PathLike
              ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Read a 2D PSI-style HDF5 or HDF4 file.
 
@@ -330,7 +331,7 @@ def rdhdf_2d(hdf_filename: str
     return _rdhdf_nd(hdf_filename, dimensionality=2)
 
 
-def rdhdf_3d(hdf_filename: str
+def rdhdf_3d(hdf_filename: PathLike
              ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read a 3D PSI-style HDF5 or HDF4 file.
 
@@ -362,7 +363,7 @@ def rdhdf_3d(hdf_filename: str
     return _rdhdf_nd(hdf_filename, dimensionality=3)
 
 
-def wrhdf_1d(hdf_filename: str,
+def wrhdf_1d(hdf_filename: PathLike,
              x: np.ndarray,
              f: np.ndarray,
              **kwargs) -> None:
@@ -418,7 +419,7 @@ def wrhdf_1d(hdf_filename: str,
     return _wrhdf_nd(hdf_filename, f, x, dimensionality=1, **kwargs)
 
 
-def wrhdf_2d(hdf_filename: str,
+def wrhdf_2d(hdf_filename: PathLike,
              x: np.ndarray,
              y: np.ndarray,
              f: np.ndarray,
@@ -482,7 +483,7 @@ def wrhdf_2d(hdf_filename: str,
     return _wrhdf_nd(hdf_filename, f, x, y, dimensionality=2, **kwargs)
 
 
-def wrhdf_3d(hdf_filename: str,
+def wrhdf_3d(hdf_filename: PathLike,
              x: np.ndarray,
              y: np.ndarray,
              z: np.ndarray,
@@ -549,7 +550,7 @@ def wrhdf_3d(hdf_filename: str,
     return _wrhdf_nd(hdf_filename, f, x, y, z, dimensionality=3, **kwargs)
 
 
-def get_scales_1d(filename: str
+def get_scales_1d(filename: PathLike
                   ) -> np.ndarray:
     """Wrapper to return the scales of a 1D PSI style HDF5 or HDF4 dataset.
 
@@ -569,7 +570,7 @@ def get_scales_1d(filename: str
                             dimensionality=1)
 
 
-def get_scales_2d(filename: str
+def get_scales_2d(filename: PathLike
                   ) -> Tuple[np.ndarray, np.ndarray]:
     """Wrapper to return the scales of a 2D PSI style HDF5 or HDF4 dataset.
 
@@ -593,7 +594,7 @@ def get_scales_2d(filename: str
                             dimensionality=2)
 
 
-def get_scales_3d(filename: str
+def get_scales_3d(filename: PathLike
                   ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Wrapper to return the scales of a 3D PSI style HDF5 or HDF4 dataset.
 
@@ -624,7 +625,7 @@ def get_scales_3d(filename: str
 # -----------------------------------------------------------------------------
 
 
-def read_hdf_meta(ifile: Union[Path, str], /,
+def read_hdf_meta(ifile: PathLike, /,
                   dataset_id: Optional[str] = None
                   ) -> List[HdfDataMeta]:
     """
@@ -673,7 +674,7 @@ def read_hdf_meta(ifile: Union[Path, str], /,
                             dataset_id=dataset_id)
 
 
-def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
+def read_rtp_meta(ifile: PathLike, /) -> Dict:
     """
     Read the scale metadata for PSI's 3D cubes.
 
@@ -706,7 +707,7 @@ def read_rtp_meta(ifile: Union[Path, str], /) -> Dict:
     return _dispatch_by_ext(ifile, _read_h4_rtp, _read_h5_rtp)
 
 
-def read_hdf_data(ifile: Union[Path, str], /,
+def read_hdf_data(ifile: PathLike, /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Tuple[np.ndarray]:
@@ -753,7 +754,7 @@ def read_hdf_data(ifile: Union[Path, str], /,
                             dataset_id=dataset_id, return_scales=return_scales)
 
 
-def read_hdf_by_index(ifile: Union[Path, str], /,
+def read_hdf_by_index(ifile: PathLike, /,
                       *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -852,7 +853,7 @@ def read_hdf_by_index(ifile: Union[Path, str], /,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
 
 
-def read_hdf_by_value(ifile: Union[Path, str], /,
+def read_hdf_by_value(ifile: PathLike, /,
                       *xi: Union[float, Tuple[float, float], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -964,7 +965,7 @@ def read_hdf_by_value(ifile: Union[Path, str], /,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
 
 
-def read_hdf_by_ivalue(ifile: Union[Path, str], /,
+def read_hdf_by_ivalue(ifile: PathLike, /,
                       *xi: Union[float, Tuple[float, float], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -1049,9 +1050,9 @@ def read_hdf_by_ivalue(ifile: Union[Path, str], /,
                             *xi, dataset_id=dataset_id, return_scales=return_scales)
 
 
-def write_hdf_data(ifile: Union[Path, str], /,
+def write_hdf_data(ifile: PathLike, /,
                    data: np.ndarray,
-                   *scales: Iterable[Union[np.ndarray, None]],
+                   *scales: Sequence[Union[np.ndarray, None]],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
                    **kwargs
@@ -1070,7 +1071,7 @@ def write_hdf_data(ifile: Union[Path, str], /,
         The path to the HDF file to write.
     data : np.ndarray
         The data array to write.
-    *scales : Iterable[np.ndarray | None]
+    *scales : Sequence[np.ndarray | None]
         The scales (coordinate arrays) for each dimension.
     dataset_id : str | None
         The identifier of the dataset to write.
@@ -1120,8 +1121,8 @@ def write_hdf_data(ifile: Union[Path, str], /,
                             *scales, dataset_id=dataset_id, sync_dtype=sync_dtype, **kwargs)
 
 
-def convert(ifile: Union[Path, str],
-           ofile: Optional[Union[Path, str]]=None) -> Path:
+def convert(ifile: PathLike,
+           ofile: Optional[PathLike]=None) -> Path:
     ifile = Path(ifile)
     if not ofile:
         ofile = ifile.with_suffix(".hdf") if ifile.suffix == ".h5" else ifile.with_suffix(".h5")
@@ -1256,7 +1257,7 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
     return slice_[tuple(indices)].T, *[yi[1] for yi in zip(args, result[1:]) if yi[0] is None]
 
 
-def np_interpolate_slice_from_hdf(ifile: Union[Path, str], /,
+def np_interpolate_slice_from_hdf(ifile: PathLike, /,
                        *xi: Union[float, Tuple[float, float], None],
                        dataset_id: Optional[str] = None,
                        by_index: bool = False,
@@ -1459,7 +1460,7 @@ def _rdhdf_nd(hdf_filename: str,
 
 def _wrhdf_nd(hdf_filename: str,
               data: np.ndarray,
-              *scales: Iterable[Union[np.ndarray, None]],
+              *scales: Sequence[Union[np.ndarray, None]],
               dimensionality: int,
               sync_dtype: bool = True,
               **kwargs
@@ -1508,7 +1509,7 @@ def _get_scales_nd_h4(ifile: Union[ Path, str], /,
     return tuple(scales)
 
 
-def _read_h5_meta(ifile: Union[Path, str], /,
+def _read_h5_meta(ifile: PathLike, /,
                   dataset_id: Optional[str] = None
                   ):
     """HDF5 (.h5) version of :func:`read_hdf_meta`."""
@@ -1536,7 +1537,7 @@ def _read_h5_meta(ifile: Union[Path, str], /,
                 for k, v in datasets]
 
 
-def _read_h4_meta(ifile: Union[Path, str], /,
+def _read_h4_meta(ifile: PathLike, /,
                   dataset_id: Optional[str] = None
                   ):
     """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
@@ -1586,7 +1587,7 @@ def _read_h4_rtp(ifile: Union[ Path, str], /):
             for k, v in zip('ptr', PSI_SCALE_ID['h4'])}
 
 
-def _read_h5_data(ifile: Union[Path, str], /,
+def _read_h5_data(ifile: PathLike, /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Union[np.ndarray, Tuple[np.ndarray]]:
@@ -1599,7 +1600,7 @@ def _read_h5_data(ifile: Union[Path, str], /,
         return dataset
 
 
-def _read_h4_data(ifile: Union[Path, str], /,
+def _read_h4_data(ifile: PathLike, /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Union[np.ndarray, Tuple[np.ndarray]]:
@@ -1613,7 +1614,7 @@ def _read_h4_data(ifile: Union[Path, str], /,
     return out
 
 
-def _read_h5_by_index(ifile: Union[Path, str], /,
+def _read_h5_by_index(ifile: PathLike, /,
                       *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -1630,7 +1631,7 @@ def _read_h5_by_index(ifile: Union[Path, str], /,
             return dataset, *scales
         return dataset
 
-def _read_h4_by_index(ifile: Union[Path, str], /,
+def _read_h4_by_index(ifile: PathLike, /,
                       *xi: Union[int, Tuple[Union[int, None], Union[int, None]], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -1649,7 +1650,7 @@ def _read_h4_by_index(ifile: Union[Path, str], /,
     return dataset
 
 
-def _read_h5_by_value(ifile: Union[Path, str], /,
+def _read_h5_by_value(ifile: PathLike, /,
                       *xi: Union[float, Tuple[float, float], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -1674,7 +1675,7 @@ def _read_h5_by_value(ifile: Union[Path, str], /,
         return dataset
 
 
-def _read_h4_by_value(ifile: Union[Path, str], /,
+def _read_h4_by_value(ifile: PathLike, /,
                       *xi: Union[float, Tuple[float, float], None],
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
@@ -1700,7 +1701,7 @@ def _read_h4_by_value(ifile: Union[Path, str], /,
     return dataset
 
 
-def _read_h5_by_ivalue(ifile: Union[Path, str], /,
+def _read_h5_by_ivalue(ifile: PathLike, /,
                        *xi: Union[float, Tuple[float, float], None],
                        dataset_id: Optional[str] = None,
                        return_scales: bool = True,
@@ -1717,7 +1718,7 @@ def _read_h5_by_ivalue(ifile: Union[Path, str], /,
         return dataset
 
 
-def _read_h4_by_ivalue(ifile: Union[Path, str], /,
+def _read_h4_by_ivalue(ifile: PathLike, /,
                        *xi: Union[float, Tuple[float, float], None],
                        dataset_id: Optional[str] = None,
                        return_scales: bool = True,
@@ -1735,9 +1736,9 @@ def _read_h4_by_ivalue(ifile: Union[Path, str], /,
     return dataset
 
 
-def _write_h4_data(ifile: Union[Path, str], /,
+def _write_h4_data(ifile: PathLike, /,
                    data: np.ndarray,
-                   *scales: Iterable[np.ndarray],
+                   *scales: Sequence[np.ndarray],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
                    **kwargs) -> Path:
@@ -1765,9 +1766,9 @@ def _write_h4_data(ifile: Union[Path, str], /,
     return ifile
 
 
-def _write_h5_data(ifile: Union[Path, str], /,
+def _write_h5_data(ifile: PathLike, /,
                    data: np.ndarray,
-                   *scales: Iterable[np.ndarray],
+                   *scales: Sequence[np.ndarray],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
                    **kwargs) -> Path:
@@ -1791,7 +1792,7 @@ def _write_h5_data(ifile: Union[Path, str], /,
     return ifile
 
 
-def _np_linear_interpolation(xi: Iterable, scales: Iterable, values: np.ndarray):
+def _np_linear_interpolation(xi: Sequence, scales: Sequence, values: np.ndarray):
     """
     Perform linear interpolation over one dimension.
 
@@ -1826,9 +1827,9 @@ def _np_bilinear_interpolation(xi, scales, values):
 
     Parameters
     ----------
-    xi : Iterable
+    xi : Sequence
         List of values or None for each dimension.
-    scales : Iterable
+    scales : Sequence
         List of scales (coordinate arrays) for each dimension.
     values : np.ndarray
         The data array to interpolate.
@@ -1946,14 +1947,14 @@ def _check_index_ranges(arr_size: int,
         return i0 - 1, i1 + 1
 
 
-def _cast_shape_tuple(input: Union[int, Iterable[int]]
+def _cast_shape_tuple(input: Union[int, Sequence[int]]
                       ) -> tuple[int, ...]:
     """
     Cast an input to a tuple of integers.
 
     Parameters
     ----------
-    input : int | Iterable[int]
+    input : int | Sequence[int]
         The input to cast.
 
     Returns
@@ -1968,20 +1969,20 @@ def _cast_shape_tuple(input: Union[int, Iterable[int]]
     """
     if isinstance(input, int):
         return (input,)
-    elif isinstance(input, Iterable):
+    elif isinstance(input, Sequence):
         return tuple(int(i) for i in input)
     else:
         raise TypeError("Input must be an integer or an iterable of integers.")
 
 
-def _parse_index_inputs(input: Union[int, slice, Iterable[Union[int, None]], None]
+def _parse_index_inputs(input: Union[int, slice, Sequence[Union[int, None]], None]
                         ) -> slice:
     """
     Parse various slice input formats into a standard slice object.
 
     Parameters
     ----------
-    input : int | slice | Iterable[Union[int, None]] | None
+    input : int | slice | Sequence[Union[int, None]] | None
         The input to parse.
     arr_size : int
         The size of the array along the dimension.
@@ -2000,7 +2001,7 @@ def _parse_index_inputs(input: Union[int, slice, Iterable[Union[int, None]], Non
     """
     if isinstance(input, int):
         return slice(input, input + 1)
-    elif isinstance(input, Iterable):
+    elif isinstance(input, Sequence):
         return slice(*input)
     elif input is None:
         return slice(None)
@@ -2017,7 +2018,7 @@ def _parse_value_inputs(dimproxy,
     if not scale_exists:
         raise ValueError("Cannot parse value inputs when scale does not exist.")
     dim = dimproxy[:]
-    if not isinstance(value, Iterable):
+    if not isinstance(value, Sequence):
         insert_index = np.searchsorted(dim, value)
         return slice(*_check_index_ranges(dim.size, insert_index, insert_index))
     else:
@@ -2031,14 +2032,14 @@ def _parse_value_inputs(dimproxy,
 
 
 def _parse_ivalue_inputs(dimsize,
-                         input: Union[Union[int, float], slice, Iterable[Union[Union[int, float], None]], None]
+                         input: Union[Union[int, float], slice, Sequence[Union[Union[int, float], None]], None]
                          ) -> slice:
     """
     Parse various slice input formats into a standard slice object.
 
     Parameters
     ----------
-    input : int | slice | Iterable[Union[int, None]] | None
+    input : int | slice | Sequence[Union[int, None]] | None
         The input to parse.
     arr_size : int
         The size of the array along the dimension.
@@ -2059,7 +2060,7 @@ def _parse_ivalue_inputs(dimsize,
         return slice(None)
     elif isinstance(input, (int, float)):
         i0, i1 = math.floor(input), math.ceil(input)
-    elif isinstance(input, Iterable):
+    elif isinstance(input, Sequence):
         i0, i1 = math.floor(input[0]), math.ceil(input[1])
     else:
         raise TypeError("Unsupported input type for slicing.")
