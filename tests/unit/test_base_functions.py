@@ -245,24 +245,24 @@ def test_compare_problematic_metadata_equivalence(tmp_path, hdf_version, strict_
                                strict=strict_write, **written_meta)
             with pytest.raises(KeyError):
                 write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
-                               strict=strict_write, **written_meta | object_meta)
+                               strict=strict_write, **{**object_meta, **written_meta})
         else:
             assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
                                   strict=strict_write, **written_meta)
             assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
-                                  strict=strict_write, **written_meta | object_meta)
+                                  strict=strict_write, **{**object_meta, **written_meta})
     if hdf_version == 'h5':
         if strict_write:
             write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
                            strict=strict_write, **written_meta)
             with pytest.raises(TypeError):
                 write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
-                               strict=strict_write, **written_meta | object_meta)
+                               strict=strict_write, **{**object_meta, **written_meta})
         else:
             assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
                                   strict=strict_write, **written_meta)
             assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
-                                  strict=strict_write, **written_meta | object_meta)
+                                  strict=strict_write, **{**object_meta, **written_meta})
 
 
 def test_compare_h4_h5_data_equivalence(datatype, dimensionality, scales_included, combined_files):
