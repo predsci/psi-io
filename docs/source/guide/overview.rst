@@ -59,8 +59,8 @@ data is always returned in Fortran order with dimension scales correctly associa
 When writing data to an HDF file, ``psi-io`` ensures that the appropriate conventions for HDF4 or HDF5 are followed based
 on the file extension.
 
-When reading a 3D dataset (either HDF4 or HDF5) with ``psi-io``, the returned array will have shape :math:`(phi, theta, r)` and
-the associated dimension scales will be returned as :math:`(r, theta, phi)`. This ensures that the data is always represented
+When reading a 3D dataset (either HDF4 or HDF5) with ``psi-io``, the returned array will have shape :math:`(\phi, \theta, r)` and
+the associated dimension scales will be returned as :math:`(r, \theta, \phi)`. This ensures that the data is always represented
 in a consistent manner, regardless of the underlying HDF format.
 
 Using psi-io

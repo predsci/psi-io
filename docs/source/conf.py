@@ -141,6 +141,7 @@ numpydoc_xref_aliases = {
     "HdfExtType": "psi_io.psi_io.HdfExtType",
     "np.ndarray": "numpy.ndarray",
     "Path": "pathlib.Path",
+    "Callable": "collections.abc.Callable",
     "RegularGridInterpolator": "scipy.interpolate.RegularGridInterpolator",
 }
 
@@ -184,7 +185,7 @@ intersphinx_mapping = {
         None
     ),
     "pyhdf": (
-        "https://pysclint.github.io/pyhdf/contents.html",
+        "https://fhs.github.io/pyhdf/",
         # (INV / "pyhdf-objects.inv").as_posix(),
         None
     )
