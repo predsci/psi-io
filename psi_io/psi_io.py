@@ -1,20 +1,48 @@
 """
-Routines for reading/writing PSI style HDF5 and HDF4 data files.
+Routines for reading and writing PSI-style HDF5 and HDF4 data files.
 
-Written by Ronald M. Caplan, Ryder Davidson, & Cooper Downs.
+This module provides a unified interface for interacting with PSI's HDF data
+ecosystem.  It handles both HDF4 (``.hdf``) and HDF5 (``.h5``) file formats,
+automatically dispatching to the appropriate backend based on the file
+extension.
 
-2023/09: Start with SVN version r454, 2023/09/12 by RC, Predictive Science Inc.
+Key interfaces
+--------------
+Reading full datasets:
+    :func:`read_hdf_data`, :func:`rdhdf_1d`, :func:`rdhdf_2d`, :func:`rdhdf_3d`
 
-2024/06: CD: add the get_scales subroutines.
+Writing full datasets:
+    :func:`write_hdf_data`, :func:`wrhdf_1d`, :func:`wrhdf_2d`, :func:`wrhdf_3d`
 
-2024/11: RD: Major Update: Add several generic data loading capabilites for faster IO.
-         - Read only the portions of data required (`read_hdf_by_index`, `read_hdf_by_value`).
-         - Interpolate to slices along a given axes (`np_interpolate_slice_from_hdf`) or
-           generic positions (`interpolate_positions_from_hdf`).
+Reading file metadata:
+    :func:`read_hdf_meta`, :func:`read_rtp_meta`
 
-2025/06: CD: Prep for integration into psi-io package, HDF4 is now optional.
+Reading dataset subsets:
+    :func:`get_scales_1d`, :func:`get_scales_2d`, :func:`get_scales_3d`,
+    :func:`read_hdf_by_index`, :func:`read_hdf_by_value`, :func:`read_hdf_by_ivalue`
 
-2026/01: RD: Refactor legacy routines to use new generic routines where possible.
+Interpolating data:
+    :func:`np_interpolate_slice_from_hdf`, :func:`sp_interpolate_slice_from_hdf`,
+    :func:`interpolate_positions_from_hdf`
+
+Converting between formats:
+    :func:`convert`, :func:`convert_psih4_to_psih5`
+
+See Also
+--------
+:mod:`psi_io.data` :
+    Helpers for fetching example HDF data files.
+
+Examples
+--------
+Read a 3D PSI-style HDF5 file:
+
+>>> from psi_io import read_hdf_data
+>>> from psi_io.data import get_3d_data
+>>> filepath = get_3d_data()
+>>> data, r, t, p = read_hdf_data(filepath)
+>>> data.shape
+(181, 100, 151)
 """
 
 from __future__ import annotations
@@ -92,10 +120,10 @@ try:
         "S": h4.SDC.UCHAR
     })
     """
-        Helper dictionary for mapping :class:`~numpy.dtypes`'s to HDF4 SDC types. 
+        Helper dictionary mapping :class:`~numpy.dtype` kinds to HDF4 SDC types.
 
-        The keys are :attr:`~numpy.dtype.kind`, and the values are either a direct 
-        mapping (for byte-string or unicode-string types) or a nested mapping of 
+        The keys are :attr:`~numpy.dtype.kind`, and the values are either a direct
+        mapping (for byte-string or unicode-string types) or a nested mapping of
         :attr:`~numpy.dtype.itemsize` to SDC type (for numeric types).
     """
 except ImportError:
@@ -111,12 +139,42 @@ except ImportError:
 
 # Functions to stop execution if a package doesn't exist.
 def _except_no_pyhdf():
+    """Raise :exc:`ImportError` if the ``pyhdf`` package is not available.
+
+    Raises
+    ------
+    ImportError
+        If ``pyhdf`` was not importable at module load time.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _except_no_pyhdf, H4_AVAILABLE
+    >>> H4_AVAILABLE  # doctest: +SKIP
+    True
+    >>> _except_no_pyhdf() is None  # no-op when pyhdf is installed
+    True
+    """
     if not H4_AVAILABLE:
         raise ImportError('The pyhdf package is required to read/write HDF4 .hdf files!')
     return
 
 
 def _except_no_scipy():
+    """Raise :exc:`ImportError` if the ``scipy`` package is not available.
+
+    Raises
+    ------
+    ImportError
+        If ``scipy`` was not importable at module load time.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _except_no_scipy, SCIPY_AVAILABLE
+    >>> SCIPY_AVAILABLE  # doctest: +SKIP
+    True
+    >>> _except_no_scipy() is None  # no-op when scipy is installed
+    True
+    """
     if not SCIPY_AVAILABLE:
         raise ImportError('The scipy package is required for the interpolation routines!')
     return
@@ -161,16 +219,16 @@ HdfExtType = Literal['.hdf', '.h5']
 
 HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'imax'])
 """
-    Named tuples for HDF metadata
+    Named tuple storing metadata for a single HDF scale (coordinate) dimension.
 
     Parameters
     ----------
     name : str
-        The name of the scale.
+        The name of the scale dataset.
     type : str
         The data type of the scale.
-    shape : Tuple[int, ...]
-        The shape of the scale.
+    shape : tuple[int, ...]
+        The shape of the scale array.
     imin : float
         The minimum value of the scale.
         This assumes the scale is monotonically increasing.
@@ -190,11 +248,11 @@ HdfDataMeta = namedtuple('HdfDataMeta', ['name', 'type', 'shape', 'attr', 'scale
         The name of the dataset.
     type : str
         The data type of the dataset.
-    shape : tuple of int
+    shape : tuple[int, ...]
         The shape of the dataset.
-    attr : dict
+    attr : dict[str, Any]
         A dictionary of attributes associated with the dataset.
-    scales : list of HdfScaleMeta
+    scales : list[HdfScaleMeta]
         A list of scale metadata objects corresponding to each dimension of the dataset.
         If the dataset has no scales, this list will be empty.
 """
@@ -213,15 +271,24 @@ def _dtype_to_sdc(dtype: np.dtype):
 
     Returns
     -------
-    out : HDF4 SDC type
-        The corresponding HDF4 SDC type for the given numpy dtype.
+    out : int
+        The corresponding HDF4 SDC type constant for the given numpy dtype.
 
     Raises
     ------
     ImportError
-        If the `pyhdf` package is not available.
+        If the ``pyhdf`` package is not available.
     KeyError
-        If the dtype kind or itemsize is not supported by HDF4.
+        If the dtype kind or itemsize is not supported by HDF4.  See
+        :func:`write_hdf_data` for the full dtype support table.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import _dtype_to_sdc
+    >>> import pyhdf.SD as h4
+    >>> _dtype_to_sdc(np.dtype("float32")) == h4.SDC.FLOAT32
+    True
     """
     _except_no_pyhdf()
     if dtype.kind in {"U", "S"}:
@@ -251,7 +318,7 @@ def _dispatch_by_ext(ifile: PathLike,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file.
     hdf4_func : Callable
         The function to call for HDF4 files.
@@ -259,13 +326,29 @@ def _dispatch_by_ext(ifile: PathLike,
         The function to call for HDF5 files.
     *args : Any
         Positional arguments to pass to the selected function.
+    **kwargs : Any
+        Keyword arguments to pass to the selected function.
+
+    Returns
+    -------
+    out : Any
+        The return value of the dispatched function.
 
     Raises
     ------
     ValueError
         If the file does not have a `.hdf` or `.h5` extension.
     ImportError
-        If the file is HDF4 and the `pyhdf` package is not available
+        If the file is HDF4 and the `pyhdf` package is not available.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _dispatch_by_ext, _read_h5_data, _read_h4_data
+    >>> from psi_io.data import get_3d_data
+    >>> filepath = get_3d_data()
+    >>> data, *_ = _dispatch_by_ext(filepath, _read_h4_data, _read_h5_data)
+    >>> data.shape
+    (181, 100, 151)
     """
     ipath = Path(ifile)
     if ipath.suffix == '.h5':
@@ -287,19 +370,28 @@ def rdhdf_1d(hdf_filename: PathLike
 
     Parameters
     ----------
-    hdf_filename : str
+    hdf_filename : PathLike
         The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
 
     Returns
     -------
     x : np.ndarray
-        1D array of scales.
+        1D coordinate scale array.
     f : np.ndarray
-        1D array of data.
+        1D data array.
 
     See Also
     --------
     read_hdf_data : Generic HDF data reading routine.
+
+    Examples
+    --------
+    >>> from psi_io import rdhdf_1d
+    >>> from psi_io.data import get_1d_data
+    >>> filepath = get_1d_data()
+    >>> x, f = rdhdf_1d(filepath)
+    >>> x.shape, f.shape
+    ((151,), (151,))
     """
     return _rdhdf_nd(hdf_filename, dimensionality=1)
 
@@ -308,28 +400,43 @@ def rdhdf_2d(hdf_filename: PathLike
              ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Read a 2D PSI-style HDF5 or HDF4 file.
 
-    The data in the HDF file is assumed to be ordered X,Y in Fortran order.
-
-    Each dimension is assumed to have a 1D "scale" associated with it that
-    describes the rectilinear grid coordinates in each dimension.
+    The data in the HDF file is assumed to be ordered X, Y in Fortran order.
+    Each dimension is assumed to have a 1D scale associated with it that
+    describes the rectilinear grid coordinates.
 
     Parameters
     ----------
-    hdf_filename : str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+    hdf_filename : PathLike
+        The path to the 2D HDF5 (.h5) or HDF4 (.hdf) file to read.
 
     Returns
     -------
     x : np.ndarray
-        1D array of scales in the X dimension.
+        1D coordinate scale array for the X dimension.
     y : np.ndarray
-        1D array of scales in the Y dimension.
+        1D coordinate scale array for the Y dimension.
     f : np.ndarray
-        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+        2D data array, C-ordered with shape ``(ny, nx)`` in Python.
+
+    Notes
+    -----
+    Because Fortran uses column-major ordering and Python uses row-major
+    ordering, the data array is returned with reversed axis order relative to
+    how it is stored on disk.  The first returned scale always corresponds to
+    the *slowest* varying dimension in the data array (i.e. the last axis).
 
     See Also
     --------
     read_hdf_data : Generic HDF data reading routine.
+
+    Examples
+    --------
+    >>> from psi_io import rdhdf_2d
+    >>> from psi_io.data import get_2d_data
+    >>> filepath = get_2d_data()
+    >>> x, y, f = rdhdf_2d(filepath)
+    >>> f.shape == (y.shape[0], x.shape[0])
+    True
     """
     return _rdhdf_nd(hdf_filename, dimensionality=2)
 
@@ -338,30 +445,46 @@ def rdhdf_3d(hdf_filename: PathLike
              ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Read a 3D PSI-style HDF5 or HDF4 file.
 
-    The data in the HDF file is assumed to be ordered X,Y,Z in Fortran order.
-
-    Each dimension is assumed to have a 1D "scale" associated with it that
-    describes the rectilinear grid coordinates in each dimension.
+    The data in the HDF file is assumed to be ordered X, Y, Z in Fortran order.
+    Each dimension is assumed to have a 1D scale associated with it that
+    describes the rectilinear grid coordinates.
 
     Parameters
     ----------
-    hdf_filename : str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+    hdf_filename : PathLike
+        The path to the 3D HDF5 (.h5) or HDF4 (.hdf) file to read.
 
     Returns
     -------
     x : np.ndarray
-        1D array of scales in the X dimension.
+        1D coordinate scale array for the X dimension.
     y : np.ndarray
-        1D array of scales in the Y dimension.
+        1D coordinate scale array for the Y dimension.
     z : np.ndarray
-        1D array of scales in the Z dimension.
+        1D coordinate scale array for the Z dimension.
     f : np.ndarray
-        3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+        3D data array, C-ordered with shape ``(nz, ny, nx)`` in Python.
+
+    Notes
+    -----
+    Because Fortran uses column-major ordering and Python uses row-major
+    ordering, the data array is returned with reversed axis order relative to
+    how it is stored on disk.  For PSI spherical datasets the returned shapes
+    follow the convention ``f.shape == (n_phi, n_theta, n_r)`` with scales
+    returned in physical order ``(r, theta, phi)``.
 
     See Also
     --------
     read_hdf_data : Generic HDF data reading routine.
+
+    Examples
+    --------
+    >>> from psi_io import rdhdf_3d
+    >>> from psi_io.data import get_3d_data
+    >>> filepath = get_3d_data()
+    >>> r, t, p, f = rdhdf_3d(filepath)
+    >>> f.shape == (p.shape[0], t.shape[0], r.shape[0])
+    True
     """
     return _rdhdf_nd(hdf_filename, dimensionality=3)
 
@@ -374,7 +497,7 @@ def wrhdf_1d(hdf_filename: PathLike,
 
     Parameters
     ----------
-    hdf_filename : str
+    hdf_filename : PathLike
         The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to write.
     x : np.ndarray
         1D array of scales.
@@ -397,27 +520,41 @@ def wrhdf_1d(hdf_filename: PathLike,
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
     KeyError
-        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
-        *viz.* float16 or int64.
+        If, for HDF4 files, the data or scale dtype is not supported by
+        :py:mod:`pyhdf`.  See :func:`write_hdf_data` for the full dtype
+        support table.
 
     Notes
     -----
-    This routine is provided for backwards compatibility with existing PSI codes that
-    expect this API signature. While the underlying implementation has been refactored to
-    dispatch to the newer :func:`~psi_io.psi_io.write_hdf_data` routine – along with a
-    dimensionality check – the API signature and behavior has been largely preserved.
+    This routine is provided for backward compatibility with existing PSI codes that
+    expect this API signature.  The underlying implementation dispatches to
+    :func:`~psi_io.psi_io.write_hdf_data`, but the argument order and default
+    behavior (sync dtype, default dataset IDs) are preserved.
 
     .. warning::
-       It is worth reiterating that this routine – when called with its default arguments –
-       will **write to the default PSI dataset IDs for HDF4/HDF5 files and synchronize datatypes
-       between the dataset and scales.** This behavior is crucial for interacting with certain
-       Fortran-based tools developed by PSI.
+       When called with its default arguments this routine **writes to the default PSI
+       dataset IDs for HDF4/HDF5 files and synchronizes dtypes between the dataset and
+       scales.**  This behavior is required for interoperability with certain Fortran-based
+       PSI tools.
 
     See Also
     --------
     write_hdf_data : Generic HDF data writing routine.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io import wrhdf_1d, rdhdf_1d
+    >>> x = np.linspace(0.0, 1.0, 50, dtype=np.float32)
+    >>> f = np.sin(x)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     wrhdf_1d(Path(d) / "out.h5", x, f)
+    ...     x2, f2 = rdhdf_1d(Path(d) / "out.h5")
+    ...     np.array_equal(f, f2)
+    True
     """
     return _wrhdf_nd(hdf_filename, f, x, dimensionality=1, **kwargs)
 
@@ -436,21 +573,21 @@ def wrhdf_2d(hdf_filename: PathLike,
 
     Parameters
     ----------
-    hdf_filename : str
+    hdf_filename : PathLike
         The path to the 2D HDF5 (.h5) or HDF4 (.hdf) file to write.
     x : np.ndarray
         1D array of scales in the X dimension.
     y : np.ndarray
         1D array of scales in the Y dimension.
     f : np.ndarray
-        2D array of data, C-ordered as shape(ny,nx) for Python (see note 1).
+        2D data array, C-ordered with shape ``(ny, nx)`` in Python.
     **kwargs
         Additional keyword arguments passed through to the underlying
         :func:`~psi_io.psi_io.write_hdf_data` routine, specifically:
 
         - ``dataset_id`` : str | None
             The identifier of the dataset to write.
-            If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+            If None, a default dataset is used (``'Data-Set-2'`` for HDF4 and ``'Data'`` for HDF5).
         - ``sync_dtype``: bool
             If True, the data type of the scales will be matched to that of the data array.
 
@@ -461,27 +598,42 @@ def wrhdf_2d(hdf_filename: PathLike,
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
     KeyError
-        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
-        *viz.* float16 or int64.
+        If, for HDF4 files, the data or scale dtype is not supported by
+        :py:mod:`pyhdf`.  See :func:`write_hdf_data` for the full dtype
+        support table.
 
     Notes
     -----
-    This routine is provided for backwards compatibility with existing PSI codes that
-    expect this API signature. While the underlying implementation has been refactored to
-    dispatch to the newer :func:`~psi_io.psi_io.write_hdf_data` routine – along with a
-    dimensionality check – the API signature and behavior has been largely preserved.
+    This routine is provided for backward compatibility with existing PSI codes that
+    expect this API signature.  The underlying implementation dispatches to
+    :func:`~psi_io.psi_io.write_hdf_data`, but the argument order and default
+    behavior (sync dtype, default dataset IDs) are preserved.
 
     .. warning::
-       It is worth reiterating that this routine – when called with its default arguments –
-       will **write to the default PSI dataset IDs for HDF4/HDF5 files and synchronize datatypes
-       between the dataset and scales.** This behavior is crucial for interacting with certain
-       Fortran-based tools developed by PSI.
+       When called with its default arguments this routine **writes to the default PSI
+       dataset IDs for HDF4/HDF5 files and synchronizes dtypes between the dataset and
+       scales.**  This behavior is required for interoperability with certain Fortran-based
+       PSI tools.
 
     See Also
     --------
     write_hdf_data : Generic HDF data writing routine.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io import wrhdf_2d, rdhdf_2d
+    >>> x = np.linspace(0.0, 2*np.pi, 64, dtype=np.float32)
+    >>> y = np.linspace(0.0, np.pi, 32, dtype=np.float32)
+    >>> f = np.outer(np.sin(x), np.cos(y)).astype(np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     wrhdf_2d(Path(d) / "out.h5", x, y, f)
+    ...     x2, y2, f2 = rdhdf_2d(Path(d) / "out.h5")
+    ...     np.array_equal(f, f2)
+    True
     """
     return _wrhdf_nd(hdf_filename, f, x, y, dimensionality=2, **kwargs)
 
@@ -501,7 +653,7 @@ def wrhdf_3d(hdf_filename: PathLike,
 
     Parameters
     ----------
-    hdf_filename : str
+    hdf_filename : PathLike
         The path to the 3D HDF5 (.h5) or HDF4 (.hdf) file to write.
     x : np.ndarray
         1D array of scales in the X dimension.
@@ -510,14 +662,14 @@ def wrhdf_3d(hdf_filename: PathLike,
     z : np.ndarray
         1D array of scales in the Z dimension.
     f : np.ndarray
-        3D array of data, C-ordered as shape(nz,ny,nx) for Python (see note 1).
+        3D data array, C-ordered with shape ``(nz, ny, nx)`` in Python.
     **kwargs
         Additional keyword arguments passed through to the underlying
         :func:`~psi_io.psi_io.write_hdf_data` routine, specifically:
 
         - ``dataset_id`` : str | None
             The identifier of the dataset to write.
-            If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
+            If None, a default dataset is used (``'Data-Set-2'`` for HDF4 and ``'Data'`` for HDF5).
         - ``sync_dtype``: bool
             If True, the data type of the scales will be matched to that of the data array.
 
@@ -528,46 +680,71 @@ def wrhdf_3d(hdf_filename: PathLike,
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
     KeyError
-        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
-        *viz.* float16 or int64.
+        If, for HDF4 files, the data or scale dtype is not supported by
+        :py:mod:`pyhdf`.  See :func:`write_hdf_data` for the full dtype
+        support table.
 
     Notes
     -----
-    This routine is provided for backwards compatibility with existing PSI codes that
-    expect this API signature. While the underlying implementation has been refactored to
-    dispatch to the newer :func:`~psi_io.psi_io.write_hdf_data` routine – along with a
-    dimensionality check – the API signature and behavior has been largely preserved.
+    This routine is provided for backward compatibility with existing PSI codes that
+    expect this API signature.  The underlying implementation dispatches to
+    :func:`~psi_io.psi_io.write_hdf_data`, but the argument order and default
+    behavior (sync dtype, default dataset IDs) are preserved.
 
     .. warning::
-       It is worth reiterating that this routine – when called with its default arguments –
-       will **write to the default PSI dataset IDs for HDF4/HDF5 files and synchronize datatypes
-       between the dataset and scales.** This behavior is crucial for interacting with certain
-       Fortran-based tools developed by PSI.
+       When called with its default arguments this routine **writes to the default PSI
+       dataset IDs for HDF4/HDF5 files and synchronizes dtypes between the dataset and
+       scales.**  This behavior is required for interoperability with certain Fortran-based
+       PSI tools.
 
     See Also
     --------
     write_hdf_data : Generic HDF data writing routine.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io import wrhdf_3d, rdhdf_3d
+    >>> r = np.linspace(1.0, 5.0, 10, dtype=np.float32)
+    >>> t = np.linspace(0.0, np.pi, 20, dtype=np.float32)
+    >>> p = np.linspace(0.0, 2*np.pi, 30, dtype=np.float32)
+    >>> f = np.ones((30, 20, 10), dtype=np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     wrhdf_3d(Path(d) / "out.h5", r, t, p, f)
+    ...     r2, t2, p2, f2 = rdhdf_3d(Path(d) / "out.h5")
+    ...     np.array_equal(f, f2)
+    True
     """
     return _wrhdf_nd(hdf_filename, f, x, y, z, dimensionality=3, **kwargs)
 
 
 def get_scales_1d(filename: PathLike
                   ) -> np.ndarray:
-    """Wrapper to return the scales of a 1D PSI style HDF5 or HDF4 dataset.
+    """Return the coordinate scale of a 1D PSI-style HDF5 or HDF4 dataset.
 
-    This routine does not load the data array so it can be quite fast for large files.
+    Does not load the data array, so this is efficient for large files.
 
     Parameters
     ----------
-    filename : str
+    filename : PathLike
         The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
 
     Returns
     -------
     x : np.ndarray
-        1D array of scales in the X dimension.
+        1D coordinate scale array.
+
+    Examples
+    --------
+    >>> from psi_io import get_scales_1d
+    >>> from psi_io.data import get_1d_data
+    >>> filepath = get_1d_data()
+    >>> x = get_scales_1d(filepath)
+    >>> x.ndim
+    1
     """
     return _dispatch_by_ext(filename, _get_scales_nd_h4, _get_scales_nd_h5,
                             dimensionality=1)
@@ -575,23 +752,31 @@ def get_scales_1d(filename: PathLike
 
 def get_scales_2d(filename: PathLike
                   ) -> Tuple[np.ndarray, np.ndarray]:
-    """Wrapper to return the scales of a 2D PSI style HDF5 or HDF4 dataset.
+    """Return the coordinate scales of a 2D PSI-style HDF5 or HDF4 dataset.
 
-    This routine does not load the data array so it can be quite fast for large files.
-
-    The data in the HDF file is assumed to be ordered X,Y in Fortran order.
+    Does not load the data array, so this is efficient for large files.
+    The data in the HDF file is assumed to be ordered X, Y in Fortran order.
 
     Parameters
     ----------
-    filename : str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+    filename : PathLike
+        The path to the 2D HDF5 (.h5) or HDF4 (.hdf) file to read.
 
     Returns
     -------
     x : np.ndarray
-        1D array of scales in the X dimension.
+        1D coordinate scale array for the X dimension.
     y : np.ndarray
-        1D array of scales in the Y dimension.
+        1D coordinate scale array for the Y dimension.
+
+    Examples
+    --------
+    >>> from psi_io import get_scales_2d
+    >>> from psi_io.data import get_2d_data
+    >>> filepath = get_2d_data()
+    >>> x, y = get_scales_2d(filepath)
+    >>> x.ndim, y.ndim
+    (1, 1)
     """
     return _dispatch_by_ext(filename, _get_scales_nd_h4, _get_scales_nd_h5,
                             dimensionality=2)
@@ -599,25 +784,33 @@ def get_scales_2d(filename: PathLike
 
 def get_scales_3d(filename: PathLike
                   ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Wrapper to return the scales of a 3D PSI style HDF5 or HDF4 dataset.
+    """Return the coordinate scales of a 3D PSI-style HDF5 or HDF4 dataset.
 
-    This routine does not load the data array so it can be quite fast for large files.
-
-    The data in the HDF file is assumed to be ordered X,Y,Z in Fortran order.
+    Does not load the data array, so this is efficient for large files.
+    The data in the HDF file is assumed to be ordered X, Y, Z in Fortran order.
 
     Parameters
     ----------
-    filename : str
-        The path to the 1D HDF5 (.h5) or HDF4 (.hdf) file to read.
+    filename : PathLike
+        The path to the 3D HDF5 (.h5) or HDF4 (.hdf) file to read.
 
     Returns
     -------
     x : np.ndarray
-        1D array of scales in the X dimension.
+        1D coordinate scale array for the X dimension.
     y : np.ndarray
-        1D array of scales in the Y dimension.
+        1D coordinate scale array for the Y dimension.
     z : np.ndarray
-        1D array of scales in the Z dimension.
+        1D coordinate scale array for the Z dimension.
+
+    Examples
+    --------
+    >>> from psi_io import get_scales_3d
+    >>> from psi_io.data import get_3d_data
+    >>> filepath = get_3d_data()
+    >>> r, t, p = get_scales_3d(filepath)
+    >>> r.ndim, t.ndim, p.ndim
+    (1, 1, 1)
     """
     return _dispatch_by_ext(filename, _get_scales_nd_h4, _get_scales_nd_h5,
                             dimensionality=3)
@@ -647,11 +840,11 @@ def read_hdf_meta(ifile: PathLike, /,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to read.
-    dataset_id : str, optional
+    dataset_id : str | None, optional
         The identifier of the dataset for which to read metadata.
-        If ``None``, metadata for **all** datasets is returned.
+        If ``None``, metadata for **all** datasets is returned.  Default is ``None``.
 
     Returns
     -------
@@ -661,16 +854,28 @@ def read_hdf_meta(ifile: PathLike, /,
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
 
     Notes
     -----
-    This function delegates to :func:`_read_h5_meta` for HDF5 files and :func:`_read_h4_meta`
-    for HDF4 files based on the file extension.
+    This function delegates to :func:`_read_h5_meta` for HDF5 files and
+    :func:`_read_h4_meta` for HDF4 files based on the file extension.
 
-    Although this function is designed to read metadata for dataset objects, it is possible to
-    read metadata for coordinate variables (scales) by passing their names to ``dataset_id``,
-    *e.g.* 'dim1', 'dim2', etc. However, this is not the intended use case.
+    Although this function is designed to read metadata for dataset objects, it is possible
+    to read metadata for coordinate variables (scales) by passing their names to
+    ``dataset_id``, *e.g.* ``'dim1'``, ``'dim2'``, etc.  However, this is not the
+    intended use case.
+
+    Examples
+    --------
+    >>> from psi_io import read_hdf_meta
+    >>> from psi_io.data import get_3d_data
+    >>> filepath = get_3d_data()
+    >>> meta = read_hdf_meta(filepath)
+    >>> meta[0].name
+    'Data'
+    >>> meta[0].shape
+    (181, 100, 151)
     """
 
     return _dispatch_by_ext(ifile, _read_h4_meta, _read_h5_meta,
@@ -683,7 +888,7 @@ def read_rtp_meta(ifile: PathLike, /) -> Dict:
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to read.
 
     Returns
@@ -703,9 +908,19 @@ def read_rtp_meta(ifile: PathLike, /) -> Dict:
 
     Notes
     -----
-    This function delegates to :func:`_read_h5_rtp` for HDF5 files and :func:`_read_h4_rtp`
-    for HDF4 files based on the file extension.
+    This function delegates to :func:`_read_h5_rtp` for HDF5 files and
+    :func:`_read_h4_rtp` for HDF4 files based on the file extension.
 
+    Examples
+    --------
+    >>> from psi_io import read_rtp_meta
+    >>> from psi_io.data import get_3d_data
+    >>> filepath = get_3d_data()
+    >>> meta = read_rtp_meta(filepath)
+    >>> sorted(meta.keys())
+    ['p', 'r', 't']
+    >>> len(meta['r'])
+    3
     """
     return _dispatch_by_ext(ifile, _read_h4_rtp, _read_h5_rtp)
 
@@ -719,39 +934,48 @@ def read_hdf_data(ifile: PathLike, /,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
          The path to the HDF file to read.
-    dataset_id : str | None
+    dataset_id : str | None, optional
         The identifier of the dataset to read.
-        If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
-    return_scales : bool
-        If True, the scales (coordinate arrays) for each dimension are also returned.
+        If ``None``, a default dataset is used (``'Data-Set-2'`` for HDF4 and
+        ``'Data'`` for HDF5).  Default is ``None``.
+    return_scales : bool, optional
+        If ``True``, the coordinate scale arrays for each dimension are also
+        returned.  Default is ``True``.
 
     Returns
     -------
-    out : np.ndarray | tuple[np.ndarray]
-        The data array.
-        If ``return_scales`` is True, returns a tuple containing the data array
-        and the scales for each dimension.
+    out : np.ndarray | tuple[np.ndarray, ...]
+        The data array.  If ``return_scales`` is ``True``, returns a tuple
+        ``(data, scale_0, scale_1, ...)`` with one scale per dimension.
 
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
 
     See Also
     --------
-    read_hdf_by_index
-        Read HDF datasets by index.
-    read_hdf_by_value
-        Read HDF datasets by value ranges.
-    read_hdf_by_ivalue
-        Read HDF datasets by subindex values.
+    read_hdf_by_index : Read HDF datasets by index.
+    read_hdf_by_value : Read HDF datasets by value ranges.
+    read_hdf_by_ivalue : Read HDF datasets by subindex values.
 
     Notes
     -----
-    This function delegates to :func:`_read_h5_data` for HDF5 files
-    and :func:`_read_h4_data` for HDF4 files based on the file extension.
+    This function delegates to :func:`_read_h5_data` for HDF5 files and
+    :func:`_read_h4_data` for HDF4 files based on the file extension.
+
+    Examples
+    --------
+    >>> from psi_io import read_hdf_data
+    >>> from psi_io.data import get_3d_data
+    >>> filepath = get_3d_data()
+    >>> data, r, t, p = read_hdf_data(filepath)
+    >>> data.shape
+    (181, 100, 151)
+    >>> r.shape, t.shape, p.shape
+    ((151,), (100,), (181,))
     """
     return _dispatch_by_ext(ifile, _read_h4_data, _read_h5_data,
                             dataset_id=dataset_id, return_scales=return_scales)
@@ -762,7 +986,7 @@ def read_hdf_by_index(ifile: PathLike, /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """
+    r"""
     Read data from an HDF4 (.hdf) or HDF5 (.h5) file by index.
 
     .. attention::
@@ -772,56 +996,51 @@ def read_hdf_by_index(ifile: PathLike, /,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
        The path to the HDF file to read.
     *xi : int | tuple[int | None, int | None] | None
        Indices or ranges for each dimension of the `n`-dimensional dataset.
        Use None for a dimension to select all indices. If no arguments are passed,
        the entire dataset (and its scales) will be returned – see
        :func:`~psi_io.psi_io.read_hdf_data`.
-    dataset_id : str | None
+    dataset_id : str | None, optional
        The identifier of the dataset to read.
-       If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
-    return_scales : bool
-       If True, the scales (coordinate arrays) for each dimension are also returned.
+       If ``None``, a default dataset is used (``'Data-Set-2'`` for HDF4 and
+       ``'Data'`` for HDF5).  Default is ``None``.
+    return_scales : bool, optional
+       If ``True``, the coordinate scale arrays for each dimension are also
+       returned.  Default is ``True``.
 
     Returns
     -------
-    out : np.ndarray | tuple[np.ndarray]
-       The selected data array.
-       If ``return_scales`` is True, returns a tuple containing the data array
-       and the scales for each dimension.
+    out : np.ndarray | tuple[np.ndarray, ...]
+       The selected data array.  If ``return_scales`` is ``True``, returns a
+       tuple ``(data, scale_0, scale_1, ...)`` with one scale per dimension.
 
     Raises
     ------
     ValueError
-       If the file does not have a `.hdf` or `.h5` extension.
+       If the file does not have a ``.hdf`` or ``.h5`` extension.
 
     See Also
     --------
-    read_hdf_by_value
-        Read HDF datasets by value ranges.
-    read_hdf_by_ivalue
-        Read HDF datasets by subindex values.
-    read_hdf_data
-        Read entire HDF datasets.
+    read_hdf_by_value : Read HDF datasets by value ranges.
+    read_hdf_by_ivalue : Read HDF datasets by subindex values.
+    read_hdf_data : Read entire HDF datasets.
 
     Notes
     -----
     This function delegates to :func:`_read_h5_by_index` for HDF5 files and
     :func:`_read_h4_by_index` for HDF4 files based on the file extension.
 
-    This function assumes that the dataset is Fortran (or column-major) ordered *viz.* for
-    compatibility with PSI's data ecosystem; as such, a given :math:`n`-dimensional array,
-    of shape :math:`(D_0, D_1, ..., D_{n-1})`, has scales :math:`(x_0, x_1, ..., x_{n-1})`,
-    such that :math:`| x_i | = | D_{(n-1)-i} |`. For example, a 3D dataset with shape
-    :math:`(D_p, D_t, D_r)` has scales :math:`r, t, p` corresponding to the radial, theta,
-    and phi dimensions respectively.
+    This function assumes Fortran (column-major) ordering for compatibility with
+    PSI's data ecosystem.  For an :math:`n`-dimensional array of shape
+    :math:`(D_0, D_1, \ldots, D_{n-1})` the scales satisfy
+    :math:`|x_i| = |D_{(n-1)-i}|`.  For example, a 3D dataset of shape
+    :math:`(D_\phi, D_\theta, D_r)` has scales :math:`r, \theta, \phi`.
 
-    This function extracts a subset of the given dataset/scales without reading the
-    entire data into memory. For a given scale :math:`x_j`, an index, index range, or ``None``
-    can be provided; these inputs are forwarded through to Python's builtin :class:`slice` to
-    extract the desired subset of the scale(s) / dataset.
+    Each ``*xi`` argument is forwarded to Python's built-in :class:`slice` to
+    extract the desired subset without reading the entire dataset into memory.
 
     Examples
     --------
@@ -831,22 +1050,21 @@ def read_hdf_by_index(ifile: PathLike, /,
     >>> from psi_io import read_hdf_by_index
     >>> filepath = get_3d_data()
 
-    Extract a radial slice (at the first radial-scale index) from a 3D cube:
+    Extract a radial slice at the first radial index from a 3D cube:
 
-    >>> f, r, t, p = read_hdf_by_value(filepath, 0, None, None)
+    >>> f, r, t, p = read_hdf_by_index(filepath, 0, None, None)
     >>> f.shape, r.shape, t.shape, p.shape
     ((181, 100, 1), (1,), (100,), (181,))
 
     Extract a phi slice at the 90th index from a 3D cube:
 
-    >>> f, r, t, p = read_hdf_by_value(filepath, None, None, 90)
+    >>> f, r, t, p = read_hdf_by_index(filepath, None, None, 90)
     >>> f.shape, r.shape, t.shape, p.shape
     ((1, 100, 151), (151,), (100,), (1,))
 
-    Extract the values up to the 20th index (in the radial dimension) and with
-    phi indices from 10 to 25:
+    Extract up to the 20th radial index with phi indices 10 to 25:
 
-    >>> f, r, t, p = read_hdf_by_value(filepath, (None, 20), None, (10, 25))
+    >>> f, r, t, p = read_hdf_by_index(filepath, (None, 20), None, (10, 25))
     >>> f.shape, r.shape, t.shape, p.shape
     ((15, 100, 20), (20,), (100,), (15,))
     """
@@ -871,44 +1089,41 @@ def read_hdf_by_value(ifile: PathLike, /,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to read.
     *xi : float | tuple[float, float] | None
         Values or value ranges corresponding to each dimension of the `n`-dimensional
-        dataset specified by the ``dataset_id``. If no arguments are passed, the
-        entire dataset (and its scales) will be returned.
-    dataset_id : str | None
+        dataset specified by ``dataset_id``.  Pass ``None`` for a dimension to
+        select all indices.  If no arguments are passed, the entire dataset (and
+        its scales) will be returned.
+    dataset_id : str | None, optional
         The identifier of the dataset to read.
-        If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
-    return_scales : bool
-        If True, the scales for the specified dataset are also returned.
+        If ``None``, a default dataset is used (``'Data-Set-2'`` for HDF4 and
+        ``'Data'`` for HDF5).  Default is ``None``.
+    return_scales : bool, optional
+        If ``True``, the coordinate scale arrays for each dimension are also
+        returned.  Default is ``True``.
 
     Returns
     -------
-    out : np.ndarray | tuple[np.ndarray]
-        The selected data array.
-        If ``return_scales`` is True, returns a tuple containing the data array
-        and the scales for each dimension.
+    out : np.ndarray | tuple[np.ndarray, ...]
+        The selected data array.  If ``return_scales`` is ``True``, returns a
+        tuple ``(data, scale_0, scale_1, ...)`` with one scale per dimension.
 
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
 
     See Also
     --------
-    read_hdf_by_index
-        Read HDF datasets by index.
-    read_hdf_by_ivalue
-        Read HDF datasets by subindex values.
-    read_hdf_data
-        Read entire HDF datasets.
-    sp_interpolate_slice_from_hdf
-        Interpolate slices from HDF datasets using SciPy's
-        :class:`~scipy.interpolate.RegularGridInterpolator`
-    np_interpolate_slice_from_hdf
-        Perform linear, bilinear, or trilinear interpolation using vectorized numpy-based
-        routines.
+    read_hdf_by_index : Read HDF datasets by index.
+    read_hdf_by_ivalue : Read HDF datasets by subindex values.
+    read_hdf_data : Read entire HDF datasets.
+    sp_interpolate_slice_from_hdf : Interpolate slices using SciPy's
+        :class:`~scipy.interpolate.RegularGridInterpolator`.
+    np_interpolate_slice_from_hdf : Linear/bilinear/trilinear interpolation
+        using vectorized NumPy routines.
 
     Notes
     -----
@@ -973,79 +1188,81 @@ def read_hdf_by_ivalue(ifile: PathLike, /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """
-    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by value.
+    r"""
+    Read data from an HDF4 (.hdf) or HDF5 (.h5) file by subindex value.
+
+    Unlike :func:`read_hdf_by_value` (which works in physical coordinate space),
+    this function accepts fractional *index* positions and returns the minimal
+    bracketing subset required for interpolation.
 
     .. note::
-       For each dimension, the minimum number of elements returned is 2 *e.g.*
-       if 3 floats are passed (as positional `*xi` arguments) for a 3D dataset,
-       the resulting subset will have a shape of (2, 2, 2,) with scales of length 2.
+       For each dimension the minimum number of elements returned is 2.  For
+       example, passing 3 scalar floats for a 3D dataset yields a subset of
+       shape ``(2, 2, 2)`` with index arrays of length 2.
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to read.
     *xi : float | tuple[float, float] | None
-        Values or value ranges corresponding to each dimension of the `n`-dimensional
-        dataset specified by the ``dataset_id``. If no arguments are passed, the
-        entire dataset (and its scales) will be returned.
-    dataset_id : str | None
-        The identifier of the dataset to read.
-        If None, a default dataset is used ('Data-Set-2' for HDF4 and 'Data' for HDF5).
-    return_scales : bool
-        If True, arrays of indices for the specified dataset are also returned.
-        Note, regardless of whether the provided dataset has coordinate variables
-        (scales), the returned index arrays are always 0-based indices generated
-        through :func:`~numpy.arange`.
+        Fractional index values or ranges for each dimension of the
+        ``n``-dimensional dataset.  Pass ``None`` to select an entire dimension.
+        If no arguments are passed, the full dataset is returned.
+    dataset_id : str | None, optional
+        The identifier of the dataset to read.  If ``None``, a default dataset
+        is used (``'Data-Set-2'`` for HDF4 and ``'Data'`` for HDF5).
+        Default is ``None``.
+    return_scales : bool, optional
+        If ``True``, 0-based index arrays (generated with :func:`~numpy.arange`)
+        are returned for each dimension alongside the data.  These are always
+        index-space arrays regardless of whether the dataset has physical
+        coordinate scales.  Default is ``True``.
 
     Returns
     -------
-    out : np.ndarray | tuple[np.ndarray]
-        The selected data array.
-        If ``return_scales`` is True, returns a tuple containing the data array
-        and the scales for each dimension.
+    out : np.ndarray | tuple[np.ndarray, ...]
+        The selected data array.  If ``return_scales`` is ``True``, returns a
+        tuple ``(data, idx_0, idx_1, ...)`` with one index array per dimension.
 
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
 
     See Also
     --------
-    read_hdf_by_index
-        Read HDF datasets by index.
-    read_hdf_data
-        Read entire HDF datasets.
-    sp_interpolate_slice_from_hdf
-        Interpolate slices from HDF datasets using SciPy's
-        :class:`~scipy.interpolate.RegularGridInterpolator`
-    np_interpolate_slice_from_hdf
-        Perform linear, bilinear, or trilinear interpolation using vectorized numpy-based
-        routines.
+    read_hdf_by_index : Read HDF datasets by integer index.
+    read_hdf_by_value : Read HDF datasets by physical coordinate value.
+    read_hdf_data : Read entire HDF datasets.
+    sp_interpolate_slice_from_hdf : Interpolate slices using SciPy's
+        :class:`~scipy.interpolate.RegularGridInterpolator`.
+    np_interpolate_slice_from_hdf : Linear/bilinear/trilinear interpolation
+        using vectorized NumPy routines.
 
     Notes
     -----
     This function delegates to :func:`_read_h5_by_ivalue` for HDF5 files and
     :func:`_read_h4_by_ivalue` for HDF4 files based on the file extension.
 
-    This function assumes that the dataset is Fortran (or column-major) ordered *viz.* for
-    compatibility with PSI's data ecosystem; as such, a given :math:`n`-dimensional array,
-    of shape :math:`(D_0, D_1, ..., D_{n-1})`, has scales :math:`(x_0, x_1, ..., x_{n-1})`,
-    such that :math:`| x_i | = | D_{(n-1)-i} |`. For example, a 3D dataset with shape
-    :math:`(D_p, D_t, D_r)` has scales :math:`r, t, p` corresponding to the radial, theta,
-    and phi dimensions respectively.
+    For a given dimension with scale :math:`x_j`, the bracketing rule is:
 
-    This function extracts a subset of the given dataset/scales without reading the
-    entire data into memory. For a given scale :math:`x_j`, if:
+    - *single float* :math:`a` → returns
+      :math:`x_j[\lfloor a \rfloor], x_j[\lceil a \rceil]`.
+    - *(float, float)* :math:`(a_0, a_1)` → returns
+      :math:`x_j[\lfloor a_0 \rfloor], \ldots, x_j[\lceil a_1 \rceil]`.
+    - ``None`` → returns the entire scale :math:`x_j`.
 
-    - *i)* a single float is provided (:math:`a`), the function will return a 2-element
-      subset of the scale (:math:`xʹ_j`): :math:`xʹ_j[floor(a)], xʹ_j[ceil(a)]`.
-    - *ii)* a (float, float) tuple is provided (:math:`a_0, a_1`), the function will return an
-      *m*-element subset of the scale (:math:`xʹ_j`): :math:`xʹ_j[floor(a_0)], xʹ_j[ceil(a_1)]`
-    - *iii)* a **None** value is provided, the function will return the entire scale :math:`x_j`
+    Examples
+    --------
+    >>> from psi_io.data import get_3d_data
+    >>> from psi_io import read_hdf_by_ivalue
+    >>> filepath = get_3d_data()
 
-    The returned subset can then be passed to a linear interpolation routine to extract the
-    "slice" at the desired fixed dimensions.
+    Extract a 2-element bracket around fractional radial index 2.7:
+
+    >>> f, r_idx, t_idx, p_idx = read_hdf_by_ivalue(filepath, 2.7, None, None)
+    >>> r_idx.shape
+    (2,)
     """
     if not xi:
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
@@ -1071,23 +1288,27 @@ def write_hdf_data(ifile: PathLike, /,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to write.
     data : np.ndarray
         The data array to write.
     *scales : Sequence[np.ndarray | None]
         The scales (coordinate arrays) for each dimension.
-    dataset_id : str | None
-        The identifier of the dataset to write.
-        If None, a default dataset is used ('Data-Set-2' for HDF4
-        and 'Data' for HDF5).
-    sync_dtype : bool
-        If True, the data type of the scales will be matched to that of the data array.
-        This argument is included to mimic the behavior of PSI's legacy HDF writing routines
-        and, more importantly, to ensure compatibility with certain Fortran tools within
-        the PSI ecosystem that require uniform precision between datasets and their scales.
+    dataset_id : str | None, optional
+        The identifier of the dataset to write.  If ``None``, a default dataset
+        is used (``'Data-Set-2'`` for HDF4 and ``'Data'`` for HDF5).
+        Default is ``None``.
+    sync_dtype : bool, optional
+        If ``True``, the scale dtypes are cast to match the data array dtype.
+        This mimics the behavior of PSI's legacy HDF writing routines and ensures
+        compatibility with Fortran tools that require uniform precision between
+        datasets and their scales.  Default is ``False``.
+    strict : bool, optional
+        If ``True``, raise an error if any dataset attribute cannot be written to
+        the target format.  If ``False``, a warning is printed and the attribute
+        is skipped.  Default is ``True``.
     **kwargs
-        Key-value pairs of dataset attributes to attach to the dataset being written.
+        Key-value pairs of dataset attributes to attach to the dataset.
 
     Returns
     -------
@@ -1097,29 +1318,94 @@ def write_hdf_data(ifile: PathLike, /,
     Raises
     ------
     ValueError
-        If the file does not have a `.hdf` or `.h5` extension.
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
     KeyError
-        If, for HDF4 files, the provided data is of a type not supported by :py:mod:`pyhdf`.
-        *viz.* float16 or int64.
+        If, for HDF4 files, the data or scale dtype is not supported by
+        :py:mod:`pyhdf`.  See the dtype support table in the Notes section.
 
     Notes
     -----
-    This function delegates to :func:`_write_h5_data` for HDF5 files
-    and :func:`_write_h4_data` for HDF4 files based on the file extension.
+    This function delegates to :func:`_write_h5_data` for HDF5 files and
+    :func:`_write_h4_data` for HDF4 files based on the file extension.
 
-    If no scales are provided, the dataset will be written without coordinate variables.
-    If scales are provided, the number of scales must be less than or equal to the number
-    of dimensions in the data array. To attach scales to specific dimensions only, provide
-    ``None`` for the dimensions without scales.
+    If no scales are provided the dataset is written without coordinate variables.
+    The number of scales may be less than or equal to the number of dimensions;
+    pass ``None`` for dimensions that should not have an attached scale.
+
+    The table below summarises dtype support across formats.  HDF4 support is
+    determined by the :data:`DTYPE_TO_SDC` mapping; HDF5 support is provided
+    by :mod:`h5py`.
+
+    .. list-table:: NumPy dtype support by format
+       :header-rows: 1
+       :widths: 20 20 20
+
+       * - dtype
+         - HDF4 (``.hdf``)
+         - HDF5 (``.h5``)
+       * - ``float16``
+         - No
+         - Yes
+       * - ``float32``
+         - Yes
+         - Yes
+       * - ``float64``
+         - Yes
+         - Yes
+       * - ``int8``
+         - Yes
+         - Yes
+       * - ``int16``
+         - Yes
+         - Yes
+       * - ``int32``
+         - Yes
+         - Yes
+       * - ``int64``
+         - No
+         - Yes
+       * - ``uint8``
+         - Yes
+         - Yes
+       * - ``uint16``
+         - Yes
+         - Yes
+       * - ``uint32``
+         - Yes
+         - Yes
+       * - ``uint64``
+         - No
+         - Yes
+       * - ``complex64``
+         - No
+         - Yes
+       * - ``complex128``
+         - No
+         - Yes
+       * - ``bool``
+         - Yes (stored as ``uint8``)
+         - Yes
 
     See Also
     --------
-    wrhdf_1d
-        Write 1D HDF files.
-    wrhdf_2d
-        Write 2D HDF files.
-    wrhdf_3d
-        Write 3D HDF files.
+    wrhdf_1d : Write 1D HDF files.
+    wrhdf_2d : Write 2D HDF files.
+    wrhdf_3d : Write 3D HDF files.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io import write_hdf_data, read_hdf_data
+    >>> r = np.linspace(1.0, 5.0, 10, dtype=np.float32)
+    >>> t = np.linspace(0.0, np.pi, 20, dtype=np.float32)
+    >>> p = np.linspace(0.0, 2*np.pi, 30, dtype=np.float32)
+    >>> f = np.ones((30, 20, 10), dtype=np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     write_hdf_data(Path(d) / "out.h5", f, r, t, p)
+    ...     data, r2, t2, p2 = read_hdf_data(Path(d) / "out.h5")
+    ...     data.shape
+    (30, 20, 10)
     """
     return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
                             *scales, dataset_id=dataset_id, sync_dtype=sync_dtype, strict=strict, **kwargs)
@@ -1128,6 +1414,62 @@ def write_hdf_data(ifile: PathLike, /,
 def convert(ifile: PathLike,
             ofile: Optional[PathLike] = None,
             strict: bool = True) -> Path:
+    """
+    Convert an HDF file between HDF4 (.hdf) and HDF5 (.h5) formats.
+
+    All datasets and their attributes are preserved in the output file.
+    The output format is inferred from the input: `.hdf` → `.h5` and vice versa,
+    unless an explicit output path is provided.
+
+    Parameters
+    ----------
+    ifile : PathLike
+        The path to the source HDF file.
+    ofile : PathLike, optional
+        The path to the output HDF file.
+        If ``None``, the output file is written alongside the input file
+        with its extension swapped (*e.g.* ``foo.hdf`` → ``foo.h5``).
+    strict : bool, optional
+        If ``True``, raise an error if any dataset attribute cannot be written
+        to the output format.  If ``False``, a warning is printed and the
+        attribute is skipped.  Default is ``True``.
+
+    Returns
+    -------
+    out : Path
+        The path to the written output file.
+
+    Raises
+    ------
+    ValueError
+        If the input file does not have a ``.hdf`` or ``.h5`` extension.
+    KeyError
+        If, for HDF4 output files, the data or an attribute value has a dtype
+        not supported by :py:mod:`pyhdf` and ``strict`` is ``True``.  See
+        :func:`write_hdf_data` for the full dtype support table.
+    TypeError
+        If, for HDF5 output files, a dataset attribute has a type that cannot be
+        stored as an HDF5 attribute and ``strict`` is ``True``.
+
+    See Also
+    --------
+    convert_psih4_to_psih5 : Specialized PSI-convention HDF4 → HDF5 converter.
+    write_hdf_data : Generic HDF data writing routine.
+    read_hdf_data : Generic HDF data reading routine.
+
+    Examples
+    --------
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> from psi_io import convert, read_hdf_meta
+    >>> from psi_io.data import get_3d_data
+    >>> h5_path = get_3d_data(hdf=".h5")
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     out = convert(h5_path, Path(d) / "br.hdf")
+    ...     meta = read_hdf_meta(out)
+    ...     meta[0].name
+    'Data'
+    """
     ifile = Path(ifile)
     if not ofile:
         ofile = ifile.with_suffix(".hdf") if ifile.suffix == ".h5" else ifile.with_suffix(".h5")
@@ -1145,6 +1487,54 @@ def convert(ifile: PathLike,
 
 def convert_psih4_to_psih5(ifile: PathLike,
                           ofile: Optional[PathLike] = None) -> Path:
+    """
+    Convert a PSI-convention HDF4 file to an HDF5 file.
+
+    Unlike :func:`convert`, this function is specialized for PSI-style HDF4 files:
+    it reads the primary dataset (``'Data-Set-2'``) and writes it under the PSI HDF5
+    dataset name (``'Data'``), preserving the dataset's attributes and scales.
+
+    Parameters
+    ----------
+    ifile : PathLike
+        The path to the source HDF4 (.hdf) file.
+    ofile : PathLike, optional
+        The path to the output HDF5 (.h5) file.
+        If ``None``, the output file is written alongside the input file with a
+        ``.h5`` extension (*e.g.* ``foo.hdf`` → ``foo.h5``).
+
+    Returns
+    -------
+    out : Path
+        The path to the written HDF5 file.
+
+    Raises
+    ------
+    ValueError
+        If ``ifile`` does not have a ``.hdf`` extension.
+    ValueError
+        If ``ofile`` does not have a ``.h5`` extension.
+    ImportError
+        If the :py:mod:`pyhdf` package is not available.
+
+    See Also
+    --------
+    convert : General-purpose HDF4 ↔ HDF5 converter.
+    write_hdf_data : Generic HDF data writing routine.
+
+    Examples
+    --------
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> from psi_io import convert_psih4_to_psih5, read_hdf_meta
+    >>> from psi_io.data import get_3d_data
+    >>> hdf4_path = get_3d_data(hdf=".hdf")
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     out = convert_psih4_to_psih5(hdf4_path, Path(d) / "br.h5")
+    ...     meta = read_hdf_meta(out)
+    ...     meta[0].name
+    'Data'
+    """
     ifile = Path(ifile)
     ofile = ifile.with_suffix(".h5") if not ofile else Path(ofile)
     if ifile.suffix != ".hdf":
@@ -1162,7 +1552,7 @@ def convert_psih4_to_psih5(ifile: PathLike,
     return ofile
 
 def instantiate_linear_interpolator(*args, **kwargs):
-    """
+    r"""
     Instantiate a linear interpolator using the provided data and scales.
 
     Parameters
@@ -1180,11 +1570,17 @@ def instantiate_linear_interpolator(*args, **kwargs):
         An instance of RegularGridInterpolator initialized
         with the provided data and scales.
 
+    Raises
+    ------
+    ImportError
+        If the ``scipy`` package is not available.
+
     Notes
     -----
     This function transposes the data array and passes it along with the scales
-    to RegularGridInterpolator. Given a PSI-style Fortran-ordered 3D dataset,
-    the resulting interpolator can be queried using (r, theta, phi) coordinates.
+    to :class:`~scipy.interpolate.RegularGridInterpolator`.  Given a PSI-style
+    Fortran-ordered 3D dataset, the resulting interpolator can be queried using
+    :math:`(r, \theta, \phi)` coordinates.
 
     Examples
     --------
@@ -1213,7 +1609,7 @@ def instantiate_linear_interpolator(*args, **kwargs):
 
 
 def sp_interpolate_slice_from_hdf(*xi, **kwargs):
-    """
+    r"""
     Interpolate a slice from HDF data using SciPy's `RegularGridInterpolator`.
 
     .. note::
@@ -1234,24 +1630,26 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
 
     Returns
     -------
-    slice : np.ndarray
-        The interpolated data slice.
-    scales : list
-        A list of scales for the dimensions that were not fixed.
+    data_slice : np.ndarray
+        The interpolated data slice with fixed dimensions removed.
+    scales : list[np.ndarray]
+        Coordinate scale arrays for the retained (non-fixed) dimensions.
 
     Notes
     -----
-    This function reads data from an HDF file, creates a linear interpolator,
-    and interpolates a slice based on the provided values.
+    This function reads data from an HDF file, builds a
+    :class:`~scipy.interpolate.RegularGridInterpolator`, and evaluates it at
+    the requested fixed coordinates to produce the slice.
 
     .. note::
-       The returned slice is Fortran-ordered *e.g.* radial slices will have shape
-       (phi, theta), phi slices will have shape (r, theta), etc.
+       The returned slice is Fortran-ordered, *e.g.* radial slices have shape
+       :math:`(n_\phi, n_\theta)`, and :math:`\phi` slices have shape
+       :math:`(n_r, n_\theta)`.
 
     .. note::
-       SciPy's `RegularGridInterpolator` casts all input data to `float64` internally.
-       Therefore, PSI HDF datasets with single-precision (`float32`) data will be upcast
-       during interpolation.
+       :class:`~scipy.interpolate.RegularGridInterpolator` casts all input data
+       to ``float64`` internally.  PSI HDF datasets stored as ``float32`` will
+       therefore be upcast during interpolation.
 
     Examples
     --------
@@ -1298,24 +1696,25 @@ def np_interpolate_slice_from_hdf(ifile: PathLike, /,
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to read.
     *xi : sequence
         Positional arguments passed-through to reader function.
-    dataset_id : str | None
-        The identifier of the dataset to read.
-        If None, a default dataset is used ('Data-Set-2' for HDF
-        and 'Data' for HDF5).
-    by_index : bool
-        If True, use :func:`read_hdf_by_ivalue` to read data by subindex values.
-        If False, use :func:`read_hdf_by_value` to read data by value ranges.
+    dataset_id : str | None, optional
+        The identifier of the dataset to read.  If ``None``, a default dataset
+        is used (``'Data-Set-2'`` for HDF4 and ``'Data'`` for HDF5).
+        Default is ``None``.
+    by_index : bool, optional
+        If ``True``, use :func:`read_hdf_by_ivalue` to read data by fractional
+        index values.  If ``False``, use :func:`read_hdf_by_value` to read by
+        physical coordinate values.  Default is ``False``.
 
     Returns
     -------
-    slice : np.ndarray
-        The interpolated data slice.
-    scales : list
-        A list of scales for the dimensions that were not fixed.
+    data_slice : np.ndarray
+        The interpolated data slice with fixed dimensions removed.
+    scales : list[np.ndarray]
+        Coordinate scale arrays for the retained (non-fixed) dimensions.
 
     Raises
     ------
@@ -1362,19 +1761,20 @@ def np_interpolate_slice_from_hdf(ifile: PathLike, /,
 
 
 def interpolate_positions_from_hdf(ifile, *xi, **kwargs):
-    """
-    Interpolate at a list of scale positions using SciPy's `RegularGridInterpolator`.
+    r"""
+    Interpolate at a list of scale positions using SciPy's
+    :class:`~scipy.interpolate.RegularGridInterpolator`.
 
     Parameters
     ----------
-    ifile : Path | str
+    ifile : PathLike
         The path to the HDF file to read.
     *xi : sequence[np.ndarray]
-       Iterable scale values for each dimension of the `n`-dimensional dataset.
-       Each array should have the same shape *i.e.* :math:`(m, )` – the function composes
-       these array into a :math:`m x n` column stack for interpolation.
-    **kwargs : dict
-        Keyword arguments to pass to :func:`read_hdf_by_value`.
+       Coordinate values for each dimension of the ``n``-dimensional dataset.
+       Each array must have the same length :math:`m`; the function assembles
+       them into an :math:`m \times n` column stack for interpolation.
+    **kwargs
+        Keyword arguments forwarded to :func:`read_hdf_by_value`.
 
     Returns
     -------
@@ -1422,16 +1822,25 @@ def interpolate_point_from_1d_slice(xi, scalex, values):
     Parameters
     ----------
     xi : float
-        The scale value at which to interpolate.
+        The coordinate value at which to interpolate.
     scalex : np.ndarray
-        The scale (coordinate array) for the dimension.
+        The coordinate scale array for the dimension.
     values : np.ndarray
-        The data array to interpolate.
+        The 1D data array to interpolate.
 
     Returns
     -------
     out : np.ndarray
-        The interpolated data point.
+        The interpolated scalar value as a zero-dimensional array.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import interpolate_point_from_1d_slice
+    >>> x = np.linspace(0.0, 1.0, 11)
+    >>> f = x ** 2
+    >>> float(interpolate_point_from_1d_slice(0.5, x, f))
+    0.25
     """
     if scalex[0] > scalex[-1]:
         scalex, values = scalex[::-1], values[::-1]
@@ -1447,20 +1856,30 @@ def interpolate_point_from_2d_slice(xi, yi, scalex, scaley, values):
     Parameters
     ----------
     xi : float
-        The scale value for the first dimension.
+        The coordinate value for the first dimension.
     yi : float
-        The scale value for the second dimension.
+        The coordinate value for the second dimension.
     scalex : np.ndarray
-        The scale (coordinate array) for the first dimension.
+        The coordinate scale array for the first dimension.
     scaley : np.ndarray
-        The scale (coordinate array) for the second dimension.
+        The coordinate scale array for the second dimension.
     values : np.ndarray
-        The data array to interpolate.
+        The 2D data array to interpolate, with shape ``(nx, ny)``.
 
     Returns
     -------
     out : np.ndarray
-        The interpolated data point.
+        The interpolated scalar value as a zero-dimensional array.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import interpolate_point_from_2d_slice
+    >>> x = np.linspace(0.0, 1.0, 11)
+    >>> y = np.linspace(0.0, 1.0, 11)
+    >>> f = np.outer(x, y)
+    >>> float(interpolate_point_from_2d_slice(0.5, 0.5, x, y, f))
+    0.25
     """
     values = np.transpose(values)
     if scalex[0] > scalex[-1]:
@@ -1475,6 +1894,33 @@ def interpolate_point_from_2d_slice(xi, yi, scalex, scaley, values):
 def _rdhdf_nd(hdf_filename: str,
               dimensionality: int
               ) -> Tuple[np.ndarray, ...]:
+    """Read an n-dimensional PSI-style HDF file; shared implementation for `rdhdf_1d/2d/3d`.
+
+    Parameters
+    ----------
+    hdf_filename : PathLike
+        The path to the HDF5 (.h5) or HDF4 (.hdf) file to read.
+    dimensionality : int
+        The expected number of dimensions of the dataset.
+
+    Returns
+    -------
+    out : tuple[np.ndarray, ...]
+        The coordinate scales for each dimension followed by the data array.
+
+    Raises
+    ------
+    ValueError
+        If the dataset dimensionality does not match ``dimensionality``.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _rdhdf_nd
+    >>> from psi_io.data import get_3d_data
+    >>> r, t, p, f = _rdhdf_nd(get_3d_data(), dimensionality=3)
+    >>> f.shape
+    (181, 100, 151)
+    """
     f, *scales = read_hdf_data(hdf_filename)
     if f.ndim != dimensionality:
         err = f'Expected {dimensionality}D data, got {f.ndim}D data instead.'
@@ -1490,6 +1936,44 @@ def _wrhdf_nd(hdf_filename: str,
               sync_dtype: bool = True,
               **kwargs
               ) -> None:
+    """Write an n-dimensional PSI-style HDF file; shared implementation for `wrhdf_1d/2d/3d`.
+
+    Parameters
+    ----------
+    hdf_filename : PathLike
+        The path to the HDF5 (.h5) or HDF4 (.hdf) file to write.
+    data : np.ndarray
+        The data array to write.
+    *scales : Sequence[np.ndarray | None]
+        The scales (coordinate arrays) for each dimension.
+    dimensionality : int
+        The expected number of dimensions of the data array.
+    sync_dtype : bool
+        If True, scale dtypes are cast to match the data array dtype.
+    **kwargs
+        Additional keyword arguments forwarded to :func:`write_hdf_data`.
+
+    Raises
+    ------
+    ValueError
+        If the data dimensionality does not match ``dimensionality``.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io.psi_io import _wrhdf_nd
+    >>> from psi_io import read_hdf_data
+    >>> f = np.ones((10, 20, 30), dtype=np.float32)
+    >>> r = np.linspace(1.0, 5.0, 10, dtype=np.float32)
+    >>> t = np.linspace(0.0, 3.14, 20, dtype=np.float32)
+    >>> p = np.linspace(0.0, 6.28, 30, dtype=np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     _wrhdf_nd(Path(d) / "out.h5", f, r, t, p, dimensionality=3)
+    ...     data, *_ = read_hdf_data(Path(d) / "out.h5")
+    ...     data.shape
+    (10, 20, 30)
+    """
     if data.ndim != dimensionality:
         err = f'Expected {dimensionality}D data, got {data.ndim}D data instead.'
         raise ValueError(err)
@@ -1500,6 +1984,38 @@ def _get_scales_nd_h5(ifile: Union[ Path, str], /,
                       dimensionality: int,
                       dataset_id: Optional[str] = None,
                       ):
+    """HDF5 (.h5) version of :func:`get_scales_1d` / :func:`get_scales_2d` / :func:`get_scales_3d`.
+
+    Parameters
+    ----------
+    ifile : PathLike
+        The path to the HDF5 (.h5) file.
+    dimensionality : int
+        The expected number of dimensions of the dataset.
+    dataset_id : str, optional
+        The identifier of the dataset whose scales are read.
+        If ``None``, the default PSI dataset (``'Data'``) is used.
+
+    Returns
+    -------
+    out : tuple[np.ndarray, ...]
+        The coordinate scale arrays for each dimension.
+
+    Raises
+    ------
+    ValueError
+        If the dataset dimensionality does not match ``dimensionality``.
+    ValueError
+        If any dimension has no associated scale.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _get_scales_nd_h5
+    >>> from psi_io.data import get_3d_data
+    >>> r, t, p = _get_scales_nd_h5(get_3d_data(), dimensionality=3)
+    >>> r.shape, t.shape, p.shape
+    ((151,), (100,), (181,))
+    """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         ndim = data.ndim
@@ -1519,6 +2035,38 @@ def _get_scales_nd_h4(ifile: Union[ Path, str], /,
                       dimensionality: int,
                       dataset_id: Optional[str] = None,
                       ):
+    """HDF4 (.hdf) version of :func:`get_scales_1d` / :func:`get_scales_2d` / :func:`get_scales_3d`.
+
+    Parameters
+    ----------
+    ifile : PathLike
+        The path to the HDF4 (.hdf) file.
+    dimensionality : int
+        The expected number of dimensions of the dataset.
+    dataset_id : str, optional
+        The identifier of the dataset whose scales are read.
+        If ``None``, the default PSI dataset (``'Data-Set-2'``) is used.
+
+    Returns
+    -------
+    out : tuple[np.ndarray, ...]
+        The coordinate scale arrays for each dimension.
+
+    Raises
+    ------
+    ValueError
+        If the dataset dimensionality does not match ``dimensionality``.
+    ValueError
+        If any dimension has no associated scale.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _get_scales_nd_h4
+    >>> from psi_io.data import get_3d_data
+    >>> r, t, p = _get_scales_nd_h4(get_3d_data(hdf=".hdf"), dimensionality=3)  # doctest: +SKIP
+    >>> r.shape  # doctest: +SKIP
+    (151,)
+    """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim = data.info()[1]
@@ -1537,7 +2085,16 @@ def _get_scales_nd_h4(ifile: Union[ Path, str], /,
 def _read_h5_meta(ifile: PathLike, /,
                   dataset_id: Optional[str] = None
                   ):
-    """HDF5 (.h5) version of :func:`read_hdf_meta`."""
+    """HDF5 (.h5) version of :func:`read_hdf_meta`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h5_meta
+    >>> from psi_io.data import get_3d_data
+    >>> meta = _read_h5_meta(get_3d_data())
+    >>> meta[0].name
+    'Data'
+    """
     with h5.File(ifile, 'r') as hdf:
         # Raises KeyError if ``dataset_id`` not found
         # If ``dataset_id`` is None, get all non-scale :class:`h5.Dataset`s
@@ -1565,7 +2122,16 @@ def _read_h5_meta(ifile: PathLike, /,
 def _read_h4_meta(ifile: PathLike, /,
                   dataset_id: Optional[str] = None
                   ):
-    """HDF4 (.hdf) version of :func:`read_hdf_meta`."""
+    """HDF4 (.hdf) version of :func:`read_hdf_meta`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h4_meta
+    >>> from psi_io.data import get_3d_data
+    >>> meta = _read_h4_meta(get_3d_data(hdf=".hdf"))  # doctest: +SKIP
+    >>> meta[0].name  # doctest: +SKIP
+    'Data-Set-2'
+    """
     hdf = h4.SD(str(ifile))
     # Raises HDF4Error if ``dataset_id`` not found
     # If ``dataset_id`` is None, get all non-scale :class:`pyhdf.SD.SDS`s
@@ -1599,14 +2165,32 @@ def _read_h4_meta(ifile: PathLike, /,
 
 
 def _read_h5_rtp(ifile: Union[ Path, str], /):
-    """HDF5 (.h5) version of :func:`read_rtp_meta`."""
+    """HDF5 (.h5) version of :func:`read_rtp_meta`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h5_rtp
+    >>> from psi_io.data import get_3d_data
+    >>> meta = _read_h5_rtp(get_3d_data())
+    >>> sorted(meta.keys())
+    ['p', 'r', 't']
+    """
     with h5.File(ifile, 'r') as hdf:
         return {k: (hdf[v].size, hdf[v][0], hdf[v][-1])
                 for k, v in zip('rtp', PSI_SCALE_ID['h5'])}
 
 
 def _read_h4_rtp(ifile: Union[ Path, str], /):
-    """HDF4 (.hdf) version of :func:`read_rtp_meta`."""
+    """HDF4 (.hdf) version of :func:`read_rtp_meta`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h4_rtp
+    >>> from psi_io.data import get_3d_data
+    >>> meta = _read_h4_rtp(get_3d_data(hdf=".hdf"))  # doctest: +SKIP
+    >>> sorted(meta.keys())  # doctest: +SKIP
+    ['p', 'r', 't']
+    """
     hdf = h4.SD(str(ifile))
     return {k: (hdf.select(v).info()[2], hdf.select(v)[0], hdf.select(v)[-1])
             for k, v in zip('ptr', PSI_SCALE_ID['h4'])}
@@ -1616,6 +2200,16 @@ def _read_h5_data(ifile: PathLike, /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF5 (.h5) version of :func:`read_hdf_data`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h5_data
+    >>> from psi_io.data import get_3d_data
+    >>> data, r, t, p = _read_h5_data(get_3d_data())
+    >>> data.shape
+    (181, 100, 151)
+    """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         dataset = data[:]
@@ -1629,6 +2223,16 @@ def _read_h4_data(ifile: PathLike, /,
                   dataset_id: Optional[str] = None,
                   return_scales: bool = True,
                   ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF4 (.hdf) version of :func:`read_hdf_data`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h4_data
+    >>> from psi_io.data import get_3d_data
+    >>> data, *_ = _read_h4_data(get_3d_data(hdf=".hdf"))  # doctest: +SKIP
+    >>> data.shape  # doctest: +SKIP
+    (181, 100, 151)
+    """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     if return_scales:
@@ -1644,7 +2248,16 @@ def _read_h5_by_index(ifile: PathLike, /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """ HDF5(.h5) version of :func:`read_hdf_by_index`."""
+    """HDF5 (.h5) version of :func:`read_hdf_by_index`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h5_by_index
+    >>> from psi_io.data import get_3d_data
+    >>> f, r, t, p = _read_h5_by_index(get_3d_data(), 0, None, None)
+    >>> f.shape
+    (181, 100, 1)
+    """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
@@ -1661,7 +2274,16 @@ def _read_h4_by_index(ifile: PathLike, /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """HDF4(.hdf) version of :func:`read_hdf_by_index`."""
+    """HDF4 (.hdf) version of :func:`read_hdf_by_index`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h4_by_index
+    >>> from psi_io.data import get_3d_data
+    >>> f, r, t, p = _read_h4_by_index(get_3d_data(hdf=".hdf"), 0, None, None)  # doctest: +SKIP
+    >>> f.shape  # doctest: +SKIP
+    (181, 100, 1)
+    """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim = data.info()[1]
@@ -1680,7 +2302,16 @@ def _read_h5_by_value(ifile: PathLike, /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """HDF5 (.h5) version of :func:`read_hdf_by_value`."""
+    """HDF5 (.h5) version of :func:`read_hdf_by_value`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h5_by_value
+    >>> from psi_io.data import get_3d_data
+    >>> f, r, t, p = _read_h5_by_value(get_3d_data(), 15, None, None)
+    >>> f.shape
+    (181, 100, 2)
+    """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
@@ -1705,7 +2336,16 @@ def _read_h4_by_value(ifile: PathLike, /,
                       dataset_id: Optional[str] = None,
                       return_scales: bool = True,
                       ) -> Union[np.ndarray, Tuple[np.ndarray]]:
-    """HDF4 (.hdf) version of :func:`read_hdf_by_value`."""
+    """HDF4 (.hdf) version of :func:`read_hdf_by_value`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h4_by_value
+    >>> from psi_io.data import get_3d_data
+    >>> f, r, t, p = _read_h4_by_value(get_3d_data(hdf=".hdf"), 15, None, None)  # doctest: +SKIP
+    >>> f.shape  # doctest: +SKIP
+    (181, 100, 2)
+    """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim = data.info()[1]
@@ -1731,6 +2371,16 @@ def _read_h5_by_ivalue(ifile: PathLike, /,
                        dataset_id: Optional[str] = None,
                        return_scales: bool = True,
                        ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF5 (.h5) version of :func:`read_hdf_by_ivalue`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h5_by_ivalue
+    >>> from psi_io.data import get_3d_data
+    >>> f, r_idx, t_idx, p_idx = _read_h5_by_ivalue(get_3d_data(), 2.7, None, None)
+    >>> r_idx.shape
+    (2,)
+    """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
         if len(xi) != data.ndim:
@@ -1748,6 +2398,16 @@ def _read_h4_by_ivalue(ifile: PathLike, /,
                        dataset_id: Optional[str] = None,
                        return_scales: bool = True,
                        ) -> Union[np.ndarray, Tuple[np.ndarray]]:
+    """HDF4 (.hdf) version of :func:`read_hdf_by_ivalue`.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _read_h4_by_ivalue
+    >>> from psi_io.data import get_3d_data
+    >>> f, r_idx, t_idx, p_idx = _read_h4_by_ivalue(get_3d_data(hdf=".hdf"), 2.7, None, None)  # doctest: +SKIP
+    >>> r_idx.shape  # doctest: +SKIP
+    (2,)
+    """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
     ndim, shape = data.info()[1], _cast_shape_tuple(data.info()[2])
@@ -1768,6 +2428,21 @@ def _write_h4_data(ifile: PathLike, /,
                    sync_dtype: bool = False,
                    strict: bool = True,
                    **kwargs) -> Path:
+    """HDF4 (.hdf) version of :func:`write_hdf_data`.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io.psi_io import _write_h4_data, _read_h4_data
+    >>> f = np.ones((10,), dtype=np.float32)
+    >>> x = np.linspace(0.0, 1.0, 10, dtype=np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:  # doctest: +SKIP
+    ...     _write_h4_data(Path(d) / "out.hdf", f, x)  # doctest: +SKIP
+    ...     data, *_ = _read_h4_data(Path(d) / "out.hdf")  # doctest: +SKIP
+    ...     data.shape  # doctest: +SKIP
+    (10,)
+    """
     dataid = dataset_id or PSI_DATA_ID['h4']
     h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
     sds_id = h4file.create(dataid, _dtype_to_sdc(data.dtype), data.shape)
@@ -1791,7 +2466,6 @@ def _write_h4_data(ifile: PathLike, /,
                 else:
                     print(f"Warning: Failed to set attribute '{k}' on dataset '{dataid}'; skipping.")
 
-
     sds_id.set(data)
     sds_id.endaccess()
     h4file.end()
@@ -1806,6 +2480,21 @@ def _write_h5_data(ifile: PathLike, /,
                    sync_dtype: bool = False,
                    strict: bool = True,
                    **kwargs) -> Path:
+    """HDF5 (.h5) version of :func:`write_hdf_data`.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io.psi_io import _write_h5_data, _read_h5_data
+    >>> f = np.ones((10,), dtype=np.float32)
+    >>> x = np.linspace(0.0, 1.0, 10, dtype=np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     _write_h5_data(Path(d) / "out.h5", f, x)
+    ...     data, *_ = _read_h5_data(Path(d) / "out.h5")
+    ...     data.shape
+    (10,)
+    """
     dataid = dataset_id or PSI_DATA_ID['h5']
     with h5.File(ifile, "w") as h5file:
         dataset = h5file.create_dataset(dataid, data=data, dtype=data.dtype, shape=data.shape)
@@ -1838,18 +2527,27 @@ def _np_linear_interpolation(xi: Sequence, scales: Sequence, values: np.ndarray)
 
     Parameters
     ----------
-    xi : list
-        List of values or None for each dimension.
-    scales : list
-        List of scales (coordinate arrays) for each dimension.
+    xi : list[float | None]
+        Target coordinate values for each dimension; ``None`` marks a
+        "free" (not interpolated) dimension.
+    scales : list[np.ndarray]
+        Coordinate scale arrays, one per dimension.
     values : np.ndarray
         The data array to interpolate.
 
     Returns
     -------
-    np.ndarray
-        The interpolated data.
+    out : np.ndarray
+        The interpolated data array.
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import _np_linear_interpolation
+    >>> scales = [np.array([0.0, 1.0])]
+    >>> values = np.array([0.0, 2.0])
+    >>> float(_np_linear_interpolation([0.5], scales, values))
+    1.0
     """
     index0 = next((i for i, v in enumerate(xi) if v is not None), None)
     t = (xi[index0] - scales[index0][0])/(scales[index0][1] - scales[index0][0])
@@ -1867,18 +2565,27 @@ def _np_bilinear_interpolation(xi, scales, values):
 
     Parameters
     ----------
-    xi : Sequence
-        List of values or None for each dimension.
-    scales : Sequence
-        List of scales (coordinate arrays) for each dimension.
+    xi : Sequence[float | None]
+        Target coordinate values for each dimension; ``None`` marks a
+        "free" (not interpolated) dimension.
+    scales : Sequence[np.ndarray]
+        Coordinate scale arrays, one per dimension.
     values : np.ndarray
         The data array to interpolate.
 
     Returns
     -------
-    np.ndarray
-        The interpolated data.
+    out : np.ndarray
+        The interpolated data array.
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import _np_bilinear_interpolation
+    >>> scales = [np.array([0.0, 1.0]), np.array([0.0, 1.0])]
+    >>> values = np.array([[0.0, 0.0], [1.0, 2.0]])
+    >>> float(_np_bilinear_interpolation([0.5, 0.5], scales, values))
+    0.75
     """
     index0, index1 = [i for i, v in enumerate(xi) if v is not None]
     t, u = [(xi[i] - scales[i][0])/(scales[i][1] - scales[i][0]) for i in (index0, index1)]
@@ -1906,18 +2613,28 @@ def _np_trilinear_interpolation(xi, scales, values):
 
     Parameters
     ----------
-    xi : list
-        List of values or None for each dimension.
-    scales : list
-        List of scales (coordinate arrays) for each dimension.
+    xi : list[float | None]
+        Target coordinate values for each dimension; ``None`` marks a
+        "free" (not interpolated) dimension.
+    scales : list[np.ndarray]
+        Coordinate scale arrays, one per dimension.
     values : np.ndarray
         The data array to interpolate.
 
     Returns
     -------
-    np.ndarray
-        The interpolated data.
+    out : np.ndarray
+        The interpolated data array.
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import _np_trilinear_interpolation
+    >>> scales = [np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([0.0, 1.0])]
+    >>> values = np.zeros((2, 2, 2))
+    >>> values[1, 1, 1] = 8.0
+    >>> float(_np_trilinear_interpolation([0.5, 0.5, 0.5], scales, values))
+    1.0
     """
     index0, index1, index2 = [i for i, v in enumerate(xi) if v is not None]
     t, u, v = [(xi[i] - scales[i][0])/(scales[i][1] - scales[i][0]) for i in (index0, index1, index2)]
@@ -1969,7 +2686,7 @@ def _check_index_ranges(arr_size: int,
 
     Returns
     -------
-    Tuple[int, int]
+    out : tuple[int, int]
         Adjusted starting and ending indices.
 
     Notes
@@ -1977,6 +2694,15 @@ def _check_index_ranges(arr_size: int,
     This function ensures that the range between `i0` and `i1` includes at least
     two indices for interpolation purposes.
 
+    Examples
+    --------
+    >>> from psi_io.psi_io import _check_index_ranges
+    >>> _check_index_ranges(10, 0, 0)
+    (0, 2)
+    >>> _check_index_ranges(10, 5, 5)
+    (4, 6)
+    >>> _check_index_ranges(10, 10, 10)
+    (8, 10)
     """
     i0, i1 = int(i0), int(i1)
     if i0 == 0:
@@ -1999,13 +2725,21 @@ def _cast_shape_tuple(input: Union[int, Sequence[int]]
 
     Returns
     -------
-    tuple[int]
+    out : tuple[int, ...]
         The input cast as a tuple of integers.
 
     Raises
     ------
     TypeError
         If the input is neither an integer nor an iterable of integers.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _cast_shape_tuple
+    >>> _cast_shape_tuple(5)
+    (5,)
+    >>> _cast_shape_tuple([3, 4, 5])
+    (3, 4, 5)
     """
     if isinstance(input, int):
         return (input,)
@@ -2022,10 +2756,12 @@ def _parse_index_inputs(input: Union[int, slice, Sequence[Union[int, None]], Non
 
     Parameters
     ----------
-    input : int | slice | Sequence[Union[int, None]] | None
-        The input to parse.
-    arr_size : int
-        The size of the array along the dimension.
+    input : int | slice | Sequence[int | None] | None
+        The index specification to parse:
+
+        - *int* — selects a single-element slice ``[n, n+1)``.
+        - *Sequence[int | None]* — unpacked directly into :class:`slice`.
+        - ``None`` — selects the entire dimension.
 
     Returns
     -------
@@ -2036,8 +2772,16 @@ def _parse_index_inputs(input: Union[int, slice, Sequence[Union[int, None]], Non
     ------
     TypeError
         If the input type is unsupported.
-    ValueError
-        If the input iterable does not have exactly two elements.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _parse_index_inputs
+    >>> _parse_index_inputs(3)
+    slice(3, 4, None)
+    >>> _parse_index_inputs((2, 7))
+    slice(2, 7, None)
+    >>> _parse_index_inputs(None)
+    slice(None, None, None)
     """
     if isinstance(input, int):
         return slice(input, input + 1)
@@ -2053,6 +2797,43 @@ def _parse_value_inputs(dimproxy,
                         value,
                         scale_exists: bool = True
                         ) -> slice:
+    """Parse a scale value or value range into a slice over a dimension's coordinate array.
+
+    Parameters
+    ----------
+    dimproxy : array-like
+        The coordinate array (scale) for the dimension, supporting ``[:]`` indexing.
+    value : float | tuple[float | None, float | None] | None
+        The target value or range:
+
+        - ``None`` — select the entire dimension.
+        - *float* — find the 2-element bracket ``[a, b]`` such that ``a <= value < b``.
+        - *(float, float)* — find the bracket spanning the given range.
+    scale_exists : bool
+        Guard flag; raises :exc:`ValueError` if ``False`` and ``value`` is not ``None``.
+
+    Returns
+    -------
+    slice
+        A slice object that selects the appropriate indices from the coordinate array.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is not ``None`` and ``scale_exists`` is ``False``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from psi_io.psi_io import _parse_value_inputs
+    >>> scale = np.linspace(0.0, 10.0, 11)
+    >>> _parse_value_inputs(scale, None)
+    slice(None, None, None)
+    >>> _parse_value_inputs(scale, 4.5)
+    slice(4, 6, None)
+    >>> _parse_value_inputs(scale, (2.0, 7.0))
+    slice(1, 8, None)
+    """
     if value is None:
         return slice(None)
     if not scale_exists:
@@ -2075,26 +2856,40 @@ def _parse_ivalue_inputs(dimsize,
                          input: Union[Union[int, float], slice, Sequence[Union[Union[int, float], None]], None]
                          ) -> slice:
     """
-    Parse various slice input formats into a standard slice object.
+    Parse a sub-index value or range into a slice over a dimension of a given size.
 
     Parameters
     ----------
-    input : int | slice | Sequence[Union[int, None]] | None
-        The input to parse.
-    arr_size : int
-        The size of the array along the dimension.
+    dimsize : int
+        The size of the array along the dimension; used to clamp the resulting slice.
+    input : int | float | Sequence[int | float | None] | None
+        The sub-index specification to parse:
+
+        - ``None`` — select the entire dimension.
+        - *int* or *float* (:math:`a`) — returns ``slice(floor(a), ceil(a))``
+          (clamped to ``[0, dimsize - 1]``).
+        - *Sequence* ``(a, b)`` — returns ``slice(floor(a), ceil(b))``
+          (clamped to ``[0, dimsize - 1]``).
 
     Returns
     -------
     slice
-        The parsed slice object.
+        The parsed slice object, guaranteed to span at least 2 elements.
 
     Raises
     ------
     TypeError
         If the input type is unsupported.
-    ValueError
-        If the input iterable does not have exactly two elements.
+
+    Examples
+    --------
+    >>> from psi_io.psi_io import _parse_ivalue_inputs
+    >>> _parse_ivalue_inputs(10, None)
+    slice(None, None, None)
+    >>> _parse_ivalue_inputs(10, 2.7)
+    slice(2, 4, None)
+    >>> _parse_ivalue_inputs(10, (1.3, 4.8))
+    slice(1, 5, None)
     """
     if input is None:
         return slice(None)
