@@ -28,6 +28,7 @@ HDF_VERSION_MAPPINGS = {
 
 VERSION_PARAMS = ["h4", "h5"]
 DATATYPE_PARAMS = ["float32", "float64", "int16", "int32"]
+INCOMPATIBLE_DATATYPE_PARAMS = [int, 'float16', object]
 DIMENSIONALITY_PARAMS = [1, 2, 3]
 SCALE_PARAMS = [True, False]
 
@@ -60,6 +61,18 @@ def hdf_version(request) -> str:
 @pytest.fixture(scope="session",
                 params=DATATYPE_PARAMS)
 def datatype(request):
+    return request.param
+
+
+@pytest.fixture(scope="session",
+                params=INCOMPATIBLE_DATATYPE_PARAMS)
+def incompatible_datatype(request):
+    return request.param
+
+
+@pytest.fixture(scope="session",
+                params=(True, False))
+def strict_write(request):
     return request.param
 
 

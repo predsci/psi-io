@@ -48,6 +48,9 @@ __all__ = [
     "wrhdf_1d",
     "wrhdf_2d",
     "wrhdf_3d",
+
+    "convert",
+    "convert_psih4_to_psih5"
 ]
 
 import math
@@ -1055,6 +1058,7 @@ def write_hdf_data(ifile: PathLike, /,
                    *scales: Sequence[Union[np.ndarray, None]],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
+                   strict: bool = True,
                    **kwargs
                    ) -> Path:
     """
@@ -1118,11 +1122,12 @@ def write_hdf_data(ifile: PathLike, /,
         Write 3D HDF files.
     """
     return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
-                            *scales, dataset_id=dataset_id, sync_dtype=sync_dtype, **kwargs)
+                            *scales, dataset_id=dataset_id, sync_dtype=sync_dtype, strict=strict, **kwargs)
 
 
 def convert(ifile: PathLike,
-           ofile: Optional[PathLike]=None) -> Path:
+            ofile: Optional[PathLike] = None,
+            strict: bool = True) -> Path:
     ifile = Path(ifile)
     if not ofile:
         ofile = ifile.with_suffix(".hdf") if ifile.suffix == ".h5" else ifile.with_suffix(".h5")
@@ -1133,8 +1138,28 @@ def convert(ifile: PathLike,
     meta_data = read_hdf_meta(ifile)
     for dataset in meta_data:
         data, *scales = read_hdf_data(ifile, dataset_id=dataset.name, return_scales=True)
-        write_hdf_data(ofile, data, *scales, dataset_id=dataset.dataset_id)
+        write_hdf_data(ofile, data, *scales, dataset_id=dataset.name, strict=strict, **dataset.attr)
 
+    return ofile
+
+
+def convert_psih4_to_psih5(ifile: PathLike,
+                          ofile: Optional[PathLike] = None) -> Path:
+    ifile = Path(ifile)
+    ofile = ifile.with_suffix(".h5") if not ofile else Path(ofile)
+    if ifile.suffix != ".hdf":
+        raise ValueError(f"Input file must have a .hdf extension; got {ifile.suffix}")
+    if ofile.suffix != ".h5":
+        raise ValueError(f"Output file must have a .h5 extension; got {ofile.suffix}")
+    ofile.parent.mkdir(parents=True, exist_ok=True)
+
+
+    data, *scales = read_hdf_data(ifile, dataset_id=PSI_DATA_ID["h4"], return_scales=True)
+    meta_data, *_ = read_hdf_meta(ifile, dataset_id=PSI_DATA_ID["h4"])
+
+    write_hdf_data(ofile, data, *scales,
+                   dataset_id=PSI_DATA_ID["h5"], **meta_data.attr)
+    return ofile
 
 def instantiate_linear_interpolator(*args, **kwargs):
     """
@@ -1741,6 +1766,7 @@ def _write_h4_data(ifile: PathLike, /,
                    *scales: Sequence[np.ndarray],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
+                   strict: bool = True,
                    **kwargs) -> Path:
     dataid = dataset_id or PSI_DATA_ID['h4']
     h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
@@ -1757,7 +1783,14 @@ def _write_h4_data(ifile: PathLike, /,
         for k, v in kwargs.items():
             npv = np.asarray(v)
             attr_ = sds_id.attr(k)
-            attr_.set(_dtype_to_sdc(npv.dtype), npv.tolist())
+            try:
+                attr_.set(_dtype_to_sdc(npv.dtype), npv.tolist())
+            except KeyError as e:
+                if strict:
+                    raise KeyError(f"Failed to set attribute '{k}' on dataset '{dataid}'") from e
+                else:
+                    print(f"Warning: Failed to set attribute '{k}' on dataset '{dataid}'; skipping.")
+
 
     sds_id.set(data)
     sds_id.endaccess()
@@ -1771,6 +1804,7 @@ def _write_h5_data(ifile: PathLike, /,
                    *scales: Sequence[np.ndarray],
                    dataset_id: Optional[str] = None,
                    sync_dtype: bool = False,
+                   strict: bool = True,
                    **kwargs) -> Path:
     dataid = dataset_id or PSI_DATA_ID['h5']
     with h5.File(ifile, "w") as h5file:
@@ -1787,7 +1821,13 @@ def _write_h5_data(ifile: PathLike, /,
 
         if kwargs:
             for key, value in kwargs.items():
-                dataset.attrs[key] = value
+                try:
+                    dataset.attrs[key] = value
+                except TypeError as e:
+                    if strict:
+                        raise TypeError(f"Failed to set attribute '{key}' on dataset '{dataid}'") from e
+                    else:
+                        print(f"Warning: Failed to set attribute '{key}' on dataset '{dataid}'; skipping.")
 
     return ifile
 

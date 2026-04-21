@@ -10,8 +10,10 @@ from psi_io import (read_hdf_data,
                     read_hdf_by_value,
                     read_hdf_by_ivalue,
                     rdhdf_1d, rdhdf_2d, rdhdf_3d,
-                    get_scales_1d, get_scales_2d, get_scales_3d
+                    get_scales_1d, get_scales_2d, get_scales_3d,
+                    convert, convert_psih4_to_psih5
                     )
+from tests.conftest import HDF_VERSION_MAPPINGS
 from tests.utils import generate_data_shape, generate_mock_data
 
 def test_read_hdf_meta(hdf_version, datatype, dimensionality, scales_included, generated_files):
@@ -199,3 +201,81 @@ def test_write_hdf_data_and_readback(tmp_path, hdf_version, datatype, dimensiona
     comp_data = read_hdf_data(readback_fp)
     for written_array, readback_array in zip(written_data, comp_data):
         assert_array_equal(written_array, readback_array)
+
+
+def test_problematic_write_types(tmp_path, hdf_version, incompatible_datatype):
+    fdata, *sdata = generate_mock_data(1, incompatible_datatype, False)
+    written_fp = tmp_path / f"err{HDF_VERSION_MAPPINGS[hdf_version]['extension']}"
+    if hdf_version == 'h4':
+        with pytest.raises(KeyError):
+            write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData')
+    if hdf_version == 'h5':
+        if incompatible_datatype is object:
+            with pytest.raises(TypeError):
+                write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData')
+        else:
+            assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData')
+
+
+def test_compare_metadata_equivalence(tmp_path, hdf_version):
+    fdata, *sdata = generate_mock_data(1, 'float32', False)
+    written_meta = dict(test_str="test",
+                        test_int32=np.int32(3),
+                        test_float64=3.14,
+                        test_bool=True,
+                        test_array=np.array([1, 2, 3], dtype='int16'))
+    written_fp = tmp_path / f"test_metadata{HDF_VERSION_MAPPINGS[hdf_version]['extension']}"
+    write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData', **written_meta)
+    read_meta, *_ = read_hdf_meta(written_fp, dataset_id='MockData')
+    for k, v in written_meta.items():
+        assert k in read_meta.attr
+        assert_array_equal(read_meta.attr[k], v)
+
+def test_compare_problematic_metadata_equivalence(tmp_path, hdf_version, strict_write):
+    fdata, *sdata = generate_mock_data(1, 'float32', False)
+    written_meta = dict(test_int64=3,
+                        test_float16=np.float16(3.14),)
+    object_meta = dict(test_obj=np.array([1, 2, 3], dtype=object))
+    written_fp = tmp_path / f"test_metadata{HDF_VERSION_MAPPINGS[hdf_version]['extension']}"
+    if hdf_version == 'h4':
+        if strict_write:
+            with pytest.raises(KeyError):
+                write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                               strict=strict_write, **written_meta)
+            with pytest.raises(KeyError):
+                write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                               strict=strict_write, **written_meta | object_meta)
+        else:
+            assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                                  strict=strict_write, **written_meta)
+            assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                                  strict=strict_write, **written_meta | object_meta)
+    if hdf_version == 'h5':
+        if strict_write:
+            write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                           strict=strict_write, **written_meta)
+            with pytest.raises(TypeError):
+                write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                               strict=strict_write, **written_meta | object_meta)
+        else:
+            assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                                  strict=strict_write, **written_meta)
+            assert write_hdf_data(written_fp, fdata, *sdata, dataset_id='MockData',
+                                  strict=strict_write, **written_meta | object_meta)
+
+
+def test_compare_h4_h5_data_equivalence(datatype, dimensionality, scales_included, combined_files):
+    h4result = read_hdf_data(combined_files['h4'][datatype][dimensionality][scales_included])
+    h5result = read_hdf_data(combined_files['h5'][datatype][dimensionality][scales_included])
+    for h4array, h5array in zip(h4result, h5result):
+        assert_array_equal(h4array, h5array)
+
+
+def test_convert_psih4_to_psih5_equivalence(tmp_path, datatype, dimensionality, scales_included, combined_files):
+    h4_fp = combined_files['h4'][datatype][dimensionality][scales_included]
+    conversion_fp = (tmp_path / f"converted_{h4_fp.name}").with_suffix(HDF_VERSION_MAPPINGS['h5']['extension'])
+    convert_psih4_to_psih5(h4_fp, conversion_fp)
+    converted_data = read_hdf_data(conversion_fp)
+    original_data = read_hdf_data(h4_fp)
+    for carray, oarray in zip(converted_data, original_data):
+        assert_array_equal(carray, oarray)

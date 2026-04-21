@@ -29,16 +29,22 @@ def generate_mock_data(ndim: int, dtype: str, scales: bool = True):
     return fdata, *sdata
 
 
-def _generate_mock_h4_data(ifile, ndim, dtype, scales):
+def _generate_mock_h4_data(ifile, ndim, dtype, scales, **kwargs):
 
     fdata, *sdata = generate_mock_data(ndim, dtype, scales)
 
     h4file = h4.SD(str(ifile), h4.SDC.WRITE | h4.SDC.CREATE | h4.SDC.TRUNC)
-    sds_id = h4file.create("Data-Set-2", psi_io.NPTYPES_TO_SDCTYPES[dtype], fdata.shape)
+    sds_id = h4file.create("Data-Set-2",  psi_io._dtype_to_sdc(np.dtype(dtype)), fdata.shape)
 
     if scales:
         for i, scale in enumerate(reversed(sdata)):
-            sds_id.dim(i).setscale(psi_io.NPTYPES_TO_SDCTYPES[dtype], scale.tolist())
+            sds_id.dim(i).setscale(psi_io._dtype_to_sdc(np.dtype(dtype)), scale.tolist())
+
+    if kwargs:
+        for k, v in kwargs.items():
+            npv = np.asarray(v)
+            attr_ = sds_id.attr(k)
+            attr_.set(psi_io._dtype_to_sdc(npv.dtype), npv.tolist())
 
     sds_id.set(fdata)
     sds_id.endaccess()
@@ -47,7 +53,7 @@ def _generate_mock_h4_data(ifile, ndim, dtype, scales):
     return ifile
 
 
-def _generate_mock_h5_data(ifile, ndim, dtype, scales):
+def _generate_mock_h5_data(ifile, ndim, dtype, scales, **kwargs):
     """Generate mock HDF5 data files for testing."""
     # This is a placeholder function. Implement the logic to generate mock HDF5 data files.
     fdata, *sdata = generate_mock_data(ndim, dtype, scales)
@@ -60,14 +66,19 @@ def _generate_mock_h5_data(ifile, ndim, dtype, scales):
                 h5file['Data'].dims[i].attach_scale(h5file[f"dim{i+1}"])
                 h5file['Data'].dims[i].label = f"dim{i+1}"
 
+        if kwargs:
+            for key, value in kwargs.items():
+                h5file.attrs[key] = value
+
     return ifile
 
 
 def generate_mock_files(ifile,
-                       ndim: int = 1,
-                       dtype: str = 'float64',
-                       scales: bool = True):
+                        ndim: int = 1,
+                        dtype: str = 'float64',
+                        scales: bool = True,
+                        **kwargs):
     """Generate mock data files for testing."""
     # This is a placeholder function. Implement the logic to generate mock data files.
     return psi_io._dispatch_by_ext(ifile, _generate_mock_h4_data, _generate_mock_h5_data,
-                                   ndim, dtype, scales)
+                                   ndim, dtype, scales, **kwargs)
