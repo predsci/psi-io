@@ -78,6 +78,34 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 def check_hdf_type(func: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Validate the ``hdf`` keyword argument of a data-fetch function.
+
+    This decorator inspects the bound ``hdf`` parameter of the wrapped function
+    and raises :exc:`ValueError` if the value is not one of the supported HDF
+    file extensions (``'.h5'`` or ``'.hdf'``).
+
+    Parameters
+    ----------
+    func : Callable
+        The data-fetch function to wrap.  Must accept an ``hdf`` keyword
+        argument that names the desired file extension.
+
+    Returns
+    -------
+    out : Callable
+        The wrapped function with ``hdf`` validation applied.
+
+    Raises
+    ------
+    ValueError
+        If the ``hdf`` argument is not a member of :data:`~psi_io.psi_io.HDFEXT`.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> data.get_3d_data.__wrapped__  # doctest: +ELLIPSIS
+    <function get_3d_data at 0x...>
+    """
     sig = inspect.signature(func)
 
     @wraps(func)
@@ -99,8 +127,15 @@ def file_ids() -> list[str]:
 
     Returns
     -------
-    list[str]
-        List of available magnetic field file names.
+    out : list[str]
+        File names (registry keys) for all available magnetic field assets.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> ids = data.file_ids()
+    >>> isinstance(ids, list) and len(ids) > 0
+    True
     """
     return list(FETCHER.registry.keys())
 
@@ -112,13 +147,20 @@ def get_1d_data(hdf: HdfExtType = ".h5") -> str:
     Parameters
     ----------
     hdf : HdfExtType, optional
-        The HDF file format to fetch, by default "h5".
-        Accepted values are "h5" for HDF5 and "hdf" for HDF4.
+        The HDF file format to fetch.  Accepted values are ``'.h5'`` for HDF5
+        and ``'.hdf'`` for HDF4.  Default is ``'.h5'``.
 
     Returns
     -------
-    str
-        Path to the downloaded radial scale data file.
+    out : str
+        Local path to the downloaded (and cached) radial scale data file.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> path = data.get_1d_data()
+    >>> path.endswith(".h5")
+    True
     """
     filename = f"h4h5-files/rscale{hdf}"
     return FETCHER.fetch(filename)
@@ -131,13 +173,20 @@ def get_2d_data(hdf: HdfExtType = ".h5") -> str:
     Parameters
     ----------
     hdf : HdfExtType, optional
-        The HDF file format to fetch, by default "h5".
-        Accepted values are "h5" for HDF5 and "hdf" for HDF4.
+        The HDF file format to fetch.  Accepted values are ``'.h5'`` for HDF5
+        and ``'.hdf'`` for HDF4.  Default is ``'.h5'``.
 
     Returns
     -------
-    str
-        Path to the downloaded coronal hole map data file.
+    out : str
+        Local path to the downloaded (and cached) coronal hole map data file.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> path = data.get_2d_data()
+    >>> path.endswith(".h5")
+    True
     """
     filename = f"h4h5-files/chmap{hdf}"
     return FETCHER.fetch(filename)
@@ -150,13 +199,21 @@ def get_3d_data(hdf: HdfExtType = ".h5") -> str:
     Parameters
     ----------
     hdf : HdfExtType, optional
-        The HDF file format to fetch, by default "h5".
-        Accepted values are "h5" for HDF5 and "hdf" for HDF4.
+        The HDF file format to fetch.  Accepted values are ``'.h5'`` for HDF5
+        and ``'.hdf'`` for HDF4.  Default is ``'.h5'``.
 
     Returns
     -------
-    str
-        Path to the downloaded radial magnetic field data file.
+    out : str
+        Local path to the downloaded (and cached) radial magnetic field data
+        file.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> path = data.get_3d_data()
+    >>> path.endswith(".h5")
+    True
     """
     filename = f"h4h5-files/br{hdf}"
     return FETCHER.fetch(filename)
@@ -173,13 +230,20 @@ def get_fieldline_data(hdf: HdfExtType = ".h5") -> str:
     Parameters
     ----------
     hdf : HdfExtType, optional
-        The HDF file format to fetch, by default "h5".
-        Accepted values are "h5" for HDF5 and "hdf" for HDF4.
+        The HDF file format to fetch.  Accepted values are ``'.h5'`` for HDF5
+        and ``'.hdf'`` for HDF4.  Default is ``'.h5'``.
 
     Returns
     -------
-    str
-        Path to the downloaded magnetic fieldline data file.
+    out : str
+        Local path to the downloaded (and cached) magnetic fieldline data file.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> path = data.get_fieldline_data()
+    >>> path.endswith(".h5")
+    True
     """
     filename = f"h4h5-files/fieldline{hdf}"
     return FETCHER.fetch(filename)
@@ -197,13 +261,20 @@ def get_synchronic_map_data(hdf: HdfExtType = ".h5") -> str:
     Parameters
     ----------
     hdf : HdfExtType, optional
-        The HDF file format to fetch, by default "h5".
-        Accepted values are "h5" for HDF5 and "hdf" for HDF4.
+        The HDF file format to fetch.  Accepted values are ``'.h5'`` for HDF5
+        and ``'.hdf'`` for HDF4.  Default is ``'.h5'``.
 
     Returns
     -------
-    str
-        Path to the downloaded synchronic map data file.
+    out : str
+        Local path to the downloaded (and cached) synchronic map data file.
+
+    Examples
+    --------
+    >>> from psi_io import data
+    >>> path = data.get_synchronic_map_data()
+    >>> path.endswith(".h5")
+    True
     """
     if hdf == ".hdf":
         raise NotImplemented("Synchronic map data is only available in HDF5 format.")
