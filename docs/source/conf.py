@@ -210,7 +210,7 @@ sphinx_gallery_conf = {
     "plot_gallery": True,
     "run_stale_examples": True,
     "matplotlib_animations": True,
-    "default_thumb_file": "_static/assets/psi_logo.png",
+    "default_thumb_file": (Path(__file__).parent / "_static/assets/psi_logo.png").as_posix(),
 }
 
 # ------------------------------------------------------------------------------

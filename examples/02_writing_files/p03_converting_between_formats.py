@@ -92,6 +92,18 @@ with tempfile.TemporaryDirectory() as tmpdir:
 # and an HDF4 path as output performs the reverse conversion. When ``ofile`` is
 # omitted, the output file is placed alongside the input file with its extension
 # swapped:
+#
+# .. note::
+#
+#    Here the ``strict`` parameter is set to ``False``. It is **CRITICAL** to note
+#    that HDF4 has a more restrictive attribute type system than HDF5.
+#    HDF5 Datasets are typically written with ``DIMENSION_LABELS`` and ``DIMENSION_LIST``
+#    attributes – arrays of coordinate-variable proxy objects (which HDF4 cannot represent).
+#
+#    Therefore, it is generally advised to set ``strict=False`` when converting from HDF5 to
+#    HDF4 to avoid conversion failures due to unsupported attribute types. With ``strict=False``,
+#    unsupported attributes are skipped with a warning rather than causing the entire
+#    conversion to fail.
 
 with tempfile.TemporaryDirectory() as tmpdir:
     br_h5_filepath = data.get_3d_data(hdf=".h5")

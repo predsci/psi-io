@@ -35,7 +35,7 @@ chmap = np.zeros((np_, nt), dtype=np.float32)
 with tempfile.TemporaryDirectory() as tmpdir:
     out_h5 = Path(tmpdir) / "chmap.h5"
     write_hdf_data(out_h5, chmap, t, p,
-                   description="Binary coronal hole map",
+                   description="Coronal Hole Map",
                    source="synthetic",
                    resolution=np.float32(1.0),
                    cr_number=np.int32(2190))
