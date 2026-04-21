@@ -1,4 +1,5 @@
 Writing Files
 =============
 
-**This section is forthcoming – thank you for your patience.**
+Examples demonstrating how to write PSI-style HDF4 and HDF5 files, attach dataset
+attributes, and convert between the two formats.
