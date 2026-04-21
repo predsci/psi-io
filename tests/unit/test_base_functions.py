@@ -231,6 +231,7 @@ def test_compare_metadata_equivalence(tmp_path, hdf_version):
         assert k in read_meta.attr
         assert_array_equal(read_meta.attr[k], v)
 
+
 def test_compare_problematic_metadata_equivalence(tmp_path, hdf_version, strict_write):
     fdata, *sdata = generate_mock_data(1, 'float32', False)
     written_meta = dict(test_int64=3,
