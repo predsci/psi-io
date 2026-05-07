@@ -117,7 +117,7 @@ try:
             1: h4.SDC.UINT8
         },
         "U": h4.SDC.CHAR,
-        "S": h4.SDC.UCHAR
+        "S": h4.SDC.CHAR
     })
     """
         Helper dictionary mapping :class:`~numpy.dtype` kinds to HDF4 SDC types.
@@ -2459,7 +2459,10 @@ def _write_h4_data(ifile: PathLike, /,
             npv = np.asarray(v)
             attr_ = sds_id.attr(k)
             try:
-                attr_.set(_dtype_to_sdc(npv.dtype), npv.tolist())
+                val = npv.tolist()
+                if isinstance(val, bytes):
+                    val = val.decode('latin-1')
+                attr_.set(_dtype_to_sdc(npv.dtype), val)
             except KeyError as e:
                 if strict:
                     raise KeyError(f"Failed to set attribute '{k}' on dataset '{dataid}'") from e
@@ -2510,6 +2513,11 @@ def _write_h5_data(ifile: PathLike, /,
 
         if kwargs:
             for key, value in kwargs.items():
+                if key.startswith('DIMENSION'):
+                    # Skip HDF5 dimension-scale bookkeeping attributes —
+                    # these are managed by attach_scale above and must not
+                    # be overwritten with stale object references.
+                    continue
                 try:
                     dataset.attrs[key] = value
                 except TypeError as e:
