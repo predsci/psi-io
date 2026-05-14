@@ -194,7 +194,7 @@ PsiScales = Literal['r', 't', 'p',]
 """
 
 
-@dataclass(frozen=True, slots=True, repr=True)
+@dataclass(frozen=True, repr=True)
 class Props:
     """Immutable property bundle for a single PSI model quantity.
 
