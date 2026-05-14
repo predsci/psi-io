@@ -13,10 +13,11 @@ dependencies:
   - hdf4
 
   # -------- Python Runtime --------
-  - numpy                 # package dependency
-  - h5py                  # psi-io dependency
+  - numpy                 # required dependency
+  - h5py>=3.8.0           # required dependency
+  - astropy>=5.0.0        # required dependency
   - pyhdf                 # optional hdf4 support
-  - scipy                 # optional dependency
+  - scipy                 # optional interp dependency
 
   # -------- Testing / QA --------
   - pytest
