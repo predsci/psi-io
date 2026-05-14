@@ -53,37 +53,37 @@ The resulting grid positions for MAS vector components are:
      - half
      - main
      - main
-     - :math:`r`-face centre
+     - :math:`r`-face center
    * - ``bt``
      - ``0b010``
      - main
      - half
      - main
-     - :math:`\theta`-face centre
+     - :math:`\theta`-face center
    * - ``bp``
      - ``0b001``
      - main
      - main
      - half
-     - :math:`\varphi`-face centre
+     - :math:`\varphi`-face center
    * - ``vr``, ``jr``
      - ``0b011``
      - main
      - half
      - half
-     - :math:`r`-edge centre
+     - :math:`r`-edge center
    * - ``vt``, ``jt``
      - ``0b101``
      - half
      - main
      - half
-     - :math:`\theta`-edge centre
+     - :math:`\theta`-edge center
    * - ``vp``, ``jp``
      - ``0b110``
      - half
      - half
      - main
-     - :math:`\varphi`-edge centre
+     - :math:`\varphi`-edge center
    * - Scalars (``t``, ``rho``, ``p``, …)
      - ``0b111``
      - half
@@ -96,7 +96,7 @@ satisfied exactly at the discrete level: each :math:`B` component lives on the f
 through which it is the outward normal.  The current density components
 :math:`\mathbf{J} = \nabla \times \mathbf{B}` then live on the corresponding cell
 edges.  Scalar thermodynamic quantities (density, temperature, pressure) occupy the
-cell corners, which are equivalent to cell centres on the dual grid.
+cell corners, which are equivalent to cell centers on the dual grid.
 
 Usage example
 -------------
@@ -169,6 +169,17 @@ POT3D is a potential-field solver that outputs only the three spherical componen
 the magnetic field: ``'br'`` (radial), ``'bt'`` (co-latitude), and ``'bp'``
 (longitude).  The staggering convention is the same as for the corresponding MAS
 quantities.
+
+.. warning::
+
+    POT3D output files carry **no intrinsic physical unit**.  The values are stored as
+    dimensionless quantities (unit :data:`~psi_io._units.POT3D_b` = 1) whose physical
+    interpretation depends entirely on the units of the photospheric boundary
+    magnetogram used to drive the simulation — typically Gauss, but this is not
+    guaranteed.  Always supply the correct unit explicitly via the ``unit`` keyword
+    argument of :func:`~psi_io.mhd_io.PsiData`; calling ``read(units='physical')``
+    on a reader opened without a ``unit`` override will **not** perform a meaningful
+    conversion.
 """
 
 PsiScales = Literal['r', 't', 'p',]
@@ -448,10 +459,24 @@ component is edge-centred (half-mesh in the two transverse directions):
 - ``'bt'`` (``0b101``): co-latitude component, half in :math:`r` and :math:`\\varphi`.
 - ``'bp'`` (``0b110``): longitude component, half in :math:`r` and :math:`\\theta`.
 
-The unit for all three quantities is :data:`~psi_io._units.POT3D_b`, which is
-dimensionless (scale factor 1).  POT3D output is driven by a boundary magnetogram
-already in physical units (typically Gauss), so the code-unit values are the same as
-the physical values.
+.. warning::
+
+    The unit for all three quantities is :data:`~psi_io._units.POT3D_b`, which has a
+    scale factor of 1 (dimensionless-unscaled).  POT3D does not apply a normalization:
+    the values stored in the HDF file are whatever physical units the input boundary
+    magnetogram was provided in — most commonly Gauss, but this depends entirely on the
+    run configuration.  There is **no way** to infer the correct physical unit from the
+    file alone.
+
+    As a consequence, ``read(units='physical')`` on a reader opened without a ``unit``
+    override will return a :class:`~astropy.units.Quantity` with unit
+    ``dimensionless_unscaled`` rather than performing any meaningful conversion.
+    Always pass the correct unit explicitly:
+
+    .. code-block:: python
+
+        reader = PsiData('br001.h5', model='pot3d', unit='Gauss')
+        data, r, t, p = reader.read()
 """
 
 _PSI_SCALE_PROPS_MAPPING = MappingProxyType({

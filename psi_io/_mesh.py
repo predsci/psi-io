@@ -4,7 +4,7 @@ MHD model output from MAS and POT3D is computed on *staggered grids*: different
 physical quantities are defined on different sets of grid nodes.  For a
 three-dimensional spherical domain :math:`(r, \theta, \phi)`, each axis is
 independently classified as either a *main-mesh* axis (quantity defined at cell
-centres) or a *half-mesh* axis (quantity defined at cell faces, offset by half a
+centers) or a *half-mesh* axis (quantity defined at cell faces, offset by half a
 grid spacing in that direction).
 
 A *mesh code* encodes the staggering of every axis in a single compact
@@ -20,7 +20,7 @@ This module provides the following objects:
   mesh codes.
 - :func:`_normalize_mesh_code` — converts any :data:`MeshCodeType` to a
   canonical ``tuple[Mesh, ...]``.
-- :func:`_average_adjacent` — averages neighbouring element pairs along one
+- :func:`_average_adjacent` — averages neighboring element pairs along one
   array axis.
 - :func:`remesh_arr` — shifts an array between meshes along selected axes.
 - :func:`main_mesh` — converts a staggered array fully to the main mesh.
@@ -56,7 +56,7 @@ A mesh code may be expressed in any of three forms:
 - ``'main'`` or ``'half'`` — shorthand for applying the same stagger to every
   axis.
 - :class:`~typing.Sequence` — one element per array dimension; each element must
-  be a key recognised by :data:`_MESH_CODE_REVERSE_MAPPING`.
+  be a key recognized by :data:`_MESH_CODE_REVERSE_MAPPING`.
 """
 
 
@@ -65,13 +65,13 @@ class Mesh(enum.Enum):
 
     MAS and POT3D solve their equations on staggered grids.  Each axis of a
     multi-dimensional output array is independently classified as :attr:`MAIN`
-    (cell-centre position) or :attr:`HALF` (cell-face position, offset by half
+    (cell-center position) or :attr:`HALF` (cell-face position, offset by half
     a grid spacing).
 
     Attributes
     ----------
     MAIN : int
-        Main-mesh (cell-centre) position; encoded as ``0``.
+        Main-mesh (cell-center) position; encoded as ``0``.
     HALF : int
         Half-mesh (cell-face) position, offset by half a grid spacing; encoded
         as ``1``.

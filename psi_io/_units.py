@@ -185,7 +185,7 @@ Stored as a module-level float to avoid repeated calls to :func:`math.pi` or
 """
 
 RSUN = 6.96e10 * u.cm
-"""Solar radius in centimetres.
+"""Solar radius in centimeters.
 
 The canonical value :math:`R_\\odot = 6.96 \\times 10^{10}` cm used throughout PSI
 models as the characteristic length scale.  Also aliased as :data:`FN_LENGTH` and
@@ -459,7 +459,7 @@ FN_E_CGS = FN_E.value / (1e2 * STATVOLT_TO_VOLT) * u.erg / u.statC / u.cm
 """Electric field normalization for MAS, in Gaussian CGS (statV cm⁻¹).
 
 Equivalent to :data:`FN_E` expressed in Gaussian electromagnetic units (statvolt per
-centimetre, where 1 statvolt = 1 erg / statcoulomb).  The conversion from SI to
+centimeter, where 1 statvolt = 1 erg / statcoulomb).  The conversion from SI to
 Gaussian CGS is:
 
 .. math::

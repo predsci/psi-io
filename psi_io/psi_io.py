@@ -1332,7 +1332,7 @@ def write_hdf_data(ifile: PathLike, /,
     The number of scales may be less than or equal to the number of dimensions;
     pass ``None`` for dimensions that should not have an attached scale.
 
-    The table below summarises dtype support across formats.  HDF4 support is
+    The table below summarizes dtype support across formats.  HDF4 support is
     determined by the :data:`DTYPE_TO_SDC` mapping; HDF5 support is provided
     by :mod:`h5py`.
 

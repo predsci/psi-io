@@ -106,7 +106,22 @@ exclude_private = True
 exclude_tests = True
 exclude_dunder = True
 sort_members = False
-exclusions = []
+exclusions = [
+    # mhd_io internals — expose only the public API surface
+    "psi_io.mhd_io.HDF_EXT_MAPPING",
+    "psi_io.mhd_io.HdfVersionType",
+    "psi_io.mhd_io.METADATA_SCHEMA",
+    "psi_io.mhd_io.MATCH_QUANTITIES",
+    "psi_io.mhd_io.FILEPATH_SCHEMA",
+    "psi_io.mhd_io.parse_mas_filename_schema",
+    "psi_io.mhd_io.Scales",
+    "psi_io.mhd_io.H5Scale",
+    "psi_io.mhd_io.H4Scale",
+    "psi_io.mhd_io.H5MasData",
+    "psi_io.mhd_io.H4MasData",
+    "psi_io.mhd_io.H5Pot3dData",
+    "psi_io.mhd_io.H4Pot3dData",
+]
 
 node_tree = build_node_tree(root_package,
                             sort_members,
@@ -136,13 +151,45 @@ extensions.append("numpydoc")
 numpydoc_xref_param_type = True
 numpydoc_xref_ignore = {"optional", "default", "of", "or"}
 numpydoc_xref_aliases = {
-    "HdfScaleMeta": "psi_io.psi_io.HdfScaleMeta",
-    "HdfDataMeta": "psi_io.psi_io.HdfScaleMeta",
-    "HdfExtType": "psi_io.psi_io.HdfExtType",
-    "np.ndarray": "numpy.ndarray",
+    # --- Python standard library ---
     "Path": "pathlib.Path",
     "Callable": "collections.abc.Callable",
+    "Sequence": "collections.abc.Sequence",
+    "Any": "typing.Any",
+    "Literal": "typing.Literal",
+    # --- NumPy ---
+    "np.ndarray": "numpy.ndarray",
+    "np.dtype": "numpy.dtype",
+    # --- SciPy ---
     "RegularGridInterpolator": "scipy.interpolate.RegularGridInterpolator",
+    # --- Astropy ---
+    "u.Quantity": "astropy.units.Quantity",
+    "u.Unit": "astropy.units.UnitBase",
+    "astropy.units.Quantity": "astropy.units.Quantity",
+    "astropy.units.Unit": "astropy.units.UnitBase",
+    # --- psi_io.psi_io ---
+    "PathLike": "psi_io.psi_io.PathLike",
+    "HdfScaleMeta": "psi_io.psi_io.HdfScaleMeta",
+    "HdfDataMeta": "psi_io.psi_io.HdfDataMeta",
+    "HdfExtType": "psi_io.psi_io.HdfExtType",
+    # --- psi_io._mesh ---
+    "Mesh": "psi_io._mesh.Mesh",
+    "MeshCodeType": "psi_io._mesh.MeshCodeType",
+    # --- psi_io._props ---
+    "Props": "psi_io._props.Props",
+    "MasQuantities": "psi_io._props.MasQuantities",
+    "Pot3dQuantities": "psi_io._props.Pot3dQuantities",
+    "PsiScales": "psi_io._props.PsiScales",
+    # --- psi_io.mhd_io ---
+    "ModelType": "psi_io.mhd_io.ModelType",
+    "HdfVersionType": "psi_io.mhd_io.HdfVersionType",
+    # "Scales": "psi_io.mhd_io.Scales",
+    # "H5Scale": "psi_io.mhd_io.H5Scale",
+    # "H4Scale": "psi_io.mhd_io.H4Scale",
+    # "H5MasData": "psi_io.mhd_io.H5MasData",
+    # "H4MasData": "psi_io.mhd_io.H4MasData",
+    # "H5Pot3dData": "psi_io.mhd_io.H5Pot3dData",
+    # "H4Pot3dData": "psi_io.mhd_io.H4Pot3dData",
 }
 
 # ------------------------------------------------------------------------------
@@ -188,7 +235,12 @@ intersphinx_mapping = {
         "https://fhs.github.io/pyhdf/",
         # (INV / "pyhdf-objects.inv").as_posix(),
         None
-    )
+    ),
+    "astropy": (
+        "https://docs.astropy.org/en/stable/",
+        # (INV / "astropy-objects.inv").as_posix(),
+        None
+    ),
 }
 
 # ------------------------------------------------------------------------------

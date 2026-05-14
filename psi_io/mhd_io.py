@@ -117,7 +117,7 @@ of both the abstract base and the concrete classes without repetition.
 """
 
 ModelType = Literal['mas', 'pot3d', 'scale']
-"""Literal type alias for the three recognised PSI model types.
+"""Literal type alias for the three recognized PSI model types.
 
 ``'mas'``
     MAS (Magnetohydrodynamic Algorithm outside a Sphere) plasma model output.
@@ -170,7 +170,7 @@ tried before ``'h'``).  Used in :data:`FILEPATH_SCHEMA` and
 FILEPATH_SCHEMA = rf'^({MATCH_QUANTITIES})(\d{{3}}(?:\d{{3}})?)$'
 """Regex pattern for the strict MAS filename schema ``<quantity><sequence>``.
 
-The stem (filename without extension) must consist of exactly one recognised MAS
+The stem (filename without extension) must consist of exactly one recognized MAS
 quantity name followed by a 3- or 6-digit decimal sequence number.
 
 Groups:
@@ -203,7 +203,7 @@ def get_mas_quantity_properties(variable: MasQuantities) -> Props:
     Raises
     ------
     ValueError
-        If *variable* is not a recognised MAS quantity.
+        If *variable* is not a recognized MAS quantity.
 
     Examples
     --------
@@ -238,7 +238,7 @@ def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> Props:
     Raises
     ------
     ValueError
-        If *variable* is not a recognised POT3D quantity.
+        If *variable* is not a recognized POT3D quantity.
 
     Examples
     --------
@@ -292,7 +292,7 @@ def get_psi_scale_properties(variable: PsiScales) -> Props:
 def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -> str | None:
     """Extract the MAS/POT3D quantity name from a filename stem.
 
-    Matches the longest recognised quantity prefix at the start of the stem (before
+    Matches the longest recognized quantity prefix at the start of the stem (before
     any digit or end-of-string).  The match is case-insensitive.
 
     Parameters
@@ -307,7 +307,7 @@ def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -
     -------
     out : str or None
         Lower-case quantity name (e.g. ``'br'``), or *default* if the stem does not
-        begin with a recognised quantity prefix.
+        begin with a recognized quantity prefix.
 
     Examples
     --------
@@ -363,7 +363,7 @@ def extract_sequence_from_filepath(ifile: Path, default: Optional[int] = None) -
 def parse_mas_filename_schema(ifile: Path):
     """Parse a MAS HDF filename that follows the strict ``<quantity><sequence>`` schema.
 
-    The filename stem must consist of exactly one recognised MAS quantity name
+    The filename stem must consist of exactly one recognized MAS quantity name
     followed immediately by a 3- or 6-digit sequence number, with no other characters.
     The match is case-insensitive.
 
@@ -707,7 +707,7 @@ class _HdfScale(_HdfInterface, ABC):
                  parent,
                  dim_label: str,
                  data_label: str,):
-        """Initialise a scale from a parent data reader and dimension metadata.
+        """Initialize a scale from a parent data reader and dimension metadata.
 
         Parameters
         ----------
@@ -1409,7 +1409,7 @@ def _parse_remesh(imesh, omesh):
 
 
 def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
-    """Normalise index-space slice arguments to a tuple of :class:`slice` objects.
+    """Normalize index-space slice arguments to a tuple of :class:`slice` objects.
 
     Accepts a mix of ``None``, ``int``, ``slice``, ``(start, stop[, step])`` tuples,
     and ``Ellipsis``, and yields one slice per spatial axis.  Validates that any axis
@@ -1428,7 +1428,7 @@ def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
     Yields
     ------
     s : slice
-        Normalised slice for each axis.
+        Normalized slice for each axis.
 
     Raises
     ------
@@ -1459,7 +1459,7 @@ def _parse_vslice_args(dim, scale):
     If *dim* is a bare float, it is treated as a value in the coordinate's native
     unit and first converted to an :class:`~astropy.units.Quantity`.  If *dim* is
     an :class:`~astropy.units.Quantity`, its value is located in *scale* via binary
-    search and a two-element neighbourhood slice is returned for interpolation.
+    search and a two-element neighborhood slice is returned for interpolation.
     Non-quantity inputs are passed through to :func:`_cast_to_slice` unchanged.
 
     Parameters
@@ -1474,7 +1474,7 @@ def _parse_vslice_args(dim, scale):
     Returns
     -------
     s : slice
-        Index-space slice (a two-index neighbourhood for value lookups; the original
+        Index-space slice (a two-index neighborhood for value lookups; the original
         slice for index-space inputs).
     val : astropy.units.Quantity or None
         The matched physical value for value-based lookups, or ``None`` for
@@ -1509,7 +1509,7 @@ def _cast_to_slice(input):
     Raises
     ------
     TypeError
-        If *input* is not one of the recognised types.
+        If *input* is not one of the recognized types.
     """
     if input is None:
         return slice(None)
@@ -1542,9 +1542,86 @@ def PsiData(ifile: PathLike, /,
             **kwargs):
     """Open a PSI MAS or POT3D HDF file and return the appropriate data reader.
 
-    This is the recommended entry point for reading PSI model output.  It inspects
-    the file extension and the ``model`` argument to select the correct concrete
-    reader class from :data:`_DATA_CLASS_MAP`, then instantiates and returns it.
+    This is the recommended entry point for reading PSI model output.  The
+    function inspects the file extension and the *model* argument to select the
+    correct concrete reader class, then instantiates and returns it.
+
+    .. rubric:: Returned object
+
+    The returned object is a lazy reader that holds an open file handle.  The
+    HDF dataset is *not* copied into memory at construction time — data transfer
+    happens only when :meth:`read` is called (or when the underlying
+    :attr:`data` handle is explicitly indexed).  The object exposes:
+
+    - :meth:`read` — primary method for loading a slice of the dataset.
+    - :attr:`scales` — ``Scales(r, t, p)`` named tuple of coordinate scale
+      readers; each element supports the same :meth:`read` interface.
+    - :attr:`quantity` — canonical lower-case quantity string (e.g. ``'br'``).
+    - :attr:`sequence` — integer time-step sequence number.
+    - :attr:`unit` — :class:`~astropy.units.Unit` for converting from code units
+      to physical units.
+    - :attr:`mesh` — tuple of :class:`~psi_io._mesh.Mesh` flags describing the
+      Yee-grid stagger position of each axis.
+    - :attr:`description` — human-readable description of the physical quantity.
+    - :attr:`native_properties` — full :class:`~psi_io._props.Props` descriptor.
+
+    The object also supports the context-manager protocol; the file handle is
+    closed on exit from the ``with`` block.
+
+    .. rubric:: The read method
+
+    .. code-block:: python
+
+        odata[, r, t, p] = reader.read(*args, units=None, mesh=None, scales=True)
+
+    **Positional arguments** — each positional argument selects elements along
+    one spatial axis in physical ``(r, θ, φ)`` order.  Supported forms:
+
+    - Omitted / ``None`` — full axis (``slice(None)``).
+    - ``int`` — single index; the axis is retained as a length-1 dimension.
+    - ``slice`` — standard Python slice.
+    - ``(start, stop)`` or ``(start, stop, step)`` — converted to a slice.
+    - ``Ellipsis`` — expands to ``None`` for all remaining axes.
+
+    **Keyword arguments**:
+
+    - ``units`` — output unit.  String aliases: ``'native'`` / ``'code'`` /
+      ``'model'`` return values in the custom MAS code unit; ``'real'`` /
+      ``'phys'`` / ``'physical'`` decompose to CGS base units.  Any other
+      string is forwarded to :class:`~astropy.units.Unit` and must be
+      parseable by it — this includes SI and CGS unit names (``'Gauss'``,
+      ``'nT'``, ``'T'``), compound expressions (``'km/s'``,
+      ``'erg/cm**2/s'``), and scale prefixes (``'mG'``, ``'μT'``); see
+      :ref:`astropy:unit-format` for the full grammar.  An
+      :class:`~astropy.units.Unit` instance may also be passed directly.
+    - ``mesh`` — target mesh stagger (:data:`~psi_io._mesh.MeshCodeType`).
+      Half-mesh axes that are on the main mesh in *mesh* are averaged to the
+      main mesh via :func:`~psi_io._mesh.remesh_arr` before return.
+    - ``scales`` — if ``True`` (default), return the coordinate slice for each
+      axis as additional :class:`~astropy.units.Quantity` values after the data.
+
+    .. note::
+        PSI HDF files are written in Fortran column-major order so that numpy
+        reads them with shape ``(Nφ, Nθ, Nr)`` — the *last* axis is radial.
+        The ``read`` positional arguments and coordinate scales are always
+        returned in physical ``(r, θ, φ)`` order regardless of storage order.
+
+    .. warning:: **POT3D unit convention**
+
+        POT3D applies **no normalization** to its output.  The stored values are in
+        whatever physical units the input photospheric boundary magnetogram was
+        provided in — most commonly Gauss, but this is not encoded in the file.
+        The default ``unit`` for POT3D quantities is therefore
+        ``dimensionless_unscaled`` (scale factor 1), meaning that calling
+        ``read(units='physical')`` will **not** perform a meaningful unit
+        conversion unless the correct unit is supplied explicitly via the *unit*
+        keyword argument at construction time:
+
+        .. code-block:: python
+
+            reader = PsiData('br001.h5', model='pot3d', unit='Gauss')
+            data, r, t, p = reader.read()
+            # data.unit == u.Gauss
 
     Parameters
     ----------
@@ -1552,40 +1629,88 @@ def PsiData(ifile: PathLike, /,
         Path to the HDF4 (``.hdf``) or HDF5 (``.h5``) file.
     model : {'mas', 'pot3d'}, optional
         PSI model type.  Defaults to ``'mas'``.
-    **kwargs
-        Additional keyword arguments forwarded to the concrete reader's
-        ``__init__``.  Accepted keys: ``dataset_id``, ``quantity``, ``sequence``,
-        ``unit``, ``mesh``.  See :class:`_HdfData.__init__` for details.
+    dataset_id : str, optional
+        Name of the dataset within the HDF file.  Defaults to the PSI standard
+        identifier for the given format.  Only needed when the file uses a
+        non-standard dataset name.
+    quantity : str, optional
+        Override the quantity name inferred from the filename or file attributes
+        (e.g. ``'br'``).  Must be a key in the appropriate properties mapping.
+    sequence : int, optional
+        Override the time-step sequence number inferred from the filename or
+        file attributes.
+    unit : str or astropy.units.Unit, optional
+        Override the code-to-physical unit derived from the quantity's
+        :class:`~psi_io._props.Props` entry.  Accepts any string parseable
+        by :class:`~astropy.units.Unit`, including named units (``'Gauss'``,
+        ``'nT'``, ``'km/s'``), compound expressions (``'erg/cm**2/s'``),
+        and scale-prefixed forms (``'mG'``, ``'μT'``); see
+        :ref:`astropy:unit-format` for the complete unit grammar.  An
+        :class:`~astropy.units.Unit` instance may also be passed directly.
+    mesh : MeshCodeType, optional
+        Override the mesh stagger inferred from the quantity's
+        :class:`~psi_io._props.Props` entry.  Useful for files whose stagger
+        differs from the PSI convention.
 
     Returns
     -------
-    out : H5MasData, H4MasData, H5Pot3dData, or H4Pot3dData
+    out : H5MasData or H4MasData or H5Pot3dData or H4Pot3dData
         An open reader object implementing the full :class:`_HdfInterface` API.
+        The concrete type depends on *model* and the file extension.
 
     Raises
     ------
     ValueError
-        If the combination of file extension and *model* is not supported.
+        If the combination of file extension and *model* is not supported, or if
+        required metadata cannot be resolved from the file, its attributes, and
+        the supplied keyword arguments.
     FileNotFoundError
-        If *ifile* does not exist.
+        If *ifile* does not exist on disk.
+
+    See Also
+    --------
+    astropy.units.Unit : Unit constructor — accepts strings, compound
+        expressions, and :class:`~astropy.units.Unit` instances.
+    astropy.units.Quantity.to : Unit conversion used internally when
+        a ``units`` string is supplied to :meth:`read`.
 
     Examples
     --------
-    Read a MAS radial magnetic field HDF5 file:
+    Read a MAS radial magnetic field file — full array with coordinate scales:
 
     >>> from psi_io.mhd_io import PsiData                  # doctest: +SKIP
-    >>> reader = PsiData('br001001.h5', model='mas')
+    >>> reader = PsiData('br001001.h5')
+    >>> data, r, t, p = reader.read()
+    >>> data.unit                                           # code unit (MAS_b)
+
+    Convert to Gauss on the fly:
+
+    >>> data, r, t, p = reader.read(units='Gauss')         # doctest: +SKIP
+
+    Read only the inner radial shell (indices 0–9 in r) in CGS base units,
+    without returning coordinate arrays:
+
+    >>> data = reader.read(slice(0, 10), units='physical', scales=False)  # doctest: +SKIP
+
+    Read a POT3D HDF4 file.  The boundary magnetogram was in Gauss, so the
+    unit must be declared explicitly — it cannot be inferred from the file:
+
+    >>> reader = PsiData('br001.hdf', model='pot3d', unit='Gauss')  # doctest: +SKIP
     >>> data, r, t, p = reader.read()
 
-    Read a POT3D HDF4 file and convert to Gauss:
-
-    >>> reader = PsiData('br001.hdf', model='pot3d')        # doctest: +SKIP
-    >>> data = reader.read(units='Gauss', scales=False)
-
-    Use as a context manager to ensure the file is closed:
+    Use as a context manager to guarantee the file handle is released:
 
     >>> with PsiData('vr001001.h5') as reader:              # doctest: +SKIP
-    ...     data, r, t, p = reader.read(units='physical')
+    ...     data, r, t, p = reader.read(units='km/s')
+
+    Inspect metadata without loading data:
+
+    >>> reader = PsiData('rho001001.h5')                    # doctest: +SKIP
+    >>> reader.quantity          # 'rho'
+    >>> reader.description       # 'Mass Density'
+    >>> reader.unit              # MAS_n (code unit)
+    >>> reader.mesh              # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+    >>> reader.shape             # (Nφ, Nθ, Nr) — numpy storage order
     """
     ifile = Path(ifile)
     key = (ifile.suffix, model.lower())
