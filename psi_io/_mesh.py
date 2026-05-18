@@ -16,24 +16,29 @@ This module provides the following objects:
 
 - :class:`Mesh` — enum distinguishing the two mesh positions.
 - :data:`MeshCodeType` — type alias for the accepted mesh code forms.
+- :data:`ArrayOrdering` — type alias for array memory-order strings.
 - :data:`_MESH_CODE_REVERSE_MAPPING` — mapping from string tokens to integer
   mesh codes.
 - :func:`_normalize_mesh_code` — converts any :data:`MeshCodeType` to a
   canonical ``tuple[Mesh, ...]``.
 - :func:`_average_adjacent` — averages neighboring element pairs along one
   array axis.
-- :func:`remesh_arr` — shifts an array between meshes along selected axes.
-- :func:`main_mesh` — converts a staggered array fully to the main mesh.
+- :func:`_remesh_array` — applies per-axis adjacent averaging from a boolean
+  flag sequence.
+- :func:`remesh_array` — shifts an array from one mesh stagger to another,
+  given source and target :data:`MeshCodeType` specifications.
+- :func:`_parse_remesh` — derives per-axis remesh flags from source and
+  target mesh tuples.
 
 Examples
 --------
-Convert a radial magnetic-field array (half mesh on the last numpy axis) to the
-main mesh:
+Convert a radial magnetic-field array (half mesh in *r*, the last numpy axis)
+to the main mesh:
 
 >>> import numpy as np
 >>> from psi_io._mesh import remesh_array
 >>> br = np.ones((128, 64, 57))   # half-mesh size along last axis
->>> br_main = remesh_array(br, mesh_code=0b100)
+>>> br_main = remesh_array(br, imesh=0b100, omesh='main')
 >>> br_main.shape
 (128, 64, 56)
 """
@@ -74,11 +79,16 @@ A mesh code may be expressed in any of three forms:
 """
 
 ArrayOrdering = Literal['F', 'C']
-"""Type alias for accepted array memory orderings.
+"""Type alias for accepted array memory-order strings used by :func:`remesh_array`.
 
-The two accepted values are:
-- ``'F'`` — Fortran order (column-major)
-- ``'C'`` — C order (row-major)
+``'F'``
+    Fortran (column-major) order.  PSI HDF files are written by Fortran code, so
+    the physical ``(r, θ, φ)`` axis ordering is **reversed** relative to numpy's
+    C-major storage.  This is the default and should be used when reading data
+    directly from PSI HDF files.
+``'C'``
+    C (row-major) order.  Use when the array is already in numpy-native axis order
+    (first axis = first physical coordinate).
 """
 
 
@@ -114,6 +124,39 @@ class Mesh(enum.Enum):
 
     @classmethod
     def _missing_(cls, key: Any) -> Mesh:
+        """Return the :class:`Mesh` member corresponding to *key*, or ``None``.
+
+        Called automatically by :class:`~enum.Enum` when a direct value lookup
+        (``Mesh(value)``) fails.  Converts *key* to a string, lower-cases it,
+        and looks it up in :data:`_MESH_CODE_REVERSE_MAPPING`.  Accepted tokens
+        are the same as for per-axis sequence codes in
+        :func:`_normalize_mesh_code`: ``'0'``, ``'1'``, ``'m'``, ``'h'``,
+        ``'main'``, ``'half'``, ``'true'``, ``'false'``.
+
+        Parameters
+        ----------
+        key : Any
+            Value that was not found by the normal enum lookup.  Converted to
+            ``str`` before comparison, so integers, booleans, and strings all
+            work.
+
+        Returns
+        -------
+        out : Mesh or None
+            The matching :class:`Mesh` member, or ``None`` if *key* is not
+            recognized (which causes :class:`~enum.Enum` to raise
+            :class:`ValueError`).
+
+        Examples
+        --------
+        >>> from psi_io._mesh import Mesh
+        >>> Mesh('half')
+        <Mesh.HALF: 1>
+        >>> Mesh('m')
+        <Mesh.MAIN: 0>
+        >>> Mesh('true')
+        <Mesh.HALF: 1>
+        """
         code_ = _MESH_CODE_REVERSE_MAPPING.get(str(key).lower())
         return cls(code_) if code_ is not None else None  # type: ignore
 
@@ -233,8 +276,8 @@ def _average_adjacent(arr: np.ndarray,
 
     See Also
     --------
-    remesh_arr : Applies adjacent averaging over multiple axes simultaneously.
-    main_mesh : Applies adjacent averaging on all half-mesh axes of an array.
+    _remesh_array : Applies adjacent averaging over multiple axes simultaneously.
+    remesh_array : Higher-level wrapper accepting mesh-code specifications.
 
     Examples
     --------
@@ -269,9 +312,9 @@ def _remesh_array(data: np.ndarray,
     ----------
     data : np.ndarray
         Input data array to remesh.
-    remesh : Sequence[bool] | bool
+    remesh : Iterable[bool] | bool
         Remesh flags.  A single :class:`bool` applies the same flag to every
-        axis.  A sequence must have one entry per array dimension; ``True``
+        axis.  An iterable must yield one entry per array dimension; ``True``
         triggers adjacent averaging on that axis and ``False`` leaves it
         unchanged.
 
@@ -282,8 +325,8 @@ def _remesh_array(data: np.ndarray,
 
     See Also
     --------
-    main_mesh : Higher-level wrapper that derives the remesh flags from a
-        :data:`MeshCodeType`.
+    remesh_array : Higher-level wrapper that derives the remesh flags from
+        source and target :data:`MeshCodeType` specifications.
     _average_adjacent : The per-axis averaging operation used internally.
 
     Examples
@@ -310,6 +353,65 @@ def remesh_array(data: np.ndarray,
                  imesh: MeshCodeType,
                  omesh: Optional[MeshCodeType] = None,
                  order: ArrayOrdering = 'F') -> np.ndarray:
+    """Shift an array from one mesh stagger to another.
+
+    Derives per-axis remesh flags by comparing *imesh* against *omesh*, then
+    applies adjacent averaging (via :func:`_remesh_array`) on every axis that
+    needs to move from half mesh to main mesh.  Only the half → main direction
+    is supported; requesting main → half raises :class:`ValueError`.
+
+    If *omesh* is ``None`` the array is returned unchanged.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input array on the stagger described by *imesh*.
+    imesh : MeshCodeType
+        Source mesh stagger in any form accepted by :func:`_normalize_mesh_code`.
+    omesh : MeshCodeType or None, optional
+        Target mesh stagger.  ``None`` (default) is a no-op — the array is
+        returned as-is.  Pass ``0`` or ``'main'`` to move all half-mesh axes
+        to the main mesh.
+    order : {'F', 'C'}, optional
+        Memory-order convention that governs how mesh-code bits map to numpy
+        axes.  ``'F'`` (default) reverses the bit–axis mapping to match PSI
+        HDF files written in Fortran column-major order (last numpy axis = r).
+        Use ``'C'`` when the array is already in C row-major order.
+
+    Returns
+    -------
+    out : np.ndarray
+        Array on the target mesh.  Each remeshed axis is reduced by one element
+        (adjacent averaging).
+
+    Raises
+    ------
+    ValueError
+        If any axis in *omesh* requests half mesh where *imesh* is already on
+        the main mesh (upsampling is not supported).
+
+    See Also
+    --------
+    _remesh_array : Low-level per-axis averaging from an explicit boolean sequence.
+    _parse_remesh : Derives the per-axis boolean flags from normalized mesh tuples.
+    _normalize_mesh_code : Converts *imesh* / *omesh* to ``tuple[Mesh, ...]``.
+
+    Examples
+    --------
+    Convert a radial magnetic-field array from half mesh in *r* to all-main:
+
+    >>> import numpy as np
+    >>> from psi_io._mesh import remesh_array
+    >>> br = np.ones((128, 64, 57))   # (Nφ, Nθ, Nr); Nr is half-mesh size
+    >>> br_main = remesh_array(br, imesh=0b100, omesh='main')
+    >>> br_main.shape
+    (128, 64, 56)
+
+    ``omesh=None`` is a no-op:
+
+    >>> remesh_array(br, imesh=0b100).shape
+    (128, 64, 57)
+    """
     if omesh is None:
         return data
     imesh_norm = _normalize_mesh_code(imesh, data.ndim)
@@ -335,19 +437,28 @@ def _parse_remesh(imesh: tuple[Mesh, ...],
     Parameters
     ----------
     imesh : tuple[Mesh, ...]
-        Current mesh stagger of the stored data.
+        Current mesh stagger of the stored data, one :class:`Mesh` per axis.
     omesh : tuple[Mesh, ...]
-        Target mesh stagger requested by the caller.
+        Target mesh stagger requested by the caller, same length as *imesh*.
+    reverse : bool, optional
+        If ``True``, iterate the axis pairs in reverse order before yielding
+        flags.  Used when the array was loaded from a Fortran column-major
+        file (``order='F'`` in :func:`remesh_array`) so that the MSB of the
+        mesh code — which maps to the **last** numpy axis — is processed first.
+        Defaults to ``False``.
 
     Yields
     ------
     flag : bool
-        ``True`` if that axis should be remeshed (half → main), ``False`` otherwise.
+        ``True`` if that axis should be remeshed (half → main), ``False`` if
+        the meshes already match.
 
     Raises
     ------
     ValueError
-        If any axis requests upsampling from main to half mesh.
+        If any axis requests upsampling from main mesh to half mesh.
+    ValueError
+        If any axis pair contains an unrecognized :class:`Mesh` combination.
     """
     if reverse:
         imesh, omesh = reversed(imesh), reversed(omesh)
