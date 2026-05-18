@@ -31,9 +31,9 @@ Convert a radial magnetic-field array (half mesh on the last numpy axis) to the
 main mesh:
 
 >>> import numpy as np
->>> from psi_io._mesh import main_mesh
+>>> from psi_io._mesh import remesh_array
 >>> br = np.ones((128, 64, 57))   # half-mesh size along last axis
->>> br_main = main_mesh(br, mesh_code=0b100)
+>>> br_main = remesh_array(br, mesh_code=0b100)
 >>> br_main.shape
 (128, 64, 56)
 """
@@ -42,9 +42,23 @@ from __future__ import annotations
 
 import enum
 from types import MappingProxyType
-from typing import Sequence, Any, Union, Literal
+from typing import Sequence, Any, Union, Literal, Generator, Optional, Iterable
 
 import numpy as np
+
+
+_MESH_CODE_REVERSE_MAPPING = MappingProxyType({
+    '1': 1, 'h': 1, 'half': 1, 'true': 1,
+    '0': 0, 'm': 0, 'main': 0, 'false': 0
+})
+"""Read-only mapping from string tokens to integer mesh-position codes.
+
+Maps every accepted string representation of a mesh position to its integer
+equivalent: ``0`` for main mesh and ``1`` for half mesh.  Used by
+:func:`_normalize_mesh_code` to validate and convert per-axis entries when a
+:class:`~typing.Sequence` mesh code is provided.
+"""
+
 
 MeshCodeType = Union[int, Literal['main', 'half'], Sequence[Any]]
 """Type alias for mesh stagger specifications accepted by :func:`_normalize_mesh_code`.
@@ -57,6 +71,14 @@ A mesh code may be expressed in any of three forms:
   axis.
 - :class:`~typing.Sequence` — one element per array dimension; each element must
   be a key recognized by :data:`_MESH_CODE_REVERSE_MAPPING`.
+"""
+
+ArrayOrdering = Literal['F', 'C']
+"""Type alias for accepted array memory orderings.
+
+The two accepted values are:
+- ``'F'`` — Fortran order (column-major)
+- ``'C'`` — C order (row-major)
 """
 
 
@@ -90,6 +112,12 @@ class Mesh(enum.Enum):
     HALF = 1
     MAIN = 0
 
+    @classmethod
+    def _missing_(cls, key: Any) -> Mesh:
+        code_ = _MESH_CODE_REVERSE_MAPPING.get(str(key).lower())
+        return cls(code_) if code_ is not None else None  # type: ignore
+
+
     def __str__(self) -> str:
         """Return the name of the mesh position as a string.
 
@@ -107,19 +135,6 @@ class Mesh(enum.Enum):
         'HALF'
         """
         return str(self.name)
-
-
-_MESH_CODE_REVERSE_MAPPING = MappingProxyType({
-    '1': 1, 'h': 1, 'half': 1, 'true': 1,
-    '0': 0, 'm': 0, 'main': 0, 'false': 0
-})
-"""Read-only mapping from string tokens to integer mesh-position codes.
-
-Maps every accepted string representation of a mesh position to its integer
-equivalent: ``0`` for main mesh and ``1`` for half mesh.  Used by
-:func:`_normalize_mesh_code` to validate and convert per-axis entries when a
-:class:`~typing.Sequence` mesh code is provided.
-"""
 
 
 def _normalize_mesh_code(mesh_code: MeshCodeType, ndim: int) -> tuple[Mesh, ...]:
@@ -193,7 +208,9 @@ def _normalize_mesh_code(mesh_code: MeshCodeType, ndim: int) -> tuple[Mesh, ...]
                          f"Valid characters are: {', '.join(_MESH_CODE_REVERSE_MAPPING.keys())}") from None
 
 
-def _average_adjacent(arr: np.ndarray, axis: int) -> np.ndarray:
+def _average_adjacent(arr: np.ndarray,
+                      axis: int
+                      ) -> np.ndarray:
     """Average adjacent pairs of elements along one array axis.
 
     Each output element is the arithmetic mean of two consecutive input elements,
@@ -239,7 +256,9 @@ def _average_adjacent(arr: np.ndarray, axis: int) -> np.ndarray:
     return 0.5 * (arr[tuple(slc_lo)] + arr[tuple(slc_hi)])
 
 
-def remesh_arr(data: np.ndarray, remesh: Sequence[bool] | bool) -> np.ndarray:
+def _remesh_array(data: np.ndarray,
+                  remesh: Iterable[bool] | bool
+                  ) -> np.ndarray:
     """Shift an array between meshes by averaging adjacent elements along selected axes.
 
     Each axis flagged for remeshing is reduced by one element via adjacent
@@ -270,13 +289,13 @@ def remesh_arr(data: np.ndarray, remesh: Sequence[bool] | bool) -> np.ndarray:
     Examples
     --------
     >>> import numpy as np
-    >>> from psi_io._mesh import remesh_arr
+    >>> from psi_io._mesh import _remesh_array
     >>> a = np.arange(6.0).reshape(2, 3)
-    >>> remesh_arr(a, remesh=[False, True]).shape
+    >>> _remesh_array(a, remesh=[False, True]).shape
     (2, 2)
-    >>> remesh_arr(a, remesh=True).shape
+    >>> _remesh_array(a, remesh=True).shape
     (1, 2)
-    >>> remesh_arr(a, remesh=False).shape
+    >>> _remesh_array(a, remesh=False).shape
     (2, 3)
     """
     if isinstance(remesh, bool):
@@ -287,72 +306,57 @@ def remesh_arr(data: np.ndarray, remesh: Sequence[bool] | bool) -> np.ndarray:
     return data
 
 
-def main_mesh(data: np.ndarray,
-              mesh_code: int | Sequence) -> np.ndarray:
-    """Convert a staggered array to the main mesh in all half-mesh dimensions.
+def remesh_array(data: np.ndarray,
+                 imesh: MeshCodeType,
+                 omesh: Optional[MeshCodeType] = None,
+                 order: ArrayOrdering = 'F') -> np.ndarray:
+    if omesh is None:
+        return data
+    imesh_norm = _normalize_mesh_code(imesh, data.ndim)
+    omesh_norm = _normalize_mesh_code(omesh, data.ndim)
+    remesh_flags = _parse_remesh(imesh_norm, omesh_norm, order == 'F')
+    return _remesh_array(data, remesh_flags)
 
-    For each axis whose mesh code is :attr:`Mesh.HALF`, adjacent elements are
-    averaged (via :func:`_average_adjacent`), reducing that axis by one element.
-    Axes already on the main mesh (:attr:`Mesh.MAIN`) are left unchanged.
+
+def _parse_remesh(imesh: tuple[Mesh, ...],
+                  omesh: tuple[Mesh, ...],
+                  reverse: bool = False
+                  ) -> Generator[bool]:
+    """Compute per-axis remesh flags from source and target mesh tuples.
+
+    Compares the stored mesh stagger *imesh* against the requested target *omesh*
+    and yields a boolean flag for each axis:
+
+    - ``False`` — meshes match; no averaging needed.
+    - ``True``  — source is half mesh, target is main mesh; averaging will be applied.
+    - :class:`ValueError` — source is main mesh but target requests half mesh (not
+      supported; averaging can only go from half → main).
 
     Parameters
     ----------
-    data : np.ndarray
-        Input array on a (possibly mixed) staggered grid.
-    mesh_code : int | Sequence
-        Mesh stagger specification in any form accepted by
-        :func:`_normalize_mesh_code`.  Identifies which axes are on the half
-        mesh and therefore require adjacent averaging.
+    imesh : tuple[Mesh, ...]
+        Current mesh stagger of the stored data.
+    omesh : tuple[Mesh, ...]
+        Target mesh stagger requested by the caller.
 
-    Returns
-    -------
-    out : np.ndarray
-        Array fully on the main mesh.  Its size along each half-mesh axis is
-        reduced by one.
+    Yields
+    ------
+    flag : bool
+        ``True`` if that axis should be remeshed (half → main), ``False`` otherwise.
 
-    Notes
-    -----
-    The mapping from mesh-code bits to numpy axes reverses the standard
-    binary digit ordering to match PSI's HDF storage convention.  Given an
-    *ndim*-bit integer mesh code:
-
-    - The **most-significant bit** maps to the **last** numpy axis (``axis=-1``).
-    - The **least-significant bit** maps to the **first** numpy axis (``axis=0``).
-
-    This reversal is consistent with HDF4 files written in Fortran column-major
-    order, where the first physical coordinate varies fastest.  Reading such
-    files into numpy (C row-major order) inverts the axis ordering, and the
-    mesh code's bit convention accounts for this inversion.
-
-    See Also
-    --------
-    _normalize_mesh_code : Converts *mesh_code* to a ``tuple[Mesh, ...]``.
-    remesh_arr : Lower-level remesh that accepts an explicit boolean flag per axis.
-    Mesh : Enum defining the :attr:`~Mesh.MAIN` and :attr:`~Mesh.HALF` states.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from psi_io._mesh import main_mesh
-    >>> data = np.ones((4, 5, 6))
-
-    Half mesh on the last numpy axis only (most-significant bit set):
-
-    >>> main_mesh(data, mesh_code=0b100).shape
-    (4, 5, 5)
-
-    Half mesh on the first numpy axis only (least-significant bit set):
-
-    >>> main_mesh(data, mesh_code=0b001).shape
-    (3, 5, 6)
-
-    All axes already on the main mesh — array is returned unchanged:
-
-    >>> main_mesh(data, mesh_code=0).shape
-    (4, 5, 6)
+    Raises
+    ------
+    ValueError
+        If any axis requests upsampling from main to half mesh.
     """
-    mesh_code = _normalize_mesh_code(mesh_code, data.ndim)
-    for i, code in enumerate(mesh_code):
-        if code.value:
-            data = _average_adjacent(data, -i-1)
-    return data
+    if reverse:
+        imesh, omesh = reversed(imesh), reversed(omesh)
+    for im, om in zip(imesh, omesh, strict=True):
+        if im == om:
+            yield False
+        elif im == Mesh.HALF and om == Mesh.MAIN:
+            yield True
+        elif im == Mesh.MAIN and om == Mesh.HALF:
+            raise ValueError(f"Cannot remesh from MAIN mesh to HALF mesh.")
+        else:
+            raise ValueError(f"Invalid mesh combination: {im} → {om}.")
