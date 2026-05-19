@@ -12,7 +12,7 @@ where :math:`q_0` is the characteristic scale for that quantity.  This module
 collects all reference scales so that code-unit values can be converted to physical
 (CGS or SI) units via :mod:`astropy.units`.
 
-Normalization scheme
+Normalization Scheme
 --------------------
 MAS adopts a normalization anchored to two observable solar parameters and one
 reference number density:
@@ -70,7 +70,7 @@ All other normalization factors follow from dimensional analysis:
      - Volumetric heating rate
      - :math:`Q_0 = P_0 / T_0` erg cm⁻³ s⁻¹
 
-Electromagnetic units
+Electromagnetic Units
 ---------------------
 MAS is formulated in Gaussian CGS, where Ampère's law reads
 :math:`\mathbf{J} = (c/4\pi)\,\nabla \times \mathbf{B}`.  Because current density
@@ -81,32 +81,113 @@ both SI (:data:`FN_J`, :data:`FN_E`) and Gaussian CGS (:data:`FN_J_CGS`,
 Magnetic field is expressed in Gauss throughout, since that system is unambiguous and
 Gauss is the conventional unit for coronal magnetic field strengths.
 
-Custom astropy units
+Custom Astropy Units
 --------------------
-Each MAS quantity has a dedicated :mod:`astropy.units` unit registered at module
-import time (e.g. ``MAS_b``, ``MAS_v``).  These units carry the conversion factor
-from code units to physical units so that astropy can chain unit conversions
-automatically.
+Each PSI quantity has a dedicated :class:`~astropy.units.UnitBase` registered at
+module import time.  These units carry the conversion factor from code units to
+physical units so that astropy can chain conversions automatically — for example,
+a quantity returned by :mod:`psi_io.mhd_io` in ``MAS_b`` units can be converted
+with a single ``.to(u.Gauss)`` call.
+
+Units are registered both under a *family name* (e.g. ``MAS_b``) and under every
+individual quantity name in that family (e.g. ``MAS_br``, ``MAS_bt``, ``MAS_bp``),
+so that the unit embedded in an :class:`~astropy.units.Quantity` always reflects
+the specific field component.
+
+.. list-table:: Registered PSI custom units
+   :header-rows: 1
+   :widths: 12 24 16 48
+
+   * - Unit object
+     - Physical equivalent
+     - Module constant
+     - Registered string names
+   * - :data:`MAS_b`
+     - :math:`\approx 2.2` G
+     - :data:`FN_B`
+     - ``MAS_b``, ``MAS_br``, ``MAS_bt``, ``MAS_bp``
+   * - :data:`MAS_v`
+     - :math:`\approx 481` km s⁻¹
+     - :data:`FN_V`
+     - ``MAS_v``, ``MAS_vr``, ``MAS_vt``, ``MAS_vp``, ``MAS_zp``, ``MAS_zm``
+   * - :data:`MAS_j`
+     - :math:`J_0` A m⁻²
+     - :data:`FN_J`
+     - ``MAS_j``, ``MAS_jr``, ``MAS_jt``, ``MAS_jp``
+   * - :data:`MAS_t`
+     - :math:`\approx 28` MK
+     - :data:`FN_T`
+     - ``MAS_t``, ``MAS_te``, ``MAS_tp``
+   * - :data:`MAS_n`
+     - :math:`10^8` cm⁻³
+     - :data:`FN_N`
+     - ``MAS_n``, ``MAS_rho``
+   * - :data:`MAS_p`
+     - :math:`P_0` erg cm⁻³
+     - :data:`FN_P`
+     - ``MAS_p``, ``MAS_ep``, ``MAS_em``
+   * - :data:`MAS_heat`
+     - :math:`Q_0` erg cm⁻³ s⁻¹
+     - :data:`FN_HEAT`
+     - ``MAS_heat``
+   * - :data:`POT3D_b`
+     - 1 (dimensionless)
+     - —
+     - ``POT3D_b``, ``POT3D_br``, ``POT3D_bt``, ``POT3D_bp``
+   * - :data:`PSI_rsun`
+     - :math:`6.96 \times 10^{10}` cm
+     - :data:`RSUN`
+     - ``PSI_rsun``, ``PSI_radius``, ``PSI_r``
+   * - :data:`PSI_angle`
+     - 1 rad
+     - —
+     - ``PSI_angle``, ``PSI_t``, ``PSI_p``, ``PSI_theta``, ``PSI_phi``
 
 See Also
 --------
-psi_io._props : Maps each MAS quantity name to its :data:`FN_*` normalization.
-psi_io.mhd_io : Lazy readers that apply these normalizations on property access.
+:mod:`astropy.units` :
+    The underlying unit system used for normalization and conversion.
+:mod:`psi_io._models` :
+    Maps each MAS quantity name to its :data:`FN_*` normalization.
+:mod:`psi_io.mhd_io` :
+    Lazy readers that apply these normalizations on property access.
 """
 
 from __future__ import annotations
+
+__all__ = [
+    "FAVORED_UNITS",
+    "compose_mas_units",
+    "decompose_mas_units",
+    "get_helium_fractions",
+    "MAS_b",
+    "MAS_v",
+    "MAS_j",
+    "MAS_t",
+    "MAS_n",
+    "MAS_p",
+    "MAS_heat",
+    "POT3D_b",
+    "PSI_rsun",
+    "PSI_angle"
+]
 
 import astropy.units as u
 import numpy as np
 
 
-FAVORED_UNITS = {u.erg, u.cm, u.s, u.K, u.Gauss, u.g, u.rad}
-"""Set of CGS units preferred when composing or decomposing MAS quantities.
+FAVORED_UNITS = (u.erg, u.cm, u.s, u.K, u.Gauss, u.g, u.rad)
+"""Tuple of CGS units preferred when composing or decomposing MAS quantities.
 
 Used by :func:`compose_mas_units` and :func:`decompose_mas_units` to express
 results in the most physically intuitive CGS basis: erg, cm, s, K, Gauss, g, rad.
 Gauss is included explicitly because :func:`astropy.units.compose` would otherwise
 resolve magnetic field to mixed electromagnetic CGS units.
+
+A tuple (not a set) is used so that Sphinx's autodoc renderer does not call
+``sorted()`` on the elements — astropy units raise :exc:`~astropy.units.UnitConversionError`
+when compared across incompatible physical dimensions (e.g. ``g`` vs ``K``), and
+Sphinx 9+ does not catch that exception type.
 """
 
 
