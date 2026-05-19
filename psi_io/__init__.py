@@ -10,10 +10,18 @@ PSI-specific data conventions.
 The public API is re-exported directly from :mod:`psi_io.psi_io`.  For
 example datasets used in the gallery examples, see :mod:`psi_io.data`.
 """
-from . import psi_io as _psi_io
+# from . import psi_io as _psi_io
 from .psi_io import *
+from ._mesh import *
+from ._units import *
+from ._models import *
+from .mhd_io import *
 
-__all__ = list(_psi_io.__all__)
+__all__ = [*psi_io.__all__,
+           *_mesh.__all__,
+           *_units.__all__,
+           *_models.__all__,
+           *mhd_io.__all__]
 
 try:
     from importlib.metadata import version as _pkg_version

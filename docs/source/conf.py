@@ -102,25 +102,27 @@ viewcode_line_numbers = True
 extensions.append("sphinx.ext.autosummary")
 
 root_package = 'psi_io'
-exclude_private = True
+exclude_private = False
 exclude_tests = True
 exclude_dunder = True
 sort_members = False
 exclusions = [
-    # mhd_io internals — expose only the public API surface
-    "psi_io.mhd_io.HDF_EXT_MAPPING",
-    "psi_io.mhd_io.HdfVersionType",
-    "psi_io.mhd_io.METADATA_SCHEMA",
-    "psi_io.mhd_io.MATCH_QUANTITIES",
-    "psi_io.mhd_io.FILEPATH_SCHEMA",
-    "psi_io.mhd_io.parse_mas_filename_schema",
-    "psi_io.mhd_io.Scales",
-    "psi_io.mhd_io.H5Scale",
-    "psi_io.mhd_io.H4Scale",
-    "psi_io.mhd_io.H5MasData",
-    "psi_io.mhd_io.H4MasData",
-    "psi_io.mhd_io.H5Pot3dData",
-    "psi_io.mhd_io.H4Pot3dData",
+    "psi_io.psi_io._",
+
+    "psi_io._models._MAS_QUANTITY_PROPS_MAPPING",
+    "psi_io._models._POT3D_QUANTITY_PROPS_MAPPING",
+    "psi_io._models._PSI_SCALE_PROPS_MAPPING",
+    "psi_io._models.MATCH_QUANTITIES",
+    "psi_io._models.FILEPATH_SCHEMA",
+    "psi_io._models.Props._mesh",
+
+    "psi_io._mesh._MESH_CODE_REVERSE_MAPPING",
+    "psi_io._mesh._normalize_mesh_code",
+    "psi_io._mesh._average_adjacent",
+    "psi_io._mesh._remesh_array",
+    "psi_io._mesh._parse_remesh",
+    "psi_io._mesh.Mesh.HALF",
+    "psi_io._mesh.Mesh.MAIN",
 ]
 
 node_tree = build_node_tree(root_package,
@@ -175,21 +177,21 @@ numpydoc_xref_aliases = {
     # --- psi_io._mesh ---
     "Mesh": "psi_io._mesh.Mesh",
     "MeshCodeType": "psi_io._mesh.MeshCodeType",
-    # --- psi_io._props ---
-    "Props": "psi_io._props.Props",
-    "MasQuantities": "psi_io._props.MasQuantities",
-    "Pot3dQuantities": "psi_io._props.Pot3dQuantities",
-    "PsiScales": "psi_io._props.PsiScales",
+    # --- psi_io_models ---
+    "Props": "psi_io._models.Props",
+    "MasQuantities": "psi_io._models.MasQuantities",
+    "Pot3dQuantities": "psi_io._models.Pot3dQuantities",
+    "PsiScales": "psi_io._models.PsiScales",
     # --- psi_io.mhd_io ---
     "ModelType": "psi_io.mhd_io.ModelType",
     "HdfVersionType": "psi_io.mhd_io.HdfVersionType",
-    # "Scales": "psi_io.mhd_io.Scales",
-    # "H5Scale": "psi_io.mhd_io.H5Scale",
-    # "H4Scale": "psi_io.mhd_io.H4Scale",
-    # "H5MasData": "psi_io.mhd_io.H5MasData",
-    # "H4MasData": "psi_io.mhd_io.H4MasData",
-    # "H5Pot3dData": "psi_io.mhd_io.H5Pot3dData",
-    # "H4Pot3dData": "psi_io.mhd_io.H4Pot3dData",
+    "Scales": "psi_io.mhd_io.Scales",
+    "H5Scale": "psi_io.mhd_io.H5Scale",
+    "H4Scale": "psi_io.mhd_io.H4Scale",
+    "H5MasData": "psi_io.mhd_io.H5MasData",
+    "H4MasData": "psi_io.mhd_io.H4MasData",
+    "H5Pot3dData": "psi_io.mhd_io.H5Pot3dData",
+    "H4Pot3dData": "psi_io.mhd_io.H4Pot3dData",
 }
 
 # ------------------------------------------------------------------------------
