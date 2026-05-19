@@ -1,49 +1,115 @@
 r"""Mesh management utilities for PSI staggered grid data.
 
-MHD model output from MAS and POT3D is computed on *staggered grids*: different
-physical quantities are defined on different sets of grid nodes.  For a
-three-dimensional spherical domain :math:`(r, \theta, \phi)`, each axis is
-independently classified as either a *main-mesh* axis (quantity defined at cell
-centers) or a *half-mesh* axis (quantity defined at cell faces, offset by half a
-grid spacing in that direction).
+MAS and POT3D solve their equations on *staggered* (Yee-type) spherical grids
+:math:`(r, \theta, \varphi)`.  Different physical quantities are located at
+different positions within each grid cell so that discrete differential operators
+(curl, divergence) are exactly satisfied at the discrete level.  Each axis of a
+multi-dimensional output array is independently classified as either:
 
-A *mesh code* encodes the staggering of every axis in a single compact
-representation.  The most common form is a non-negative integer whose binary
-digits indicate, per axis, whether the data lives on the half mesh (1) or the
-main mesh (0).
+- **Main mesh** — quantity sampled at the cell-center nodes.
+- **Half mesh** — quantity sampled at the face or edge midpoint, displaced by half a
+  grid spacing along that axis.
 
-This module provides the following objects:
+Mesh codes
+----------
+A *mesh code* encodes the staggering of every axis in a single compact integer.
+Each binary bit indicates, per axis, whether the data lives on the half mesh
+(``1``) or the main mesh (``0``).  With PSI's Fortran column-major HDF convention
+the **most-significant bit maps to the last numpy axis** (the radial :math:`r`
+direction), so a three-bit code reads :math:`(r, \theta, \varphi)` MSB → LSB:
 
-- :class:`Mesh` — enum distinguishing the two mesh positions.
-- :data:`MeshCodeType` — type alias for the accepted mesh code forms.
-- :data:`ArrayOrdering` — type alias for array memory-order strings.
-- :data:`_MESH_CODE_REVERSE_MAPPING` — mapping from string tokens to integer
-  mesh codes.
-- :func:`_normalize_mesh_code` — converts any :data:`MeshCodeType` to a
-  canonical ``tuple[Mesh, ...]``.
-- :func:`_average_adjacent` — averages neighboring element pairs along one
-  array axis.
-- :func:`_remesh_array` — applies per-axis adjacent averaging from a boolean
-  flag sequence.
-- :func:`remesh_array` — shifts an array from one mesh stagger to another,
-  given source and target :data:`MeshCodeType` specifications.
-- :func:`_parse_remesh` — derives per-axis remesh flags from source and
-  target mesh tuples.
+.. list-table::
+   :header-rows: 1
+
+   * - Code
+     - :math:`r`
+     - :math:`\theta`
+     - :math:`\varphi`
+     - Typical quantities
+   * - ``0b100``
+     - half
+     - main
+     - main
+     - :math:`B_r` (MAS)
+   * - ``0b010``
+     - main
+     - half
+     - main
+     - :math:`B_\theta` (MAS)
+   * - ``0b001``
+     - main
+     - main
+     - half
+     - :math:`B_\varphi` (MAS)
+   * - ``0b011``
+     - main
+     - half
+     - half
+     - :math:`v_r`, :math:`J_r` (MAS); :math:`B_r` (POT3D)
+   * - ``0b101``
+     - half
+     - main
+     - half
+     - :math:`v_\theta`, :math:`J_\theta` (MAS); :math:`B_\theta` (POT3D)
+   * - ``0b110``
+     - half
+     - half
+     - main
+     - :math:`v_\varphi`, :math:`J_\varphi` (MAS); :math:`B_\varphi` (POT3D)
+   * - ``0b111``
+     - half
+     - half
+     - half
+     - scalars: :math:`T`, :math:`\rho`, :math:`p`, …
+   * - ``0b000``
+     - main
+     - main
+     - main
+     - all-main; result of remeshing every axis
+
+Accepted input forms for a mesh code are described by :data:`MeshCodeType`
+(integer, string shorthand ``'main'``/``'half'``, or per-axis sequence).
+The memory-order convention is described by :data:`ArrayOrdering`.
+
+Public API
+----------
+:class:`Mesh`
+    Enum with two members — :attr:`~Mesh.MAIN` and :attr:`~Mesh.HALF` — representing
+    the two mesh positions.
+:data:`MeshCodeType`
+    Type alias for the three accepted forms of a mesh stagger specification.
+:data:`ArrayOrdering`
+    Type alias for the memory-order string (``'F'`` or ``'C'``) accepted by
+    :func:`remesh_array`.
+:func:`remesh_array`
+    Shift an array from one mesh stagger to another by averaging adjacent elements
+    along each axis that needs to move from half mesh to main mesh.
 
 Examples
 --------
-Convert a radial magnetic-field array (half mesh in *r*, the last numpy axis)
-to the main mesh:
+Convert a radial magnetic-field array (half-mesh in :math:`r`, the last numpy
+axis) to the all-main mesh:
 
 >>> import numpy as np
 >>> from psi_io._mesh import remesh_array
->>> br = np.ones((128, 64, 57))   # half-mesh size along last axis
+>>> br = np.ones((128, 64, 57))   # shape (Nφ, Nθ, Nr); Nr is half-mesh size
 >>> br_main = remesh_array(br, imesh=0b100, omesh='main')
 >>> br_main.shape
 (128, 64, 56)
+
+Remesh a scalar quantity (all-half, ``0b111``) to all-main:
+
+>>> rho = np.ones((128, 64, 57))
+>>> remesh_array(rho, imesh=0b111, omesh='main').shape
+(127, 63, 56)
 """
 
 from __future__ import annotations
+
+__all__ = [
+    "Mesh",
+    "remesh_array",
+]
 
 import enum
 from types import MappingProxyType
@@ -56,57 +122,73 @@ _MESH_CODE_REVERSE_MAPPING = MappingProxyType({
     '1': 1, 'h': 1, 'half': 1, 'true': 1,
     '0': 0, 'm': 0, 'main': 0, 'false': 0
 })
-"""Read-only mapping from string tokens to integer mesh-position codes.
-
-Maps every accepted string representation of a mesh position to its integer
-equivalent: ``0`` for main mesh and ``1`` for half mesh.  Used by
-:func:`_normalize_mesh_code` to validate and convert per-axis entries when a
-:class:`~typing.Sequence` mesh code is provided.
-"""
+"""String-token → integer (0/1) lookup used to validate per-axis sequence mesh codes."""
 
 
 MeshCodeType = Union[int, Literal['main', 'half'], Sequence[Any]]
-"""Type alias for mesh stagger specifications accepted by :func:`_normalize_mesh_code`.
+"""Type alias for mesh stagger specifications accepted by :func:`remesh_array`.
 
-A mesh code may be expressed in any of three forms:
+A mesh stagger may be expressed in any of three equivalent forms:
 
-- :class:`int` — each binary digit encodes the stagger for one axis (1 = half
-  mesh, 0 = main mesh).  The most-significant digit maps to the last numpy axis.
-- ``'main'`` or ``'half'`` — shorthand for applying the same stagger to every
-  axis.
-- :class:`~typing.Sequence` — one element per array dimension; each element must
-  be a key recognized by :data:`_MESH_CODE_REVERSE_MAPPING`.
+- :class:`int` — binary-encoded stagger, one bit per axis (``1`` = half mesh,
+  ``0`` = main mesh).  With PSI's Fortran HDF convention the most-significant
+  bit maps to the last numpy axis (:math:`r`).  For example, ``0b100`` places
+  the array on the half mesh only along :math:`r` (the last axis).
+- ``'main'`` or ``'half'`` — string shorthand that applies the same stagger to
+  every axis uniformly.
+- :class:`~typing.Sequence` — one element per array dimension; each element may
+  be ``0``, ``1``, ``'m'``, ``'h'``, ``'main'``, ``'half'``, ``'true'``, or
+  ``'false'``.
 """
 
 ArrayOrdering = Literal['F', 'C']
-"""Type alias for accepted array memory-order strings used by :func:`remesh_array`.
+"""Type alias for the memory-order convention accepted by :func:`remesh_array`.
+
+Controls how the bits of a :data:`MeshCodeType` integer map to numpy array axes.
 
 ``'F'``
-    Fortran (column-major) order.  PSI HDF files are written by Fortran code, so
-    the physical ``(r, θ, φ)`` axis ordering is **reversed** relative to numpy's
-    C-major storage.  This is the default and should be used when reading data
-    directly from PSI HDF files.
+    Fortran (column-major) order — the default for PSI data.  Because PSI HDF
+    files are written by Fortran code, the physical ``(r, θ, φ)`` axis ordering
+    is **reversed** in numpy storage: the **last** numpy axis corresponds to
+    :math:`r`, the middle to :math:`\\theta`, and the **first** to :math:`\\varphi`.
+    The most-significant bit of the mesh code therefore maps to the last numpy axis.
+    Use this setting whenever the array was loaded directly from a PSI HDF file.
 ``'C'``
-    C (row-major) order.  Use when the array is already in numpy-native axis order
-    (first axis = first physical coordinate).
+    C (row-major) order.  Use when the array has been transposed to numpy-native
+    axis order (first axis = first physical coordinate, e.g. shape ``(Nr, Nθ, Nφ)``),
+    so that the most-significant bit maps to the first numpy axis.
 """
 
 
 class Mesh(enum.Enum):
-    """Enum identifying the mesh position of one array axis.
+    """Enum identifying the stagger position of one array axis.
 
-    MAS and POT3D solve their equations on staggered grids.  Each axis of a
-    multi-dimensional output array is independently classified as :attr:`MAIN`
-    (cell-center position) or :attr:`HALF` (cell-face position, offset by half
-    a grid spacing).
+    MAS and POT3D solve their equations on Yee-type staggered spherical grids.
+    Each axis of a multi-dimensional output array is independently classified as
+    :attr:`MAIN` (cell-center position) or :attr:`HALF` (cell-face/edge position,
+    displaced by half a grid spacing along that axis).
+
+    The stagger arrangement is physically motivated:
+
+    - Magnetic field components (:math:`B_r`, :math:`B_\\theta`, :math:`B_\\varphi`)
+      are face-centred — each component lives on the face through which it is the
+      outward normal — so that :math:`\\nabla \\cdot \\mathbf{B} = 0` is satisfied
+      exactly at the discrete level.
+    - Current density components follow from
+      :math:`\\mathbf{J} = \\nabla \\times \\mathbf{B}` and are therefore
+      edge-centred (half mesh on the two transverse axes).
+    - Scalar quantities (temperature, density, pressure) occupy the cell corners,
+      which correspond to the half-mesh position on all three axes (``0b111``).
+
+    :class:`Mesh` members appear as elements of the normalized mesh tuple returned
+    by :attr:`~psi_io._models.Props.mesh` and accepted by :func:`remesh_array`.
 
     Attributes
     ----------
     MAIN : int
-        Main-mesh (cell-center) position; encoded as ``0``.
+        Cell-center mesh position; encoded as ``0``.
     HALF : int
-        Half-mesh (cell-face) position, offset by half a grid spacing; encoded
-        as ``1``.
+        Cell-face/edge mesh position, offset by half a grid spacing; encoded as ``1``.
 
     Examples
     --------
@@ -115,6 +197,10 @@ class Mesh(enum.Enum):
     0
     >>> Mesh.HALF.value
     1
+    >>> Mesh('half')
+    <Mesh.HALF: 1>
+    >>> Mesh('m')
+    <Mesh.MAIN: 0>
     >>> str(Mesh.HALF)
     'HALF'
     """
@@ -124,117 +210,29 @@ class Mesh(enum.Enum):
 
     @classmethod
     def _missing_(cls, key: Any) -> Mesh:
-        """Return the :class:`Mesh` member corresponding to *key*, or ``None``.
-
-        Called automatically by :class:`~enum.Enum` when a direct value lookup
-        (``Mesh(value)``) fails.  Converts *key* to a string, lower-cases it,
-        and looks it up in :data:`_MESH_CODE_REVERSE_MAPPING`.  Accepted tokens
-        are the same as for per-axis sequence codes in
-        :func:`_normalize_mesh_code`: ``'0'``, ``'1'``, ``'m'``, ``'h'``,
-        ``'main'``, ``'half'``, ``'true'``, ``'false'``.
-
-        Parameters
-        ----------
-        key : Any
-            Value that was not found by the normal enum lookup.  Converted to
-            ``str`` before comparison, so integers, booleans, and strings all
-            work.
-
-        Returns
-        -------
-        out : Mesh or None
-            The matching :class:`Mesh` member, or ``None`` if *key* is not
-            recognized (which causes :class:`~enum.Enum` to raise
-            :class:`ValueError`).
-
-        Examples
-        --------
-        >>> from psi_io._mesh import Mesh
-        >>> Mesh('half')
-        <Mesh.HALF: 1>
-        >>> Mesh('m')
-        <Mesh.MAIN: 0>
-        >>> Mesh('true')
-        <Mesh.HALF: 1>
-        """
+        """Look up *key* in :data:`_MESH_CODE_REVERSE_MAPPING`; return ``None`` if unrecognized."""
         code_ = _MESH_CODE_REVERSE_MAPPING.get(str(key).lower())
         return cls(code_) if code_ is not None else None  # type: ignore
 
 
     def __str__(self) -> str:
-        """Return the name of the mesh position as a string.
-
-        Returns
-        -------
-        out : str
-            The enum member name — either ``'MAIN'`` or ``'HALF'``.
-
-        Examples
-        --------
-        >>> from psi_io._mesh import Mesh
-        >>> str(Mesh.MAIN)
-        'MAIN'
-        >>> str(Mesh.HALF)
-        'HALF'
-        """
+        """Return the enum member name (``'MAIN'`` or ``'HALF'``)."""
         return str(self.name)
 
 
 def _normalize_mesh_code(mesh_code: MeshCodeType, ndim: int) -> tuple[Mesh, ...]:
-    r"""Normalize a mesh stagger specification to a tuple of :class:`Mesh` members.
-
-    Accepts any of the three forms described by :data:`MeshCodeType` and converts
-    them to a fixed-length tuple with one :class:`Mesh` entry per array axis.
+    """Convert *mesh_code* to a length-*ndim* tuple of :class:`Mesh` members.
 
     Parameters
     ----------
     mesh_code : MeshCodeType
-        Stagger specification in any supported form:
-
-        - :class:`int` — binary-encoded stagger.  The integer is formatted as an
-          *ndim*-bit binary string; a ``1`` bit means half mesh for that axis.
-          For example, ``0b010`` (decimal 2) applied to a 3-D array sets the
-          middle axis to half mesh and leaves the others on the main mesh.
-        - ``'main'`` — all axes on the main mesh; equivalent to the integer ``0``.
-        - ``'half'`` — all axes on the half mesh; equivalent to the integer
-          :math:`2^{ndim} - 1`.
-        - :class:`~typing.Sequence` — one element per axis; each element must be
-          a key in :data:`_MESH_CODE_REVERSE_MAPPING` (accepted values: ``0``,
-          ``1``, ``'m'``, ``'h'``, ``'main'``, ``'half'``, ``'true'``,
-          ``'false'``).
+        Integer, ``'main'``/``'half'`` shorthand, or per-axis sequence.
     ndim : int
-        Number of array dimensions.  Used to zero-pad integer codes to the
-        correct binary width and to validate the length of sequence codes.
+        Number of array dimensions.
 
     Returns
     -------
     out : tuple[Mesh, ...]
-        Length-*ndim* tuple of :class:`Mesh` members, one per axis.
-
-    Raises
-    ------
-    ValueError
-        If *mesh_code* is a sequence whose length does not equal *ndim*.
-    ValueError
-        If any element of *mesh_code* is not a recognized mesh-code token.
-
-    See Also
-    --------
-    Mesh : The enum returned in each position of the output tuple.
-    remesh_arr : Remeshes an array using an explicit boolean mask per axis.
-    main_mesh : Uses the normalized code to shift a staggered array to the main mesh.
-
-    Examples
-    --------
-    >>> from psi_io._mesh import _normalize_mesh_code, Mesh
-    >>> _normalize_mesh_code('main', ndim=3)
-    (Mesh.MAIN, Mesh.MAIN, Mesh.MAIN)
-    >>> _normalize_mesh_code('half', ndim=2)
-    (Mesh.HALF, Mesh.HALF)
-    >>> _normalize_mesh_code(0b010, ndim=3)
-    (Mesh.MAIN, Mesh.HALF, Mesh.MAIN)
-    >>> _normalize_mesh_code([1, 0, 1], ndim=3)
-    (Mesh.HALF, Mesh.MAIN, Mesh.HALF)
     """
     if isinstance(mesh_code, int):
         mesh_code = format(mesh_code, f'0{ndim}b')
@@ -254,44 +252,7 @@ def _normalize_mesh_code(mesh_code: MeshCodeType, ndim: int) -> tuple[Mesh, ...]
 def _average_adjacent(arr: np.ndarray,
                       axis: int
                       ) -> np.ndarray:
-    """Average adjacent pairs of elements along one array axis.
-
-    Each output element is the arithmetic mean of two consecutive input elements,
-    so the output has one fewer element than the input along *axis*.  This
-    operation shifts data from a half-mesh position to the corresponding
-    main-mesh position along that axis.
-
-    Parameters
-    ----------
-    arr : np.ndarray
-        Input array of any shape and numeric dtype.
-    axis : int
-        Axis along which to average.  Supports negative indexing.
-
-    Returns
-    -------
-    out : np.ndarray
-        Array with the same shape as *arr* except along *axis*, where the size
-        is ``arr.shape[axis] - 1``.
-
-    See Also
-    --------
-    _remesh_array : Applies adjacent averaging over multiple axes simultaneously.
-    remesh_array : Higher-level wrapper accepting mesh-code specifications.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from psi_io._mesh import _average_adjacent
-    >>> a = np.array([1.0, 3.0, 5.0])
-    >>> _average_adjacent(a, axis=0)
-    array([2., 4.])
-    >>> b = np.ones((4, 3))
-    >>> _average_adjacent(b, axis=0).shape
-    (3, 3)
-    >>> _average_adjacent(b, axis=-1).shape
-    (4, 2)
-    """
+    """Return the mean of adjacent element pairs along *axis*, reducing that dimension by one."""
     slc_lo = [slice(None)] * arr.ndim
     slc_hi = [slice(None)] * arr.ndim
     slc_lo[axis] = slice(None, -1)
@@ -302,45 +263,7 @@ def _average_adjacent(arr: np.ndarray,
 def _remesh_array(data: np.ndarray,
                   remesh: Iterable[bool] | bool
                   ) -> np.ndarray:
-    """Shift an array between meshes by averaging adjacent elements along selected axes.
-
-    Each axis flagged for remeshing is reduced by one element via adjacent
-    averaging (see :func:`_average_adjacent`).  Axes are processed sequentially
-    from axis 0 to the last axis.
-
-    Parameters
-    ----------
-    data : np.ndarray
-        Input data array to remesh.
-    remesh : Iterable[bool] | bool
-        Remesh flags.  A single :class:`bool` applies the same flag to every
-        axis.  An iterable must yield one entry per array dimension; ``True``
-        triggers adjacent averaging on that axis and ``False`` leaves it
-        unchanged.
-
-    Returns
-    -------
-    out : np.ndarray
-        Remeshed array.  Its size along each flagged axis is reduced by one.
-
-    See Also
-    --------
-    remesh_array : Higher-level wrapper that derives the remesh flags from
-        source and target :data:`MeshCodeType` specifications.
-    _average_adjacent : The per-axis averaging operation used internally.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from psi_io._mesh import _remesh_array
-    >>> a = np.arange(6.0).reshape(2, 3)
-    >>> _remesh_array(a, remesh=[False, True]).shape
-    (2, 2)
-    >>> _remesh_array(a, remesh=True).shape
-    (1, 2)
-    >>> _remesh_array(a, remesh=False).shape
-    (2, 3)
-    """
+    """Apply :func:`_average_adjacent` on each axis where *remesh* is ``True``."""
     if isinstance(remesh, bool):
         remesh = [remesh] * data.ndim
     for i, shift in enumerate(remesh):
@@ -355,61 +278,78 @@ def remesh_array(data: np.ndarray,
                  order: ArrayOrdering = 'F') -> np.ndarray:
     """Shift an array from one mesh stagger to another.
 
-    Derives per-axis remesh flags by comparing *imesh* against *omesh*, then
-    applies adjacent averaging (via :func:`_remesh_array`) on every axis that
-    needs to move from half mesh to main mesh.  Only the half → main direction
-    is supported; requesting main → half raises :class:`ValueError`.
+    Compares the source mesh *imesh* against the target mesh *omesh* axis by axis
+    and applies adjacent-element averaging on every axis that needs to move from
+    half mesh to main mesh.  Only the half → main direction is supported;
+    requesting main → half raises :class:`ValueError`.
 
-    If *omesh* is ``None`` the array is returned unchanged.
+    This is commonly needed before performing interpolation or arithmetic between
+    quantities on different mesh positions.  For example, computing the magnitude of the
+    magnetic requires :math:`B_r`, :math:`B_\\theta`, and
+    :math:`B_\\varphi` on the same mesh: each must be remeshed from its native
+    stagger (``0b100``, ``0b010``, ``0b001``) to a common target before squaring
+    and summing.
+
+    If *omesh* is ``None``, the array is returned unchanged.
 
     Parameters
     ----------
     data : np.ndarray
         Input array on the stagger described by *imesh*.
     imesh : MeshCodeType
-        Source mesh stagger in any form accepted by :func:`_normalize_mesh_code`.
+        Source mesh stagger in any form accepted by :data:`MeshCodeType`.
     omesh : MeshCodeType or None, optional
-        Target mesh stagger.  ``None`` (default) is a no-op — the array is
-        returned as-is.  Pass ``0`` or ``'main'`` to move all half-mesh axes
-        to the main mesh.
-    order : {'F', 'C'}, optional
-        Memory-order convention that governs how mesh-code bits map to numpy
-        axes.  ``'F'`` (default) reverses the bit–axis mapping to match PSI
-        HDF files written in Fortran column-major order (last numpy axis = r).
-        Use ``'C'`` when the array is already in C row-major order.
+        Target mesh stagger.  ``None`` (default) is a no-op.  Pass ``0`` or
+        ``'main'`` to move every half-mesh axis to the main mesh.
+    order : ArrayOrdering, optional
+        Memory-order convention controlling how mesh-code bits map to numpy
+        axes; see :data:`ArrayOrdering`.  Defaults to ``'F'`` (Fortran /
+        PSI HDF column-major: last numpy axis = :math:`r`).
 
     Returns
     -------
     out : np.ndarray
         Array on the target mesh.  Each remeshed axis is reduced by one element
-        (adjacent averaging).
+        via adjacent averaging; axes that already match are left unchanged.
 
     Raises
     ------
     ValueError
-        If any axis in *omesh* requests half mesh where *imesh* is already on
-        the main mesh (upsampling is not supported).
+        If any axis in *omesh* requests half mesh where *imesh* is already main
+        (upsampling is not supported).
 
     See Also
     --------
-    _remesh_array : Low-level per-axis averaging from an explicit boolean sequence.
-    _parse_remesh : Derives the per-axis boolean flags from normalized mesh tuples.
-    _normalize_mesh_code : Converts *imesh* / *omesh* to ``tuple[Mesh, ...]``.
+    Mesh : Enum representing the two mesh positions.
+    MeshCodeType : Accepted forms for mesh stagger specifications.
+    ArrayOrdering : Memory-order convention for bit–axis mapping.
 
     Examples
     --------
-    Convert a radial magnetic-field array from half mesh in *r* to all-main:
+    Convert a radial magnetic-field array (half-mesh in :math:`r`, the last
+    numpy axis) to the all-main mesh:
 
     >>> import numpy as np
     >>> from psi_io._mesh import remesh_array
-    >>> br = np.ones((128, 64, 57))   # (Nφ, Nθ, Nr); Nr is half-mesh size
+    >>> br = np.ones((128, 64, 57))   # shape (Nφ, Nθ, Nr); Nr is half-mesh size
     >>> br_main = remesh_array(br, imesh=0b100, omesh='main')
     >>> br_main.shape
     (128, 64, 56)
 
+    Remesh a scalar quantity (all-half, ``0b111``) to all-main:
+
+    >>> rho = np.ones((128, 64, 57))
+    >>> remesh_array(rho, imesh=0b111, omesh='main').shape
+    (127, 63, 56)
+
     ``omesh=None`` is a no-op:
 
     >>> remesh_array(br, imesh=0b100).shape
+    (128, 64, 57)
+
+    No-op when source and target stagger already match:
+
+    >>> remesh_array(br, imesh=0b100, omesh=0b100).shape
     (128, 64, 57)
     """
     if omesh is None:
@@ -424,42 +364,7 @@ def _parse_remesh(imesh: tuple[Mesh, ...],
                   omesh: tuple[Mesh, ...],
                   reverse: bool = False
                   ) -> Generator[bool]:
-    """Compute per-axis remesh flags from source and target mesh tuples.
-
-    Compares the stored mesh stagger *imesh* against the requested target *omesh*
-    and yields a boolean flag for each axis:
-
-    - ``False`` — meshes match; no averaging needed.
-    - ``True``  — source is half mesh, target is main mesh; averaging will be applied.
-    - :class:`ValueError` — source is main mesh but target requests half mesh (not
-      supported; averaging can only go from half → main).
-
-    Parameters
-    ----------
-    imesh : tuple[Mesh, ...]
-        Current mesh stagger of the stored data, one :class:`Mesh` per axis.
-    omesh : tuple[Mesh, ...]
-        Target mesh stagger requested by the caller, same length as *imesh*.
-    reverse : bool, optional
-        If ``True``, iterate the axis pairs in reverse order before yielding
-        flags.  Used when the array was loaded from a Fortran column-major
-        file (``order='F'`` in :func:`remesh_array`) so that the MSB of the
-        mesh code — which maps to the **last** numpy axis — is processed first.
-        Defaults to ``False``.
-
-    Yields
-    ------
-    flag : bool
-        ``True`` if that axis should be remeshed (half → main), ``False`` if
-        the meshes already match.
-
-    Raises
-    ------
-    ValueError
-        If any axis requests upsampling from main mesh to half mesh.
-    ValueError
-        If any axis pair contains an unrecognized :class:`Mesh` combination.
-    """
+    """Yield per-axis remesh flags (``True`` = half→main) by comparing *imesh* to *omesh*."""
     if reverse:
         imesh, omesh = reversed(imesh), reversed(omesh)
     for im, om in zip(imesh, omesh, strict=True):
