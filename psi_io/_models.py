@@ -395,9 +395,9 @@ from psi_io._units import MAS_v, MAS_b, MAS_j, MAS_t, MAS_n, MAS_p, MAS_heat, PO
 class Props:
     """Immutable property bundle for a single PSI model quantity.
 
-    Associates a quantity name with its human-readable description, physical unit
-    conversion factor, and staggered-grid mesh code.  Instances are frozen (immutable)
-    and slot-based for memory efficiency.
+    Associates a quantity name with its human-readable description, physical unit,
+    dimensionality, scalar/vector classification, and staggered-grid mesh code.
+    Instances are frozen (immutable) dataclass instances.
 
     Parameters
     ----------
@@ -409,6 +409,12 @@ class Props:
     unit : astropy.units.Unit
         Astropy unit whose scale factor converts one code unit of this quantity to
         physical units.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
+    ndim : int
+        Number of spatial dimensions of the output array (``3`` for MAS/POT3D fields,
+        ``1`` for coordinate scale arrays).
+    scalar : bool
+        ``True`` if the quantity is a scalar field (temperature, density, …);
+        ``False`` if it is a component of a vector field (velocity, magnetic field, …).
     _mesh : int, optional
         Integer mesh code encoding the stagger position on the three-dimensional grid.
         Each binary bit indicates whether the quantity is on the half mesh (``1``) or
@@ -418,9 +424,9 @@ class Props:
     Attributes
     ----------
     mesh : tuple[Mesh, ...] or None
-        Normalized form of :attr:`_mesh`, expanded to a length-3 tuple of
-        :class:`~psi_io._mesh.Mesh` members.  Returns ``None`` when ``_mesh`` is
-        ``None``.
+        Normalized form of :attr:`_mesh`, expanded to a length-:attr:`ndim` tuple of
+        :class:`~psi_io._mesh.Mesh` members.  Returns ``None`` when :attr:`_mesh` is
+        ``None`` (coordinate scale arrays have no stagger).
 
     Notes
     -----
@@ -432,9 +438,11 @@ class Props:
     --------
     >>> from psi_io._models import Props
     >>> import astropy.units as u
-    >>> p = Props('br', 'Radial B field', u.Gauss, 0b100)
+    >>> p = Props('br', 'Radial B field', u.Gauss, 3, False, 0b100)
     >>> str(p)
     'br'
+    >>> p.ndim, p.scalar
+    (3, False)
     >>> p.mesh          # doctest: +NORMALIZE_WHITESPACE
     (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
     >>> (2.5 * p).unit
@@ -570,15 +578,13 @@ class Props:
         return other / self.unit
 
 
-ModelType = Literal['mas', 'pot3d', 'scale']
+ModelType = Literal['mas', 'pot3d']
 """Literal type alias for the three recognized PSI model types.
 
 ``'mas'``
     MAS (Magnetohydrodynamic Algorithm outside a Sphere) plasma model output.
 ``'pot3d'``
     POT3D potential-field source-surface (PFSS) magnetic field output.
-``'scale'``
-    Coordinate scale arrays (``r``, ``θ``, ``φ``) embedded in MAS/POT3D HDF files.
 """
 
 
