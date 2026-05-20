@@ -383,7 +383,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, Optional
+from typing import Literal, Optional, Callable
 
 import astropy.units as u
 
@@ -576,16 +576,6 @@ class Props:
         Unit(...)
         """
         return other / self.unit
-
-
-ModelType = Literal['mas', 'pot3d']
-"""Literal type alias for the three recognized PSI model types.
-
-``'mas'``
-    MAS (Magnetohydrodynamic Algorithm outside a Sphere) plasma model output.
-``'pot3d'``
-    POT3D potential-field source-surface (PFSS) magnetic field output.
-"""
 
 
 # ----------------------------------------------------------------
@@ -814,6 +804,30 @@ def get_psi_scale_properties(variable: PsiScales) -> Props:
     except KeyError:
         raise ValueError(f"Invalid variable '{variable}'. "
                          f"Valid options are: {', '.join(_PSI_SCALE_PROPS_MAPPING.keys())}") from None
+
+
+ModelType = Literal['mas', 'pot3d']
+"""Literal type alias for the three recognized PSI model types.
+
+``'mas'``
+    MAS (Magnetohydrodynamic Algorithm outside a Sphere) plasma model output.
+``'pot3d'``
+    POT3D potential-field source-surface (PFSS) magnetic field output.
+"""
+
+_PROP_GETTER_MAPPING = MappingProxyType({
+    'mas': get_mas_quantity_properties,
+    'pot3d': get_pot3d_quantity_properties,
+    'scale': get_psi_scale_properties,})
+# TODO: include documentation
+
+
+def get_model_prop_caller(model: ModelType) -> Callable:
+    try:
+        return _PROP_GETTER_MAPPING[model.lower()]
+    except KeyError:
+        raise ValueError(f"Invalid model '{model}'. "
+                         f"Valid options are: {', '.join(_PROP_GETTER_MAPPING.keys())}") from None
 
 
 MATCH_QUANTITIES = '|'.join(re.escape(q) for q in sorted(_MAS_QUANTITY_PROPS_MAPPING.keys(), key=len, reverse=True))
