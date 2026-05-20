@@ -1,4 +1,4 @@
-"""Unit tests for psi_io._props and the pure helper functions in psi_io.mhd_io."""
+"""Unit tests for psi_io._models."""
 
 from __future__ import annotations
 
@@ -8,83 +8,92 @@ import astropy.units as u
 import pytest
 
 from psi_io._mesh import Mesh
-from psi_io._props import (
+from psi_io._models import (
     Props,
-    MasQuantities,
     _MAS_QUANTITY_PROPS_MAPPING,
     _POT3D_QUANTITY_PROPS_MAPPING,
     _PSI_SCALE_PROPS_MAPPING,
-)
-from psi_io.mhd_io import (
-    HDF_EXT_MAPPING,
+    extract_quantity_from_filepath,
+    extract_sequence_from_filepath,
     get_mas_quantity_properties,
     get_pot3d_quantity_properties,
     get_psi_scale_properties,
-    extract_quantity_from_filepath,
-    extract_sequence_from_filepath,
-    parse_mas_filename_schema,
+    parse_psi_filename_schema,
 )
 
 
 # ===========================================================================
-# _props module tests
+# Props dataclass
 # ===========================================================================
 
 class TestProps:
-    """Tests for the Props dataclass itself."""
-
     def test_fields_accessible(self):
-        p = Props('br', 'Radial B', u.Gauss, 0b100)
+        p = Props('br', 'Radial B', u.Gauss, 3, False, 0b100)
         assert p.name == 'br'
         assert p.desc == 'Radial B'
         assert p.unit == u.Gauss
         assert p._mesh == 0b100
 
     def test_str_returns_name(self):
-        p = Props('vr', 'Radial V', u.km / u.s, 0)
+        p = Props('vr', 'Radial V', u.km / u.s, 3, False, 0)
         assert str(p) == 'vr'
 
     def test_mesh_property_returns_tuple(self):
-        p = Props('br', 'desc', u.Gauss, 0b100)
+        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
         mesh = p.mesh
         assert isinstance(mesh, tuple)
         assert len(mesh) == 3
         assert all(isinstance(m, Mesh) for m in mesh)
 
+    def test_mesh_property_br_stagger(self):
+        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
+        assert p.mesh == (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
+
     def test_mesh_property_none_when_no_mesh(self):
-        p = Props('r', 'Radial Scale', u.cm)
+        p = Props('r', 'Radial Scale', u.cm, 1, True)
         assert p.mesh is None
 
     def test_frozen_immutable(self):
-        p = Props('br', 'Radial B', u.Gauss, 0b100)
+        p = Props('br', 'Radial B', u.Gauss, 3, False, 0b100)
         with pytest.raises((AttributeError, TypeError)):
             p.name = 'bt'  # type: ignore[misc]
 
     def test_mul_returns_quantity(self):
-        p = Props('br', 'desc', u.Gauss, 0b100)
+        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
         result = p * 2.0
         assert isinstance(result, u.Quantity)
 
     def test_rmul_returns_quantity(self):
-        p = Props('br', 'desc', u.Gauss, 0b100)
+        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
         result = 2.0 * p
         assert isinstance(result, u.Quantity)
 
     def test_rtruediv_returns_quantity(self):
-        p = Props('br', 'desc', u.Gauss, 0b100)
+        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
         result = 1.0 / p
         assert isinstance(result, u.Quantity)
 
     def test_mul_value_correct(self):
-        p = Props('br', 'desc', u.Gauss, 0b100)
+        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
         result = p * 3.5
         assert result.value == pytest.approx(3.5)
         assert result.unit == u.Gauss
 
+    def test_ndim_and_scalar_stored(self):
+        p = Props('t', 'Temperature', u.MK, 3, True, 0b111)
+        assert p.ndim == 3
+        assert p.scalar is True
+
+    def test_scale_props_no_mesh_default(self):
+        p = Props('r', 'Radial Scale', u.cm, 1, True)
+        assert p._mesh is None
+
+
+# ===========================================================================
+# _MAS_QUANTITY_PROPS_MAPPING
+# ===========================================================================
 
 class TestMasQuantityPropsMapping:
-    """Tests for _MAS_QUANTITY_PROPS_MAPPING contents."""
-
     ALL_MAS_QUANTITIES = [
         'vr', 'vt', 'vp', 'br', 'bt', 'bp', 'jr', 'jt', 'jp',
         't', 'te', 'tp', 'rho', 'p', 'ep', 'em', 'zp', 'zm', 'heat'
@@ -110,7 +119,6 @@ class TestMasQuantityPropsMapping:
         assert _MAS_QUANTITY_PROPS_MAPPING[qty]._mesh is not None
 
     def test_b_field_components_have_face_stagger(self):
-        # br: half in r (MSB=1), bt: half in t (middle=1), bp: half in p (LSB=1)
         assert _MAS_QUANTITY_PROPS_MAPPING['br']._mesh == 0b100
         assert _MAS_QUANTITY_PROPS_MAPPING['bt']._mesh == 0b010
         assert _MAS_QUANTITY_PROPS_MAPPING['bp']._mesh == 0b001
@@ -129,9 +137,11 @@ class TestMasQuantityPropsMapping:
             _MAS_QUANTITY_PROPS_MAPPING['br'] = None  # type: ignore[index]
 
 
-class TestPot3dQuantityPropsMapping:
-    """Tests for _POT3D_QUANTITY_PROPS_MAPPING contents."""
+# ===========================================================================
+# _POT3D_QUANTITY_PROPS_MAPPING
+# ===========================================================================
 
+class TestPot3dQuantityPropsMapping:
     def test_three_quantities_present(self):
         assert len(_POT3D_QUANTITY_PROPS_MAPPING) == 3
 
@@ -143,10 +153,18 @@ class TestPot3dQuantityPropsMapping:
     def test_each_quantity_has_mesh(self, qty):
         assert _POT3D_QUANTITY_PROPS_MAPPING[qty]._mesh is not None
 
+    def test_pot3d_mesh_codes_are_complement_of_mas(self):
+        # POT3D mesh = 0b111 ^ MAS_mesh
+        from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING as mas
+        for qty in ('br', 'bt', 'bp'):
+            assert _POT3D_QUANTITY_PROPS_MAPPING[qty]._mesh == (0b111 ^ mas[qty]._mesh)
+
+
+# ===========================================================================
+# _PSI_SCALE_PROPS_MAPPING
+# ===========================================================================
 
 class TestPsiScalePropsMapping:
-    """Tests for _PSI_SCALE_PROPS_MAPPING contents."""
-
     def test_three_scales_present(self):
         assert len(_PSI_SCALE_PROPS_MAPPING) == 3
 
@@ -166,9 +184,13 @@ class TestPsiScalePropsMapping:
         for key in ('r', 't', 'p'):
             assert _PSI_SCALE_PROPS_MAPPING[key].unit is not None
 
+    def test_scales_are_1d(self):
+        for key in ('r', 't', 'p'):
+            assert _PSI_SCALE_PROPS_MAPPING[key].ndim == 1
+
 
 # ===========================================================================
-# mhd_io pure helper function tests
+# get_mas_quantity_properties
 # ===========================================================================
 
 class TestGetMasQuantityProperties:
@@ -185,8 +207,7 @@ class TestGetMasQuantityProperties:
     def test_all_quantities_accessible(self):
         for qty in ('vr', 'vt', 'vp', 'br', 'bt', 'bp', 'jr', 'jt', 'jp',
                     't', 'te', 'tp', 'rho', 'p', 'ep', 'em', 'zp', 'zm', 'heat'):
-            p = get_mas_quantity_properties(qty)
-            assert p.name == qty
+            assert get_mas_quantity_properties(qty).name == qty
 
     def test_invalid_raises_value_error(self):
         with pytest.raises(ValueError, match="Invalid variable"):
@@ -196,6 +217,10 @@ class TestGetMasQuantityProperties:
         with pytest.raises((ValueError, KeyError)):
             get_mas_quantity_properties('')
 
+
+# ===========================================================================
+# get_pot3d_quantity_properties
+# ===========================================================================
 
 class TestGetPot3dQuantityProperties:
     def test_returns_props(self):
@@ -216,6 +241,10 @@ class TestGetPot3dQuantityProperties:
             get_pot3d_quantity_properties('t')
 
 
+# ===========================================================================
+# get_psi_scale_properties
+# ===========================================================================
+
 class TestGetPsiScaleProperties:
     def test_returns_props(self):
         assert isinstance(get_psi_scale_properties('r'), Props)
@@ -230,7 +259,6 @@ class TestGetPsiScaleProperties:
         assert get_psi_scale_properties('p').name == 'p'
 
     def test_first_char_only(self):
-        # Uses only first character, so 'theta' → 't'
         assert get_psi_scale_properties('theta').name == 't'
         assert get_psi_scale_properties('phi').name == 'p'
         assert get_psi_scale_properties('radius').name == 'r'
@@ -240,14 +268,18 @@ class TestGetPsiScaleProperties:
             get_psi_scale_properties('x')
 
 
+# ===========================================================================
+# extract_quantity_from_filepath
+# ===========================================================================
+
 class TestExtractQuantityFromFilepath:
     @pytest.mark.parametrize("stem,expected", [
-        ('br001001.h5', 'br'),
-        ('vr001.h5', 'vr'),
-        ('heat001.h5', 'heat'),
-        ('t001001.h5', 't'),
-        ('rho001001.hdf', 'rho'),
-        ('BR001001.h5', 'br'),   # case-insensitive
+        ('br001001.h5',  'br'),
+        ('vr001.h5',     'vr'),
+        ('heat001.h5',   'heat'),
+        ('t001001.h5',   't'),
+        ('rho001001.hdf','rho'),
+        ('BR001001.h5',  'br'),   # case-insensitive
     ])
     def test_known_quantities(self, stem, expected):
         assert extract_quantity_from_filepath(Path(stem)) == expected
@@ -262,16 +294,19 @@ class TestExtractQuantityFromFilepath:
         assert extract_quantity_from_filepath(Path('.h5'), default='vr') == 'vr'
 
     def test_longer_quantity_wins_over_prefix(self):
-        # 'heat' must match before 'h'
         assert extract_quantity_from_filepath(Path('heat001.h5')) == 'heat'
 
 
+# ===========================================================================
+# extract_sequence_from_filepath
+# ===========================================================================
+
 class TestExtractSequenceFromFilepath:
     @pytest.mark.parametrize("stem,expected", [
-        ('br001001.h5', 1001),
-        ('vr001.h5', 1),
+        ('br001001.h5',   1001),
+        ('vr001.h5',      1),
         ('heat123456.h5', 123456),
-        ('t001001.hdf', 1001),
+        ('t001001.hdf',   1001),
     ])
     def test_known_sequences(self, stem, expected):
         assert extract_sequence_from_filepath(Path(stem)) == expected
@@ -287,50 +322,42 @@ class TestExtractSequenceFromFilepath:
         assert isinstance(result, int)
 
 
-class TestParseMasFilenameSchema:
+# ===========================================================================
+# parse_psi_filename_schema
+# ===========================================================================
+
+class TestParsePsiFilenameSchema:
     @pytest.mark.parametrize("stem,qty,seq", [
-        ('br001001.h5', 'br', 1001),
-        ('vr001.h5', 'vr', 1),
-        ('heat001.hdf', 'heat', 1),
-        ('rho001001.h5', 'rho', 1001),
-        ('t001.h5', 't', 1),
+        ('br001001.h5',  'br',   1001),
+        ('vr001.h5',     'vr',   1),
+        ('heat001.hdf',  'heat', 1),
+        ('rho001001.h5', 'rho',  1001),
+        ('t001.h5',      't',    1),
     ])
     def test_valid_filenames(self, stem, qty, seq):
-        quantity, sequence = parse_mas_filename_schema(Path(stem))
-        assert quantity == qty
+        quantity, sequence = parse_psi_filename_schema(Path(stem))
+        assert quantity.lower() == qty
         assert sequence == seq
         assert isinstance(sequence, int)
 
-    def test_case_insensitive(self):
-        quantity, sequence = parse_mas_filename_schema(Path('BR001001.h5'))
-        assert quantity == 'BR'  # raw match group, not lowercased
+    def test_case_insensitive_preserves_raw_match(self):
+        quantity, sequence = parse_psi_filename_schema(Path('BR001001.h5'))
+        assert quantity == 'BR'   # raw match group, not lowercased
         assert sequence == 1001
 
     def test_invalid_name_raises_value_error(self):
         with pytest.raises(ValueError, match="does not match"):
-            parse_mas_filename_schema(Path('notvalid.h5'))
+            parse_psi_filename_schema(Path('notvalid.h5'))
 
     def test_bare_quantity_no_sequence_raises(self):
         with pytest.raises(ValueError):
-            parse_mas_filename_schema(Path('br.h5'))
+            parse_psi_filename_schema(Path('br.h5'))
 
     def test_short_sequence_too_few_digits_raises(self):
-        # Sequence must be 3 or 6 digits; 2 digits should fail
         with pytest.raises(ValueError):
-            parse_mas_filename_schema(Path('br01.h5'))
+            parse_psi_filename_schema(Path('br01.h5'))
 
     def test_returns_tuple_of_str_and_int(self):
-        qty, seq = parse_mas_filename_schema(Path('br001001.h5'))
+        qty, seq = parse_psi_filename_schema(Path('br001001.h5'))
         assert isinstance(qty, str)
         assert isinstance(seq, int)
-
-
-class TestHdfExtMapping:
-    def test_h5_extension(self):
-        assert HDF_EXT_MAPPING['h5'] == '.h5'
-
-    def test_h4_extension(self):
-        assert HDF_EXT_MAPPING['h4'] == '.hdf'
-
-    def test_only_two_keys(self):
-        assert set(HDF_EXT_MAPPING.keys()) == {'h5', 'h4'}
