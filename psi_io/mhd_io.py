@@ -3,69 +3,11 @@ r"""Lazy HDF readers for PSI MAS and POT3D magnetohydrodynamic model output.
 This module provides a unified, unit-aware interface for reading three-dimensional
 MHD model output from Predictive Science Inc.'s MAS and POT3D solvers.  Both HDF4
 (``.hdf``) and HDF5 (``.h5``) files are supported through a common API.
-
-Class hierarchy
----------------
-The implementation uses a mixin-based hierarchy that separates file format concerns
-from physical model concerns:
-
-.. code-block:: text
-
-    _HdfInterface (ABC)                 ← public interface contract
-    └── _HdfData (_HdfInterface, ABC)   ← shared MAS/POT3D logic
-        ├── H5MasData  (_H5DataMixin, _HdfData)   ← HDF5 MAS output
-        ├── H4MasData  (_H4DataMixin, _HdfData)   ← HDF4 MAS output
-        ├── H5Pot3dData(_H5DataMixin, _HdfData)   ← HDF5 POT3D output
-        └── H4Pot3dData(_H4DataMixin, _HdfData)   ← HDF4 POT3D output
-
-    _HdfInterface (ABC)
-    └── _HdfScale (_HdfInterface, ABC)  ← coordinate axis arrays
-        ├── H5Scale                     ← HDF5 dimension scale
-        └── H4Scale                     ← HDF4 SDS dimension
-
-Format mixins inject all file-I/O and raw-array logic:
-
-    _H5DataMixin   ← h5py-backed I/O (open/close/data property)
-    _H4DataMixin   ← pyhdf-backed I/O (open/close/data property)
-
-Lazy-loading pattern
---------------------
-All concrete data classes open the HDF file and read metadata at instantiation, but
-do **not** load the array into memory until :meth:`_HdfData.read` is called.  This
-makes it cheap to inspect many files:
-
->>> from pathlib import Path
->>> from psi_io.mhd_io import PsiData          # doctest: +SKIP
->>> reader = PsiData('br001001.h5', model='mas') # file opened, metadata parsed
->>> reader.quantity                              # 'br' — from filename / file attrs
->>> data, r, t, p = reader.read()               # array loaded here
-
-Axis ordering convention
-------------------------
-PSI HDF files are written by Fortran code in column-major order, so when h5py reads
-them into numpy (row-major), the physical ``(r, θ, φ)`` coordinate ordering is
-reversed to ``(φ, θ, r)`` in the numpy array.  The reader hides this inversion:
-
-- :attr:`_HdfData.shape` reports the numpy storage shape ``(Nφ, Nθ, Nr)``.
-- :meth:`_HdfInterface.__getitem__` accepts indices in the physical ``(r, θ, φ)``
-  user order and internally reverses them to match numpy storage.
-
-Public factory
---------------
-:func:`PsiData` is the recommended entry point.  It inspects the file extension and
-the ``model`` keyword to select the correct concrete class:
-
->>> reader = PsiData('br001001.h5', model='mas')    # doctest: +SKIP
->>> reader = PsiData('br001001.hdf', model='pot3d') # doctest: +SKIP
-
-See Also
---------
-psi_io._props : Physical property metadata (units, mesh stagger) for each quantity.
-psi_io._units : Physical normalization constants and custom astropy units.
-psi_io._mesh  : Staggered-grid utilities used during mesh conversion on read.
 """
 
 from __future__ import annotations
+
+__all__ = ['PsiData',]
 
 import re
 from abc import abstractmethod, ABC
@@ -83,23 +25,33 @@ try:
 except ImportError:
     h4 = None
 
-from psi_io._mesh import (Mesh, MeshCodeType,
-                          _normalize_mesh_code, remesh_arr,
+from psi_io._mesh import (Mesh,
+                          MeshCodeType,
+                          _normalize_mesh_code,
+                          _remesh_array,
+                          _parse_remesh,
                           )
-from psi_io._props import (Props,
-                           MasQuantities,
-                           Pot3dQuantities,
-                           PsiScales,
-                           _MAS_QUANTITY_PROPS_MAPPING,
-                           _POT3D_QUANTITY_PROPS_MAPPING,
-                           _PSI_SCALE_PROPS_MAPPING)
+from psi_io._models import (Props,
+                            PsiScales,
+                            ModelType,
+                            extract_quantity_from_filepath,
+                            extract_sequence_from_filepath, get_model_prop_caller)
 from psi_io._units import decompose_mas_units
 from psi_io.psi_io import (PathLike,
                            PSI_DATA_ID,
                            SDC_TYPE_CONVERSIONS,
                            _except_no_pyhdf,)
 
-HDF_EXT_MAPPING = {'h5': '.h5', 'h4': '.hdf',}
+
+HdfVersionType = Literal[4, 5]
+"""Literal type alias for the two supported HDF file format versions.
+
+``'h5'`` — HDF5, accessed via h5py.
+``'h4'`` — HDF4, accessed via pyhdf (optional dependency).
+"""
+
+
+_HDF_EXT_MAPPING = MappingProxyType({'h4': '.hdf', 'h5': '.h5', })
 """Mapping from HDF version string to file extension.
 
 Used by :class:`_HdfData.__init__` to validate that the supplied file has an
@@ -109,40 +61,27 @@ extension consistent with the concrete class's format mixin.
 ``'h4'`` → ``'.hdf'`` (HDF4 files, read via pyhdf)
 """
 
-_DATA_SLOTS = ('_fileref', '_filepath', '_datalabel', '_quantity', '_sequence', '_unit', '_mesh', '_scales')
+
+_DATA_SLOTS = ('_model', '_fileref', '_filepath', '_datalabel', '_quantity', '_sequence', '_unit', '_mesh', '_scales')
 """Slot names shared by all concrete :class:`_HdfData` subclasses.
 
 Stored as a module-level tuple so it can be referenced in ``__slots__`` declarations
 of both the abstract base and the concrete classes without repetition.
 """
 
-ModelType = Literal['mas', 'pot3d', 'scale']
-"""Literal type alias for the three recognized PSI model types.
+_SCALE_SLOTS = ('_model', '_dataref', '_datalabel', '_quantity', '_unit', '_mesh')
+# TODO: include documentation
 
-``'mas'``
-    MAS (Magnetohydrodynamic Algorithm outside a Sphere) plasma model output.
-``'pot3d'``
-    POT3D potential-field source-surface (PFSS) magnetic field output.
-``'scale'``
-    Coordinate scale arrays (``r``, ``θ``, ``φ``) embedded in MAS/POT3D HDF files.
-    Used internally; callers should not pass ``'scale'`` to :func:`PsiData`.
-"""
 
-HdfVersionType = Literal['h4', 'h5']
-"""Literal type alias for the two supported HDF file format versions.
-
-``'h5'`` — HDF5, accessed via h5py.
-``'h4'`` — HDF4, accessed via pyhdf (optional dependency).
-"""
-
-_CODE_UNIT_ALIASES = {'native', 'code', 'model'}
+_CODE_UNIT_ALIASES = {'native', 'code', 'model', 'psi'}
 """Set of strings that request code-unit output from :meth:`_HdfInterface.read`.
 
 When the ``units`` argument to ``read()`` is one of these strings, the data are
 returned in MAS code units (dimensionless ratios) without any physical conversion.
 """
 
-_REAL_UNIT_ALIASES = {'real', 'phys', 'physical'}
+
+_REAL_UNIT_ALIASES = {'real', 'phys', 'physical', 'cgs'}
 """Set of strings that request decomposed CGS output from :meth:`_HdfInterface.read`.
 
 When the ``units`` argument to ``read()`` is one of these strings, the data are
@@ -150,268 +89,9 @@ converted to physical CGS units via :func:`~psi_io._units.decompose_mas_units`.
 """
 
 
-METADATA_SCHEMA = dict.fromkeys(['quantity', 'sequence', 'unit', 'mesh'])
-"""Template dictionary defining the four metadata fields required by every reader.
+METADATA_SCHEMA = dict.fromkeys(['quantity', 'sequence', 'unit', 'scalar', 'mesh'])
+# TODO: include documentation
 
-Keys: ``'quantity'``, ``'sequence'``, ``'unit'``, ``'mesh'``.  Values are all
-``None`` in the template.  :meth:`_HdfData._parse_properties` merges caller-supplied
-keyword arguments, file-level HDF attributes, and filename-parsed defaults to produce
-a fully populated copy of this schema.
-"""
-
-MATCH_QUANTITIES = '|'.join(re.escape(q) for q in sorted(_MAS_QUANTITY_PROPS_MAPPING.keys(), key=len, reverse=True))
-"""Regex alternation string matching any valid MAS quantity name (case-insensitive).
-
-Quantities are sorted longest-first to avoid partial matches (e.g. ``'heat'`` must be
-tried before ``'h'``).  Used in :data:`FILEPATH_SCHEMA` and
-:func:`extract_quantity_from_filepath`.
-"""
-
-FILEPATH_SCHEMA = rf'^({MATCH_QUANTITIES})(\d{{3}}(?:\d{{3}})?)$'
-"""Regex pattern for the strict MAS filename schema ``<quantity><sequence>``.
-
-The stem (filename without extension) must consist of exactly one recognized MAS
-quantity name followed by a 3- or 6-digit decimal sequence number.
-
-Groups:
-
-1. Quantity name (e.g. ``'br'``, ``'heat'``).
-2. Sequence number (e.g. ``'001'``, ``'001001'``).
-
-Used by :func:`parse_mas_filename_schema`; see also :func:`extract_quantity_from_filepath`
-for a lenient variant that does not require the sequence suffix.
-"""
-
-
-def get_mas_quantity_properties(variable: MasQuantities) -> Props:
-    """Return the :class:`~psi_io._props.Props` descriptor for a MAS quantity.
-
-    Parameters
-    ----------
-    variable : MasQuantities
-        Case-insensitive MAS quantity name.  Valid values: ``'vr'``, ``'vt'``,
-        ``'vp'``, ``'br'``, ``'bt'``, ``'bp'``, ``'jr'``, ``'jt'``, ``'jp'``,
-        ``'t'``, ``'te'``, ``'tp'``, ``'rho'``, ``'p'``, ``'ep'``, ``'em'``,
-        ``'zp'``, ``'zm'``, ``'heat'``.
-
-    Returns
-    -------
-    out : Props
-        Immutable descriptor carrying the quantity name, description, astropy unit,
-        and mesh stagger code.
-
-    Raises
-    ------
-    ValueError
-        If *variable* is not a recognized MAS quantity.
-
-    Examples
-    --------
-    >>> from psi_io.mhd_io import get_mas_quantity_properties
-    >>> props = get_mas_quantity_properties('br')
-    >>> props.desc
-    'Magnetic Field (Radial Component)'
-    >>> get_mas_quantity_properties('BR').name   # case-insensitive
-    'br'
-    """
-    try:
-        return _MAS_QUANTITY_PROPS_MAPPING[variable.lower()]
-    except KeyError:
-        raise ValueError(f"Invalid variable '{variable}'. "
-                         f"Valid options are: {', '.join(_MAS_QUANTITY_PROPS_MAPPING.keys())}") from None
-
-
-def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> Props:
-    """Return the :class:`~psi_io._props.Props` descriptor for a POT3D quantity.
-
-    Parameters
-    ----------
-    variable : Pot3dQuantities
-        Case-insensitive POT3D quantity name.  Valid values: ``'br'``, ``'bt'``,
-        ``'bp'``.
-
-    Returns
-    -------
-    out : Props
-        Immutable descriptor for the requested POT3D magnetic field component.
-
-    Raises
-    ------
-    ValueError
-        If *variable* is not a recognized POT3D quantity.
-
-    Examples
-    --------
-    >>> from psi_io.mhd_io import get_pot3d_quantity_properties
-    >>> get_pot3d_quantity_properties('bp').name
-    'bp'
-    """
-    try:
-        return _POT3D_QUANTITY_PROPS_MAPPING[variable.lower()]
-    except KeyError:
-        raise ValueError(f"Invalid variable '{variable}'. "
-                         f"Valid options are: {', '.join(_POT3D_QUANTITY_PROPS_MAPPING.keys())}") from None
-
-
-def get_psi_scale_properties(variable: PsiScales) -> Props:
-    """Return the :class:`~psi_io._props.Props` descriptor for a PSI coordinate scale.
-
-    Parameters
-    ----------
-    variable : PsiScales
-        Coordinate label.  The first character is used for lookup, so ``'r'``,
-        ``'radius'``, ``'t'``, ``'theta'``, ``'p'``, and ``'phi'`` are all accepted.
-
-    Returns
-    -------
-    out : Props
-        Descriptor for the requested coordinate axis, carrying the appropriate
-        astropy unit (``PSI_rsun`` for ``'r'``, ``PSI_angle`` for ``'t'`` and
-        ``'p'``).
-
-    Raises
-    ------
-    ValueError
-        If the first character of *variable* is not ``'r'``, ``'t'``, or ``'p'``.
-
-    Examples
-    --------
-    >>> from psi_io.mhd_io import get_psi_scale_properties
-    >>> get_psi_scale_properties('r').desc
-    'Radial Scale (Solar Radii)'
-    >>> get_psi_scale_properties('theta').name   # uses first character only
-    't'
-    """
-    try:
-        return _PSI_SCALE_PROPS_MAPPING[variable.lower()[0]]
-    except KeyError:
-        raise ValueError(f"Invalid variable '{variable}'. "
-                         f"Valid options are: {', '.join(_PSI_SCALE_PROPS_MAPPING.keys())}") from None
-
-
-def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -> str | None:
-    """Extract the MAS/POT3D quantity name from a filename stem.
-
-    Matches the longest recognized quantity prefix at the start of the stem (before
-    any digit or end-of-string).  The match is case-insensitive.
-
-    Parameters
-    ----------
-    ifile : Path
-        File path whose stem is examined.  Only the stem (filename without
-        extension) is inspected.
-    default : str or None, optional
-        Value to return when no quantity prefix is found.  Defaults to ``None``.
-
-    Returns
-    -------
-    out : str or None
-        Lower-case quantity name (e.g. ``'br'``), or *default* if the stem does not
-        begin with a recognized quantity prefix.
-
-    Examples
-    --------
-    >>> from pathlib import Path
-    >>> from psi_io.mhd_io import extract_quantity_from_filepath
-    >>> extract_quantity_from_filepath(Path('br001001.h5'))
-    'br'
-    >>> extract_quantity_from_filepath(Path('heat001.h5'))
-    'heat'
-    >>> extract_quantity_from_filepath(Path('unknown.h5')) is None
-    True
-    >>> extract_quantity_from_filepath(Path('unknown.h5'), default='br')
-    'br'
-    """
-    match = re.match(rf'^({MATCH_QUANTITIES})(?=[^a-zA-Z]|$)', ifile.stem, re.IGNORECASE)
-    return match.group(1).lower() if match else default
-
-
-def extract_sequence_from_filepath(ifile: Path, default: Optional[int] = None) -> int | None:
-    """Extract the sequence number from a filename stem.
-
-    Searches for the first occurrence of a 3- or 6-digit decimal run in the stem.
-    The match is not anchored to a particular position so it works for both the
-    strict MAS schema (``br001001.h5``) and looser naming conventions.
-
-    Parameters
-    ----------
-    ifile : Path
-        File path whose stem is examined.
-    default : int or None, optional
-        Value to return when no 3- or 6-digit run is found.  Defaults to ``None``.
-
-    Returns
-    -------
-    out : int or None
-        Integer sequence number, or *default* if no match is found.
-
-    Examples
-    --------
-    >>> from pathlib import Path
-    >>> from psi_io.mhd_io import extract_sequence_from_filepath
-    >>> extract_sequence_from_filepath(Path('br001001.h5'))
-    1001
-    >>> extract_sequence_from_filepath(Path('vr001.h5'))
-    1
-    >>> extract_sequence_from_filepath(Path('nosequence.h5')) is None
-    True
-    """
-    match = re.search(r'\d{3}(?:\d{3})?', ifile.stem)
-    return int(match.group()) if match else default
-
-
-def parse_mas_filename_schema(ifile: Path):
-    """Parse a MAS HDF filename that follows the strict ``<quantity><sequence>`` schema.
-
-    The filename stem must consist of exactly one recognized MAS quantity name
-    followed immediately by a 3- or 6-digit sequence number, with no other characters.
-    The match is case-insensitive.
-
-    Parameters
-    ----------
-    ifile : Path
-        File path to parse.  The stem is matched against :data:`FILEPATH_SCHEMA`.
-
-    Returns
-    -------
-    quantity : str
-        Lower-case quantity name (e.g. ``'br'``).
-    sequence : int
-        Integer sequence number (e.g. ``1001``).
-
-    Raises
-    ------
-    ValueError
-        If the filename stem does not match the expected schema.
-
-    Examples
-    --------
-    >>> from pathlib import Path
-    >>> from psi_io.mhd_io import parse_mas_filename_schema
-    >>> parse_mas_filename_schema(Path('br001001.h5'))
-    ('br', 1001)
-    >>> parse_mas_filename_schema(Path('heat001.hdf'))
-    ('heat', 1)
-    >>> parse_mas_filename_schema(Path('notvalid.h5'))
-    Traceback (most recent call last):
-        ...
-    ValueError: Filename 'notvalid.h5' does not match expected MAS filename schema: ...
-    """
-    matches = re.match(FILEPATH_SCHEMA, ifile.stem, re.IGNORECASE)
-    if not matches:
-        raise ValueError(f"Filename '{ifile.name}' does not match expected MAS filename schema: "
-                         f"'<quantity><sequence>'. Valid quantities are: {', '.join(_MAS_QUANTITY_PROPS_MAPPING.keys())}. "
-                         f"Sequence should be a 3 or 6 digit number.")
-    quantity, sequence = matches.groups()
-    return quantity, int(sequence)
-
-_PROP_MAPPING = {'mas': get_mas_quantity_properties, 'pot3d': get_pot3d_quantity_properties, 'scale': get_psi_scale_properties,}
-"""Internal dispatch table from model type string to its property-lookup function.
-
-Keys are :data:`ModelType` literals; values are the corresponding ``get_*_properties``
-callables.  Used by :class:`_HdfData._parse_properties` and the ``description`` and
-``native_properties`` properties of :class:`_HdfInterface`.
-"""
 
 Scales = namedtuple("Scales", ['r', 't', 'p'])
 """Named tuple holding the three coordinate scale readers for a data object.
@@ -428,6 +108,121 @@ p : H5Scale or H4Scale
 Created by :meth:`_HdfData._set_scales` during instantiation and exposed as
 :attr:`_HdfData.scales`.
 """
+
+
+def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
+    """Normalize index-space slice arguments to a tuple of :class:`slice` objects.
+
+    Accepts a mix of ``None``, ``int``, ``slice``, ``(start, stop[, step])`` tuples,
+    and ``Ellipsis``, and yields one slice per spatial axis.  Validates that any axis
+    flagged for remeshing contains at least two elements (required for averaging).
+
+    Parameters
+    ----------
+    *args : None, int, slice, tuple, or Ellipsis
+        Index arguments in physical ``(r, θ, φ)`` user order.  Fewer arguments than
+        dimensions are padded with ``None`` (full-axis slices).
+    shape : tuple[int, ...]
+        Physical ``(r, θ, φ)`` shape (i.e. ``reversed(self.shape)`` from storage).
+    remesh : tuple[bool, ...]
+        Per-axis remesh flags in the same ``(r, θ, φ)`` order.
+
+    Yields
+    ------
+    s : slice
+        Normalized slice for each axis.
+
+    Raises
+    ------
+    ValueError
+        If any remeshed axis contains fewer than two elements.
+    TypeError
+        If an argument cannot be converted to a slice (via :func:`_cast_to_slice`).
+    """
+    if Ellipsis in args:
+        n_missing = len(shape) - (len(args) - 1)
+        idx = args.index(Ellipsis)
+        args = args[:idx] + (None,) * n_missing + args[idx + 1:]
+    if len(args) < len(shape):
+        args += (None,) * (len(shape) - len(args))
+
+    for arg, dim_size, do_remesh in zip(args, shape, remesh, strict=True):
+        slice_ = _cast_to_slice(arg)
+        start, stop, step = slice_.indices(dim_size)
+        if do_remesh and (stop - start) // step < 2:
+            raise ValueError(f"Cannot remesh dimension with slice {slice_} "
+                             f"because it does not include at least two indices.")
+        yield slice_
+
+
+def _parse_vslice_args(dim, scale):
+    """Convert a value-space dimension specifier to an index-space slice.
+
+    If *dim* is a bare float, it is treated as a value in the coordinate's native
+    unit and first converted to an :class:`~astropy.units.Quantity`.  If *dim* is
+    an :class:`~astropy.units.Quantity`, its value is located in *scale* via binary
+    search and a two-element neighborhood slice is returned for interpolation.
+    Non-quantity inputs are passed through to :func:`_cast_to_slice` unchanged.
+
+    Parameters
+    ----------
+    dim : float, astropy.units.Quantity, int, slice, or tuple
+        Dimension specifier.  Floats and Quantities trigger value-based lookup;
+        all other types are forwarded to :func:`_cast_to_slice`.
+    scale : H5Scale or H4Scale
+        Coordinate scale providing the values to search and the native unit for
+        unit conversion.
+
+    Returns
+    -------
+    s : slice
+        Index-space slice (a two-index neighborhood for value lookups; the original
+        slice for index-space inputs).
+    val : astropy.units.Quantity or None
+        The matched physical value for value-based lookups, or ``None`` for
+        index-based inputs.
+    """
+    val = None
+    if isinstance(dim, float):
+        dim = dim * scale.unit
+    if isinstance(dim, u.Quantity):
+        val = dim.to(scale.unit)
+        i1 = int(np.clip(np.searchsorted(scale.data, val.value), 1, scale.size - 2))
+        dim = (i1-1, i1+1)
+    return _cast_to_slice(dim), val
+
+
+def _cast_to_slice(input):
+    """Convert a dimension index argument to a :class:`slice` object.
+
+    Parameters
+    ----------
+    input : None, int, slice, list, or tuple
+        - ``None`` → ``slice(None)`` (full axis).
+        - :class:`int` → ``slice(input, input + 1)`` (single element, axis retained).
+        - :class:`slice` → returned unchanged.
+        - :class:`list` or :class:`tuple` → ``slice(*input)`` (unpacked as
+          ``(start, stop)`` or ``(start, stop, step)``).
+
+    Returns
+    -------
+    out : slice
+
+    Raises
+    ------
+    TypeError
+        If *input* is not one of the recognized types.
+    """
+    if input is None:
+        return slice(None)
+    elif isinstance(input, int):
+        return slice(input, input + 1)
+    elif isinstance(input, slice):
+        return input
+    elif isinstance(input, (list, tuple)):
+        return slice(*input)
+    else:
+        raise TypeError(f"Invalid slice argument: {input!r}. Expected int, slice, or sequence.")
 
 
 # =============================================================================
@@ -456,7 +251,6 @@ class _HdfInterface(ABC):
     __slots__ = ()
 
     _HDFN: ClassVar[HdfVersionType]                        # provided by format mixin
-    _MODEL: ClassVar[ModelType]                           # provided by concrete subclass
 
     def __getitem__(self, args):
         """Index the underlying HDF dataset with physical ``(r, θ, φ)`` axis ordering.
@@ -542,20 +336,6 @@ class _HdfInterface(ABC):
         ...
 
     @property
-    def description(self) -> str:
-        """Human-readable description of the physical quantity.
-
-        Looked up from the appropriate property mapping via :data:`_PROP_MAPPING`
-        using :attr:`_MODEL` and the stored :attr:`quantity` name.
-
-        Returns
-        -------
-        out : str
-            Description string (e.g. ``'Magnetic Field (Radial Component)'``).
-        """
-        return _PROP_MAPPING[self._MODEL](self._quantity).desc
-
-    @property
     @abstractmethod
     def data(self) -> np.ndarray:
         """Raw array view into the HDF dataset (not yet loaded into RAM).
@@ -567,8 +347,8 @@ class _HdfInterface(ABC):
         ...
 
     @property
-    def native_properties(self) -> Props:
-        """The :class:`~psi_io._props.Props` descriptor for this quantity.
+    def props(self) -> Props:
+        """The :class:`~psi_io._models.Props` descriptor for this quantity.
 
         Returns the full property bundle (name, description, unit, mesh code) from
         the appropriate mapping for this reader's model type and quantity.
@@ -578,7 +358,26 @@ class _HdfInterface(ABC):
         out : Props
             Immutable property descriptor for :attr:`quantity`.
         """
-        return _PROP_MAPPING[self._MODEL](self._quantity)
+        prop_getter = get_model_prop_caller(self._model)
+        return prop_getter(self._quantity)
+
+    @property
+    def description(self) -> str:
+        """Human-readable description of the physical quantity.
+
+        Looked up from the appropriate property mapping via :data:`_PROP_GETTER_MAPPING`
+        using :attr:`_MODEL` and the stored :attr:`quantity` name.
+
+        Returns
+        -------
+        out : str
+            Description string (e.g. ``'Magnetic Field (Radial Component)'``).
+        """
+        return self.props.desc
+
+    @property
+    def is_scalar(self) -> bool:
+        return self.props.scalar
 
     @abstractmethod
     def read(self,
@@ -647,7 +446,7 @@ class _HdfInterface(ABC):
         sargs = _parse_islice_args(*args, shape=tuple(reversed(self.shape)), remesh=remesh)
         sargs = tuple(sargs)
 
-        odata = remesh_arr(self[sargs], remesh=tuple(reversed(remesh))) * self.unit
+        odata = _remesh_array(self[sargs], remesh=tuple(reversed(remesh))) * self.unit
         if units is not None:
             ounit = str(units).lower()
             if ounit in _CODE_UNIT_ALIASES:
@@ -681,7 +480,7 @@ class _HdfInterface(ABC):
         out : astropy.units.Quantity
             Sliced and optionally remeshed data in code units.
         """
-        return remesh_arr(self[sargs], remesh=remesh) * self.unit
+        return _remesh_array(self[sargs], remesh=remesh) * self.unit
 
 
 # =============================================================================
@@ -701,12 +500,12 @@ class _HdfScale(_HdfInterface, ABC):
     """
 
     __slots__ = ()
-    _MODEL = 'scale'
 
     def __init__(self,
                  parent,
                  dim_label: str,
-                 data_label: str,):
+                 data_label: str,
+                 scale_model: str = 'scale'):
         """Initialize a scale from a parent data reader and dimension metadata.
 
         Parameters
@@ -728,21 +527,20 @@ class _HdfScale(_HdfInterface, ABC):
         """
         self._dataref = parent
         self._datalabel: str = data_label
-
-        if self.ndim != 1:
-            raise ValueError(f"Expected 1D coordinate variable, "
-                             f"found {self.ndim}D dataset with shape {self.shape}.")
+        self._model: str = scale_model
 
         self._set_properties(dim_label)
 
     def _set_properties(self, scale: str):
         """Look up and cache the unit for this coordinate axis."""
-        try:
-            qprops = _PROP_MAPPING[self._MODEL](scale)
-            self._quantity: PsiScales = qprops.name
-            self._unit: u.Unit = qprops.unit
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"Metadata type coercion failed: {e}") from e
+        prop_getter = get_model_prop_caller(self._model)
+        qprops = prop_getter(scale)
+        if self.ndim != qprops.ndim:
+            raise ValueError(f"Expected {qprops.ndim}D coordinate variable for scale '{scale}', "
+                             f"found {self.ndim}D dataset with shape {self.shape}.")
+        self._quantity: PsiScales = qprops.name
+        self._unit: u.Unit = qprops.unit
+        self._mesh: Mesh = self._dataref.mesh['rtp'.index(self._quantity)],
 
     @property
     def unit(self) -> u.Unit:
@@ -756,12 +554,7 @@ class _HdfScale(_HdfInterface, ABC):
 
     @property
     def mesh(self) -> tuple[Mesh, ...]:
-        """Single-element mesh tuple matching the parent data's stagger on this axis.
-
-        Returns the mesh position for this coordinate axis as derived from the parent
-        data's stagger tuple.  ``'r'`` → index 0, ``'t'`` → index 1, ``'p'`` → 2.
-        """
-        return self._dataref.mesh['rtp'.index(self._quantity)],
+        return self._mesh
 
     def read(self,
              *args,
@@ -797,7 +590,7 @@ class _HdfScale(_HdfInterface, ABC):
 class H5Scale(_HdfScale):
     """HDF5 coordinate scale variable backed by an h5py dimension scale dataset."""
 
-    __slots__ = ('_dataref', '_datalabel', '_quantity', '_unit')
+    __slots__ = _SCALE_SLOTS
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -832,7 +625,7 @@ class H5Scale(_HdfScale):
 class H4Scale(_HdfScale):
     """HDF4 coordinate scale variable backed by a pyhdf SDS dimension."""
 
-    __slots__ = ('_dataref', '_datalabel', '_quantity', '_unit')
+    __slots__ = _SCALE_SLOTS
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -878,7 +671,7 @@ class _H5DataMixin:
     """
 
     __slots__ = ()
-    _HDFN = 'h5'
+    _HDFN = 5
 
     @classmethod
     def read_file(cls, ifile: PathLike):
@@ -936,7 +729,7 @@ class _H5DataMixin:
 
     def _set_scales(self):
         """Construct :class:`H5Scale` objects from h5py dimension scales."""
-        self._scales = Scales(*tuple(H5Scale(self, scale, label.label)
+        self._scales = Scales(*(H5Scale(self, scale, label.label)
                                      for scale, label in zip('rtp', self.data.dims, strict=True)))
 
 
@@ -948,7 +741,7 @@ class _H4DataMixin:
     """
 
     __slots__ = ()
-    _HDFN = 'h4'
+    _HDFN = 4
 
     @classmethod
     def read_file(cls, ifile: PathLike):
@@ -1021,48 +814,12 @@ class _H4DataMixin:
 # =============================================================================
 
 class _HdfData(_HdfInterface, ABC):
-    """Abstract base for PSI MHD data files (MAS and POT3D).
 
-    Implements the full :class:`_HdfInterface` contract except for the file-I/O
-    properties (``shape``, ``dtype``, ``data``, etc.) and file management methods
-    (``open``, ``close``, ``delete``, ``_set_scales``), which are supplied by the
-    format mixins :class:`_H5DataMixin` and :class:`_H4DataMixin`.
-
-    Concrete subclasses must combine a format mixin with this class and declare the
-    ``_MODEL`` class variable:
-
-    .. code-block:: python
-
-        class H5MasData(_H5DataMixin, _HdfData):
-            _MODEL = 'mas'
-
-    Metadata resolution
-    -------------------
-    :meth:`_parse_properties` resolves the four metadata fields
-    (``quantity``, ``sequence``, ``unit``, ``mesh``) from three sources, in order
-    of decreasing priority:
-
-    1. Keyword arguments passed to ``__init__``.
-    2. HDF file-level attributes (``quantity``, ``sequence``, etc.).
-    3. The filename stem (quantity prefix and sequence digits).
-
-    If any field remains ``None`` after merging all sources, a :class:`ValueError`
-    is raised listing the missing fields.
-
-    Context manager
-    ---------------
-    Instances can be used as context managers; the file handle is closed on exit:
-
-    .. code-block:: python
-
-        with PsiData('br001001.h5') as reader:
-            data, r, t, p = reader.read()
-    """
-
-    __slots__ = _DATA_SLOTS
+    __slots__ = ()
 
     def __init__(self,
                  ifile: PathLike, /,
+                 model: ModelType,
                  dataset_id: Optional[str] = None,
                  **kwargs):
         """Open an HDF file and parse metadata for one PSI output quantity.
@@ -1092,19 +849,17 @@ class _HdfData(_HdfInterface, ABC):
             cannot be resolved.
         """
         ifile = Path(ifile)
+        hdfv = f'h{self._HDFN}'
         if not ifile.is_file():
             raise FileNotFoundError(f"File '{ifile}' does not exist.")
-        if ifile.suffix != HDF_EXT_MAPPING[self._HDFN]:
+        if ifile.suffix != _HDF_EXT_MAPPING[hdfv]:
             raise ValueError(f"File '{ifile}' does not have the correct extension for "
-                             f"{self._HDFN} files (expected '{HDF_EXT_MAPPING[self._HDFN]}' extension).")
+                             f"{self._HDFN} files (expected '{_HDF_EXT_MAPPING[hdfv]}' extension).")
 
         self._filepath: Path = ifile
-        self._datalabel: str = dataset_id or PSI_DATA_ID[self._HDFN]
+        self._datalabel: str = dataset_id or PSI_DATA_ID[hdfv]
         self._fileref = self.read_file(ifile)
-
-        if self.ndim != 3:
-            raise ValueError(f"Expected 3D dataset, "
-                             f"found {self.ndim}D dataset with shape {self.shape}.")
+        self._model: str = model
 
         self._set_properties(**self._parse_properties(**kwargs))
         self._set_scales()
@@ -1145,7 +900,7 @@ class _HdfData(_HdfInterface, ABC):
         1. Keyword arguments in *kwargs* that match :data:`METADATA_SCHEMA` keys.
         2. HDF file-level attributes that match :data:`METADATA_SCHEMA` keys.
         3. Quantity name and sequence number inferred from the filename stem.
-        4. The canonical :class:`~psi_io._props.Props` defaults for the resolved
+        4. The canonical :class:`~psi_io._models.Props` defaults for the resolved
            quantity (unit and mesh).
 
         Parameters
@@ -1164,17 +919,22 @@ class _HdfData(_HdfInterface, ABC):
         ValueError
             If any metadata field is still ``None`` after merging all sources.
         """
+        prop_getter = get_model_prop_caller(self._model)
+
         input_attrs = {k: v for k, v in kwargs.items() if k in METADATA_SCHEMA}
         file_attrs = {k: v for k, v in self.attrs.items() if k in METADATA_SCHEMA}
 
-        quantity = input_attrs.pop('quantity',
-                                   file_attrs.pop('quantity',
+        quantity = input_attrs.get('quantity',
+                                   file_attrs.get('quantity',
                                                   extract_quantity_from_filepath(self._filepath, '')))
-        sequence = input_attrs.pop('sequence',
-                                   file_attrs.pop('sequence',
+        sequence = input_attrs.get('sequence',
+                                   file_attrs.get('sequence',
                                                   extract_sequence_from_filepath(self._filepath, 0)))
 
-        native_props = _PROP_MAPPING[self._MODEL](quantity)
+        native_props = prop_getter(quantity)
+        if self.ndim != native_props.ndim:
+            raise ValueError(f"Expected {native_props.ndim}D dataset for quantity '{quantity}', "
+                             f"found {self.ndim}D dataset with shape {self.shape}.")
 
         native_attrs = dict(quantity=native_props.name,
                             sequence=sequence,
@@ -1317,7 +1077,7 @@ class _HdfData(_HdfInterface, ABC):
 # Concrete data classes
 # =============================================================================
 
-class H5MasData(_H5DataMixin, _HdfData):
+class H5Data(_H5DataMixin, _HdfData):
     """HDF5-backed MAS model data reader.
 
     Combines :class:`_H5DataMixin` (h5py file I/O) with :class:`_HdfData`
@@ -1325,23 +1085,10 @@ class H5MasData(_H5DataMixin, _HdfData):
     rather than calling this class directly.
     """
 
-    __slots__ = _HdfData.__slots__
-    _MODEL = 'mas'
+    __slots__ = _DATA_SLOTS
 
 
-class H5Pot3dData(_H5DataMixin, _HdfData):
-    """HDF5-backed POT3D model data reader.
-
-    Combines :class:`_H5DataMixin` (h5py file I/O) with :class:`_HdfData`
-    (POT3D metadata and :meth:`read` logic).  Use :func:`PsiData` to instantiate
-    rather than calling this class directly.
-    """
-
-    __slots__ = _HdfData.__slots__
-    _MODEL = 'pot3d'
-
-
-class H4MasData(_H4DataMixin, _HdfData):
+class H4Data(_H4DataMixin, _HdfData):
     """HDF4-backed MAS model data reader.
 
     Combines :class:`_H4DataMixin` (pyhdf file I/O) with :class:`_HdfData`
@@ -1350,191 +1097,17 @@ class H4MasData(_H4DataMixin, _HdfData):
     directly.
     """
 
-    __slots__ = _HdfData.__slots__
-    _MODEL = 'mas'
-
-
-class H4Pot3dData(_H4DataMixin, _HdfData):
-    """HDF4-backed POT3D model data reader.
-
-    Combines :class:`_H4DataMixin` (pyhdf file I/O) with :class:`_HdfData`
-    (POT3D metadata and :meth:`read` logic).  Requires the optional ``pyhdf``
-    dependency.  Use :func:`PsiData` to instantiate rather than calling this class
-    directly.
-    """
-
-    __slots__ = _HdfData.__slots__
-    _MODEL = 'pot3d'
-
+    __slots__ = _DATA_SLOTS
 
 # =============================================================================
 # Private helpers
 # =============================================================================
 
-def _parse_remesh(imesh, omesh):
-    """Compute per-axis remesh flags from source and target mesh tuples.
-
-    Compares the stored mesh stagger *imesh* against the requested target *omesh*
-    and yields a boolean flag for each axis:
-
-    - ``False`` — meshes match; no averaging needed.
-    - ``True``  — source is half mesh, target is main mesh; averaging will be applied.
-    - :class:`ValueError` — source is main mesh but target requests half mesh (not
-      supported; averaging can only go from half → main).
-
-    Parameters
-    ----------
-    imesh : tuple[Mesh, ...]
-        Current mesh stagger of the stored data.
-    omesh : tuple[Mesh, ...]
-        Target mesh stagger requested by the caller.
-
-    Yields
-    ------
-    flag : bool
-        ``True`` if that axis should be remeshed (half → main), ``False`` otherwise.
-
-    Raises
-    ------
-    ValueError
-        If any axis requests upsampling from main to half mesh.
-    """
-    for im, om in zip(imesh, omesh, strict=True):
-        if im == om:
-            yield False
-        elif im == Mesh.HALF and om == Mesh.MAIN:
-            yield True
-        elif im == Mesh.MAIN and om == Mesh.HALF:
-            raise ValueError(f"Cannot remesh from MAIN mesh to HALF mesh.")
-
-
-def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
-    """Normalize index-space slice arguments to a tuple of :class:`slice` objects.
-
-    Accepts a mix of ``None``, ``int``, ``slice``, ``(start, stop[, step])`` tuples,
-    and ``Ellipsis``, and yields one slice per spatial axis.  Validates that any axis
-    flagged for remeshing contains at least two elements (required for averaging).
-
-    Parameters
-    ----------
-    *args : None, int, slice, tuple, or Ellipsis
-        Index arguments in physical ``(r, θ, φ)`` user order.  Fewer arguments than
-        dimensions are padded with ``None`` (full-axis slices).
-    shape : tuple[int, ...]
-        Physical ``(r, θ, φ)`` shape (i.e. ``reversed(self.shape)`` from storage).
-    remesh : tuple[bool, ...]
-        Per-axis remesh flags in the same ``(r, θ, φ)`` order.
-
-    Yields
-    ------
-    s : slice
-        Normalized slice for each axis.
-
-    Raises
-    ------
-    ValueError
-        If any remeshed axis contains fewer than two elements.
-    TypeError
-        If an argument cannot be converted to a slice (via :func:`_cast_to_slice`).
-    """
-    if Ellipsis in args:
-        n_missing = len(shape) - (len(args) - 1)
-        idx = args.index(Ellipsis)
-        args = args[:idx] + (None,) * n_missing + args[idx + 1:]
-    if len(args) < len(shape):
-        args += (None,) * (len(shape) - len(args))
-
-    for arg, dim_size, do_remesh in zip(args, shape, remesh, strict=True):
-        slice_ = _cast_to_slice(arg)
-        start, stop, step = slice_.indices(dim_size)
-        if do_remesh and (stop - start) // step < 2:
-            raise ValueError(f"Cannot remesh dimension with slice {slice_} "
-                             f"because it does not include at least two indices.")
-        yield slice_
-
-
-def _parse_vslice_args(dim, scale):
-    """Convert a value-space dimension specifier to an index-space slice.
-
-    If *dim* is a bare float, it is treated as a value in the coordinate's native
-    unit and first converted to an :class:`~astropy.units.Quantity`.  If *dim* is
-    an :class:`~astropy.units.Quantity`, its value is located in *scale* via binary
-    search and a two-element neighborhood slice is returned for interpolation.
-    Non-quantity inputs are passed through to :func:`_cast_to_slice` unchanged.
-
-    Parameters
-    ----------
-    dim : float, astropy.units.Quantity, int, slice, or tuple
-        Dimension specifier.  Floats and Quantities trigger value-based lookup;
-        all other types are forwarded to :func:`_cast_to_slice`.
-    scale : H5Scale or H4Scale
-        Coordinate scale providing the values to search and the native unit for
-        unit conversion.
-
-    Returns
-    -------
-    s : slice
-        Index-space slice (a two-index neighborhood for value lookups; the original
-        slice for index-space inputs).
-    val : astropy.units.Quantity or None
-        The matched physical value for value-based lookups, or ``None`` for
-        index-based inputs.
-    """
-    val = None
-    if isinstance(dim, float):
-        dim = dim * scale.unit
-    if isinstance(dim, u.Quantity):
-        val = dim.to(scale.unit)
-        i1 = int(np.clip(np.searchsorted(scale.data, val.value), 1, scale.size - 2))
-        dim = (i1-1, i1+1)
-    return _cast_to_slice(dim), val
-
-
-def _cast_to_slice(input):
-    """Convert a dimension index argument to a :class:`slice` object.
-
-    Parameters
-    ----------
-    input : None, int, slice, list, or tuple
-        - ``None`` → ``slice(None)`` (full axis).
-        - :class:`int` → ``slice(input, input + 1)`` (single element, axis retained).
-        - :class:`slice` → returned unchanged.
-        - :class:`list` or :class:`tuple` → ``slice(*input)`` (unpacked as
-          ``(start, stop)`` or ``(start, stop, step)``).
-
-    Returns
-    -------
-    out : slice
-
-    Raises
-    ------
-    TypeError
-        If *input* is not one of the recognized types.
-    """
-    if input is None:
-        return slice(None)
-    elif isinstance(input, int):
-        return slice(input, input + 1)
-    elif isinstance(input, slice):
-        return input
-    elif isinstance(input, (list, tuple)):
-        return slice(*input)
-    else:
-        raise TypeError(f"Invalid slice argument: {input!r}. Expected int, slice, or sequence.")
-
-
 _DATA_CLASS_MAP = MappingProxyType({
-    ('.h5',  'mas'):   H5MasData,
-    ('.h5',  'pot3d'): H5Pot3dData,
-    ('.hdf', 'mas'):   H4MasData,
-    ('.hdf', 'pot3d'): H4Pot3dData,
+    '.h5':  H5Data,
+    '.hdf': H4Data,
 })
-"""Read-only dispatch table mapping ``(extension, model)`` pairs to concrete classes.
-
-Used by :func:`PsiData` to select the correct reader without a chain of
-``if``/``elif`` branches.  Keys are ``(file_extension, model_string)`` tuples;
-values are the corresponding concrete :class:`_HdfData` subclasses.
-"""
+# TODO: add documentation
 
 
 def PsiData(ifile: PathLike, /,
@@ -1563,7 +1136,7 @@ def PsiData(ifile: PathLike, /,
     - :attr:`mesh` — tuple of :class:`~psi_io._mesh.Mesh` flags describing the
       Yee-grid stagger position of each axis.
     - :attr:`description` — human-readable description of the physical quantity.
-    - :attr:`native_properties` — full :class:`~psi_io._props.Props` descriptor.
+    - :attr:`native_properties` — full :class:`~psi_io_models.Props` descriptor.
 
     The object also supports the context-manager protocol; the file handle is
     closed on exit from the ``with`` block.
@@ -1641,7 +1214,7 @@ def PsiData(ifile: PathLike, /,
         file attributes.
     unit : str or astropy.units.Unit, optional
         Override the code-to-physical unit derived from the quantity's
-        :class:`~psi_io._props.Props` entry.  Accepts any string parseable
+        :class:`~psi_io_models.Props` entry.  Accepts any string parseable
         by :class:`~astropy.units.Unit`, including named units (``'Gauss'``,
         ``'nT'``, ``'km/s'``), compound expressions (``'erg/cm**2/s'``),
         and scale-prefixed forms (``'mG'``, ``'μT'``); see
@@ -1649,7 +1222,7 @@ def PsiData(ifile: PathLike, /,
         :class:`~astropy.units.Unit` instance may also be passed directly.
     mesh : MeshCodeType, optional
         Override the mesh stagger inferred from the quantity's
-        :class:`~psi_io._props.Props` entry.  Useful for files whose stagger
+        :class:`~psi_io_models.Props` entry.  Useful for files whose stagger
         differs from the PSI convention.
 
     Returns
@@ -1713,11 +1286,9 @@ def PsiData(ifile: PathLike, /,
     >>> reader.shape             # (Nφ, Nθ, Nr) — numpy storage order
     """
     ifile = Path(ifile)
-    key = (ifile.suffix, model.lower())
-    cls = _DATA_CLASS_MAP.get(key)
+    cls = _DATA_CLASS_MAP.get(ifile.suffix)
     if cls is None:
         raise ValueError(
-            f"Unsupported combination of extension '{ifile.suffix}' and model '{model}'. "
-            f"Valid combinations: {[f'{ext}/{m}' for ext, m in _DATA_CLASS_MAP]}"
-        )
-    return cls(ifile, **kwargs)
+            f"Unsupported HDF extension '{ifile.suffix}'"
+        ) from None
+    return cls(ifile, model.lower(), **kwargs)
