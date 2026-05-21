@@ -19,6 +19,7 @@ from typing import Optional, Literal, ClassVar
 import numpy as np
 import h5py as h5
 import astropy.units as u
+from astropy.units.typing import UnitLike
 
 try:
     import pyhdf.SD as h4
@@ -29,13 +30,13 @@ from psi_io._mesh import (Mesh,
                           MeshCodeType,
                           _normalize_mesh_code,
                           _remesh_array,
-                          _parse_remesh,
+                          _parse_remesh, remesh_array,
                           )
 from psi_io._models import (Props,
                             PsiScales,
                             ModelType,
                             extract_quantity_from_filepath,
-                            extract_sequence_from_filepath, get_model_prop_caller)
+                            extract_sequence_from_filepath, get_model_prop_caller, MODEL_TYPE)
 from psi_io._units import decompose_mas_units
 from psi_io.psi_io import (PathLike,
                            PSI_DATA_ID,
@@ -46,8 +47,8 @@ from psi_io.psi_io import (PathLike,
 HdfVersionType = Literal[4, 5]
 """Literal type alias for the two supported HDF file format versions.
 
-``'h5'`` — HDF5, accessed via h5py.
-``'h4'`` — HDF4, accessed via pyhdf (optional dependency).
+``4`` — HDF4, accessed via pyhdf (optional dependency).
+``5`` — HDF5, accessed via h5py.
 """
 
 
@@ -62,15 +63,19 @@ extension consistent with the concrete class's format mixin.
 """
 
 
-_DATA_SLOTS = ('_model', '_fileref', '_filepath', '_datalabel', '_quantity', '_sequence', '_unit', '_mesh', '_scales')
+_DATA_SLOTS = ('_model', '_fileref', '_filepath', '_datalabel', '_quantity', '_sequence', '_unit', '_mesh', '_scales', '_values')
 """Slot names shared by all concrete :class:`_HdfData` subclasses.
 
 Stored as a module-level tuple so it can be referenced in ``__slots__`` declarations
 of both the abstract base and the concrete classes without repetition.
 """
 
-_SCALE_SLOTS = ('_model', '_dataref', '_datalabel', '_quantity', '_unit', '_mesh')
-# TODO: include documentation
+_SCALE_SLOTS = ('_model', '_dataref', '_datalabel', '_quantity', '_unit', '_mesh', '_values')
+"""Slot names shared by all concrete :class:`_HdfScale` subclasses.
+
+Stored as a module-level tuple so it can be referenced in ``__slots__`` declarations
+of both :class:`H5Scale` and :class:`H4Scale` without repetition.
+"""
 
 
 _CODE_UNIT_ALIASES = {'native', 'code', 'model', 'psi'}
@@ -90,7 +95,27 @@ converted to physical CGS units via :func:`~psi_io._units.decompose_mas_units`.
 
 
 METADATA_SCHEMA = dict.fromkeys(['quantity', 'sequence', 'unit', 'scalar', 'mesh'])
-# TODO: include documentation
+"""Template dict defining the five recognised metadata fields for PSI HDF datasets.
+
+Keys
+----
+``'quantity'``
+    Canonical lower-case quantity identifier extracted from the filename or file
+    attributes (e.g. ``'br'``, ``'vr'``).
+``'sequence'``
+    Integer time-step sequence number extracted from the filename or file attributes.
+``'unit'``
+    Code-to-physical unit for this quantity, as an :class:`~astropy.units.Unit`
+    or a string parseable by it.
+``'scalar'``
+    ``True`` if the quantity is a scalar field; ``False`` for vector components.
+``'mesh'``
+    Staggered-grid mesh code (:data:`~psi_io._mesh.MeshCodeType`) describing the
+    Yee-grid position of the quantity on each spatial axis.
+
+Used by :meth:`_HdfData._parse_properties` to filter keyword overrides and HDF file
+attributes against the set of known metadata keys.
+"""
 
 
 Scales = namedtuple("Scales", ['r', 't', 'p'])
@@ -110,12 +135,11 @@ Created by :meth:`_HdfData._set_scales` during instantiation and exposed as
 """
 
 
-def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
+def _parse_islice_args(*args, shape: tuple[int, ...],):
     """Normalize index-space slice arguments to a tuple of :class:`slice` objects.
 
     Accepts a mix of ``None``, ``int``, ``slice``, ``(start, stop[, step])`` tuples,
-    and ``Ellipsis``, and yields one slice per spatial axis.  Validates that any axis
-    flagged for remeshing contains at least two elements (required for averaging).
+    and ``Ellipsis``, and yields one slice per spatial axis.
 
     Parameters
     ----------
@@ -124,8 +148,6 @@ def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
         dimensions are padded with ``None`` (full-axis slices).
     shape : tuple[int, ...]
         Physical ``(r, θ, φ)`` shape (i.e. ``reversed(self.shape)`` from storage).
-    remesh : tuple[bool, ...]
-        Per-axis remesh flags in the same ``(r, θ, φ)`` order.
 
     Yields
     ------
@@ -135,7 +157,7 @@ def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
     Raises
     ------
     ValueError
-        If any remeshed axis contains fewer than two elements.
+        If a slice argument produces an empty dimension (``stop <= start``).
     TypeError
         If an argument cannot be converted to a slice (via :func:`_cast_to_slice`).
     """
@@ -146,12 +168,14 @@ def _parse_islice_args(*args, shape: tuple[int, ...], remesh: tuple[bool, ...]):
     if len(args) < len(shape):
         args += (None,) * (len(shape) - len(args))
 
-    for arg, dim_size, do_remesh in zip(args, shape, remesh, strict=True):
+    for arg, dim_size in zip(args, shape, strict=True):
         slice_ = _cast_to_slice(arg)
         start, stop, step = slice_.indices(dim_size)
-        if do_remesh and (stop - start) // step < 2:
-            raise ValueError(f"Cannot remesh dimension with slice {slice_} "
-                             f"because it does not include at least two indices.")
+        if stop <= start:
+            raise ValueError(f"Slice argument {arg!r} yields an empty dimension.")
+        # if do_remesh and (stop - start) // step < 2:
+        #     raise ValueError(f"Cannot remesh dimension with slice {slice_} "
+        #                      f"because it does not include at least two indices.")
         yield slice_
 
 
@@ -279,7 +303,14 @@ class _HdfInterface(ABC):
         """
         if not isinstance(args, tuple):
             args = (args,)
-        return self.data[tuple(reversed(args))]
+
+        if self._values is not None:
+            return self._values[args[::-1]]
+        else:
+            odata = self.data[args[::-1]]
+            if odata.shape == self.shape:
+                self._values = odata
+            return odata
 
     @property
     @abstractmethod
@@ -377,12 +408,22 @@ class _HdfInterface(ABC):
 
     @property
     def is_scalar(self) -> bool:
+        """``True`` if the quantity is a scalar field; ``False`` for vector components."""
         return self.props.scalar
+
+    @property
+    def is_cached(self) -> bool:
+        """Flag indicating whether the data have been loaded into memory."""
+        return self._values is not None
+
+    def load(self):
+        """Read the full dataset into memory and cache it in ``_values``."""
+        self._values = self.data[...]
 
     @abstractmethod
     def read(self,
              *args,
-             units: Optional[str | u.Unit] = None,
+             units: Optional[str | UnitLike] = None,
              mesh: Optional[MeshCodeType] = None,
              ) -> tuple[u.Quantity, tuple[slice, ...], tuple[bool, ...]]:
         """Read a slice of data, applying optional unit conversion and remeshing.
@@ -422,7 +463,7 @@ class _HdfInterface(ABC):
         mesh : MeshCodeType, optional
             Target mesh stagger.  If provided, half-mesh axes in the stored data
             that are on the main mesh in *mesh* are averaged to the main mesh before
-            return (via :func:`~psi_io._mesh.remesh_arr`).  Attempting to up-sample
+            return (via :func:`~psi_io._mesh.remesh_array`).  Attempting to up-sample
             from main to half mesh raises :class:`ValueError`.  If ``None``, no
             remeshing is performed.
 
@@ -437,16 +478,18 @@ class _HdfInterface(ABC):
             Boolean flags in physical ``(r, θ, φ)`` order indicating which axes were
             remeshed from half to main mesh.
         """
+
+        sargs = _parse_islice_args(*args, shape=self.shape[::-1])
         if mesh is None:
             remesh = repeat(False, self.ndim)
         else:
-            remesh = _parse_remesh(self.mesh, _normalize_mesh_code(mesh, self.ndim))
+            omesh_norm = _normalize_mesh_code(mesh, self.ndim)
+            remesh = _parse_remesh(self.mesh, omesh_norm, 'C')
+
+        sargs = tuple(sargs)
         remesh = tuple(remesh)
 
-        sargs = _parse_islice_args(*args, shape=tuple(reversed(self.shape)), remesh=remesh)
-        sargs = tuple(sargs)
-
-        odata = _remesh_array(self[sargs], remesh=tuple(reversed(remesh))) * self.unit
+        odata = self._read(*sargs, remesh=remesh)
         if units is not None:
             ounit = str(units).lower()
             if ounit in _CODE_UNIT_ALIASES:
@@ -455,6 +498,7 @@ class _HdfInterface(ABC):
                 odata = decompose_mas_units(odata)
             else:
                 odata = odata.to(units)
+
         return odata, sargs, remesh
 
     @abstractmethod
@@ -480,7 +524,8 @@ class _HdfInterface(ABC):
         out : astropy.units.Quantity
             Sliced and optionally remeshed data in code units.
         """
-        return _remesh_array(self[sargs], remesh=remesh) * self.unit
+
+        return _remesh_array(self[sargs], remesh=remesh, order='F') * self.unit
 
 
 # =============================================================================
@@ -528,6 +573,7 @@ class _HdfScale(_HdfInterface, ABC):
         self._dataref = parent
         self._datalabel: str = data_label
         self._model: str = scale_model
+        self._values = None
 
         self._set_properties(dim_label)
 
@@ -554,6 +600,7 @@ class _HdfScale(_HdfInterface, ABC):
 
     @property
     def mesh(self) -> tuple[Mesh, ...]:
+        """Single-element mesh-stagger tuple for this coordinate axis."""
         return self._mesh
 
     def read(self,
@@ -594,26 +641,32 @@ class H5Scale(_HdfScale):
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """Shape of the coordinate array (always a length-1 tuple for 1-D scales)."""
         return self.data.shape
 
     @property
     def dtype(self) -> np.dtype:
+        """NumPy dtype of the coordinate array."""
         return self.data.dtype
 
     @property
     def size(self) -> int:
+        """Total number of coordinate points."""
         return self.data.size
 
     @property
     def nbytes(self) -> int:
+        """Total memory occupied by the coordinate array in bytes."""
         return self.data.nbytes
 
     @property
     def ndim(self) -> int:
+        """Number of dimensions (always 1 for coordinate scale arrays)."""
         return self.data.ndim
 
     @property
     def attrs(self) -> dict:
+        """HDF5 attributes attached to this dimension scale dataset."""
         return dict(self.data.attrs)
 
     @property
@@ -629,26 +682,32 @@ class H4Scale(_HdfScale):
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """Shape of the coordinate array (always a length-1 tuple for 1-D scales)."""
         return self.data.info()[2],
 
     @property
     def dtype(self) -> np.dtype:
+        """NumPy dtype of the coordinate array."""
         return SDC_TYPE_CONVERSIONS[self.data.info()[3]]
 
     @property
     def size(self) -> int:
+        """Total number of coordinate points."""
         return int(np.prod(self.shape))
 
     @property
     def nbytes(self) -> int:
+        """Total memory occupied by the coordinate array in bytes."""
         return self.size * self.dtype.itemsize
 
     @property
     def ndim(self) -> int:
+        """Number of dimensions (always 1 for coordinate scale arrays)."""
         return self.data.info()[1]
 
     @property
     def attrs(self) -> dict:
+        """HDF4 attributes attached to this SDS dimension."""
         return self.data.attributes()
 
     @property
@@ -700,26 +759,32 @@ class _H5DataMixin:
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """Array shape in storage order ``(Nφ, Nθ, Nr)``."""
         return self.data.shape
 
     @property
     def dtype(self) -> np.dtype:
+        """NumPy dtype of the stored array."""
         return self.data.dtype
 
     @property
     def size(self) -> int:
+        """Total number of elements in the array."""
         return self.data.size
 
     @property
     def nbytes(self) -> int:
+        """Total memory occupied by the array in bytes."""
         return self.data.nbytes
 
     @property
     def ndim(self) -> int:
+        """Number of array dimensions."""
         return self.data.ndim
 
     @property
     def attrs(self) -> dict:
+        """HDF5 attributes attached to this dataset as a plain Python dict."""
         return dict(self.data.attrs)
 
     @property
@@ -770,26 +835,32 @@ class _H4DataMixin:
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """Array shape in storage order ``(Nφ, Nθ, Nr)``."""
         return tuple(self.data.info()[2])
 
     @property
     def dtype(self) -> np.dtype:
+        """NumPy dtype of the stored array."""
         return SDC_TYPE_CONVERSIONS[self.data.info()[3]]
 
     @property
     def size(self) -> int:
+        """Total number of elements in the array."""
         return int(np.prod(self.shape))
 
     @property
     def nbytes(self) -> int:
+        """Total memory occupied by the array in bytes."""
         return self.size * self.dtype.itemsize
 
     @property
     def ndim(self) -> int:
+        """Number of array dimensions."""
         return self.data.info()[1]
 
     @property
     def attrs(self) -> dict:
+        """HDF4 attributes attached to this SDS dataset as a plain Python dict."""
         return self.data.attributes()
 
     @property
@@ -814,12 +885,19 @@ class _H4DataMixin:
 # =============================================================================
 
 class _HdfData(_HdfInterface, ABC):
+    """Abstract base for a single PSI HDF dataset (data fields, not coordinate scales).
+
+    Handles file opening, metadata resolution, and scale construction.  Concrete
+    subclasses are produced by combining this class with a format mixin
+    (:class:`_H5DataMixin` or :class:`_H4DataMixin`) to form :class:`H5Data` and
+    :class:`H4Data`.  Use :func:`PsiData` rather than instantiating these directly.
+    """
 
     __slots__ = ()
 
     def __init__(self,
-                 ifile: PathLike, /,
-                 model: ModelType,
+                 ifile: PathLike,
+                 model: ModelType, /,
                  dataset_id: Optional[str] = None,
                  **kwargs):
         """Open an HDF file and parse metadata for one PSI output quantity.
@@ -836,8 +914,8 @@ class _HdfData(_HdfInterface, ABC):
         **kwargs
             Optional metadata overrides.  Accepted keys (from
             :data:`METADATA_SCHEMA`): ``'quantity'``, ``'sequence'``, ``'unit'``,
-            ``'mesh'``.  Caller-supplied values take precedence over both file
-            attributes and filename inference.
+            ``'scalar'``, ``'mesh'``.  Caller-supplied values take precedence over
+            both file attributes and filename inference.
 
         Raises
         ------
@@ -855,42 +933,56 @@ class _HdfData(_HdfInterface, ABC):
         if ifile.suffix != _HDF_EXT_MAPPING[hdfv]:
             raise ValueError(f"File '{ifile}' does not have the correct extension for "
                              f"{self._HDFN} files (expected '{_HDF_EXT_MAPPING[hdfv]}' extension).")
+        if model not in MODEL_TYPE:
+            raise ValueError(f"Invalid model type {model!r}. Expected one of: {', '.join(MODEL_TYPE)}.")
 
         self._filepath: Path = ifile
         self._datalabel: str = dataset_id or PSI_DATA_ID[hdfv]
         self._fileref = self.read_file(ifile)
         self._model: str = model
+        self._values = None
 
         self._set_properties(**self._parse_properties(**kwargs))
         self._set_scales()
 
     def __enter__(self):
         """Open (or re-open) the file and return ``self`` for use as a context manager."""
-        return self.open()
+        self.open()
+        return self
 
     def __exit__(self, *args):
         """Close the file handle when exiting the context manager."""
-        return self.close()
+        self.close()
 
     def __del__(self):
         """Close the file handle when the object is garbage-collected."""
-        return self.delete()
+        self.delete()
 
     @classmethod
     @abstractmethod
-    def read_file(cls, ifile: PathLike): ...
+    def read_file(cls, ifile: PathLike):
+        """Open the HDF file at *ifile* and return the format-specific file handle."""
+        ...
 
     @abstractmethod
-    def open(self): ...
+    def open(self):
+        """Re-open the file handle if it was previously closed."""
+        ...
 
     @abstractmethod
-    def close(self): ...
+    def close(self):
+        """Close the open file handle and set the internal reference to ``None``."""
+        ...
 
     @abstractmethod
-    def delete(self): ...
+    def delete(self):
+        """Release the file handle during garbage collection (called by ``__del__``)."""
+        ...
 
     @abstractmethod
-    def _set_scales(self): ...
+    def _set_scales(self):
+        """Construct and cache the :class:`Scales` named tuple of coordinate readers."""
+        ...
 
     def _parse_properties(self, **kwargs):
         """Resolve metadata fields by merging caller kwargs, file attrs, and filename.
@@ -912,7 +1004,9 @@ class _HdfData(_HdfInterface, ABC):
         -------
         out : dict
             Fully populated metadata dict with keys
-            ``{'quantity', 'sequence', 'unit', 'mesh'}``.
+            ``{'quantity', 'sequence', 'unit', 'mesh'}``; the ``'scalar'`` key from
+            :data:`METADATA_SCHEMA` is resolved internally but not forwarded to
+            :meth:`_set_properties`.
 
         Raises
         ------
@@ -1107,7 +1201,11 @@ _DATA_CLASS_MAP = MappingProxyType({
     '.h5':  H5Data,
     '.hdf': H4Data,
 })
-# TODO: add documentation
+"""Read-only mapping from HDF file extension to the concrete data reader class.
+
+Used by :func:`PsiData` to select between :class:`H5Data` (h5py) and
+:class:`H4Data` (pyhdf) based on the file's suffix.
+"""
 
 
 def PsiData(ifile: PathLike, /,
@@ -1136,7 +1234,7 @@ def PsiData(ifile: PathLike, /,
     - :attr:`mesh` — tuple of :class:`~psi_io._mesh.Mesh` flags describing the
       Yee-grid stagger position of each axis.
     - :attr:`description` — human-readable description of the physical quantity.
-    - :attr:`native_properties` — full :class:`~psi_io_models.Props` descriptor.
+    - :attr:`props` — full :class:`~psi_io._models.Props` descriptor.
 
     The object also supports the context-manager protocol; the file handle is
     closed on exit from the ``with`` block.
@@ -1169,7 +1267,7 @@ def PsiData(ifile: PathLike, /,
       :class:`~astropy.units.Unit` instance may also be passed directly.
     - ``mesh`` — target mesh stagger (:data:`~psi_io._mesh.MeshCodeType`).
       Half-mesh axes that are on the main mesh in *mesh* are averaged to the
-      main mesh via :func:`~psi_io._mesh.remesh_arr` before return.
+      main mesh via :func:`~psi_io._mesh.remesh_array` before return.
     - ``scales`` — if ``True`` (default), return the coordinate slice for each
       axis as additional :class:`~astropy.units.Quantity` values after the data.
 
@@ -1214,7 +1312,7 @@ def PsiData(ifile: PathLike, /,
         file attributes.
     unit : str or astropy.units.Unit, optional
         Override the code-to-physical unit derived from the quantity's
-        :class:`~psi_io_models.Props` entry.  Accepts any string parseable
+        :class:`~psi_io._models.Props` entry.  Accepts any string parseable
         by :class:`~astropy.units.Unit`, including named units (``'Gauss'``,
         ``'nT'``, ``'km/s'``), compound expressions (``'erg/cm**2/s'``),
         and scale-prefixed forms (``'mG'``, ``'μT'``); see
@@ -1222,7 +1320,7 @@ def PsiData(ifile: PathLike, /,
         :class:`~astropy.units.Unit` instance may also be passed directly.
     mesh : MeshCodeType, optional
         Override the mesh stagger inferred from the quantity's
-        :class:`~psi_io_models.Props` entry.  Useful for files whose stagger
+        :class:`~psi_io._models.Props` entry.  Useful for files whose stagger
         differs from the PSI convention.
 
     Returns

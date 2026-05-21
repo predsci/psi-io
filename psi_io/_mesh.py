@@ -253,6 +253,9 @@ def _average_adjacent(arr: np.ndarray,
                       axis: int
                       ) -> np.ndarray:
     """Return the mean of adjacent element pairs along *axis*, reducing that dimension by one."""
+    if arr.shape[axis] < 2:
+        raise ValueError(f"Cannot remesh axis {axis} with size {arr.shape[axis]}."
+                         f" Need at least 2 elements to average adjacent pairs.")
     slc_lo = [slice(None)] * arr.ndim
     slc_hi = [slice(None)] * arr.ndim
     slc_lo[axis] = slice(None, -1)
@@ -261,15 +264,35 @@ def _average_adjacent(arr: np.ndarray,
 
 
 def _remesh_array(data: np.ndarray,
-                  remesh: Iterable[bool] | bool
-                  ) -> np.ndarray:
+                  remesh: Iterable[bool] | bool,
+                  order: ArrayOrdering = 'F') -> np.ndarray:
     """Apply :func:`_average_adjacent` on each axis where *remesh* is ``True``."""
     if isinstance(remesh, bool):
         remesh = [remesh] * data.ndim
+    if order == 'F':
+        remesh = reversed(remesh)
     for i, shift in enumerate(remesh):
         if shift:
             data = _average_adjacent(data, i)
     return data
+
+
+def _parse_remesh(imesh: tuple[Mesh, ...],
+                  omesh: tuple[Mesh, ...],
+                  order: ArrayOrdering = 'F'
+                  ) -> Generator[bool]:
+    """Yield per-axis remesh flags (``True`` = half→main) by comparing *imesh* to *omesh*."""
+    if order == 'F':
+        imesh, omesh = reversed(imesh), reversed(omesh)
+    for im, om in zip(imesh, omesh, strict=True):
+        if im == om:
+            yield False
+        elif im == Mesh.HALF and om == Mesh.MAIN:
+            yield True
+        elif im == Mesh.MAIN and om == Mesh.HALF:
+            raise ValueError(f"Cannot remesh from MAIN mesh to HALF mesh.")
+        else:
+            raise ValueError(f"Invalid mesh combination: {im} → {om}.")
 
 
 def remesh_array(data: np.ndarray,
@@ -356,23 +379,6 @@ def remesh_array(data: np.ndarray,
         return data
     imesh_norm = _normalize_mesh_code(imesh, data.ndim)
     omesh_norm = _normalize_mesh_code(omesh, data.ndim)
-    remesh_flags = _parse_remesh(imesh_norm, omesh_norm, order == 'F')
-    return _remesh_array(data, remesh_flags)
+    remesh_flags = _parse_remesh(imesh_norm, omesh_norm, order)
+    return _remesh_array(data, remesh_flags, order='C')
 
-
-def _parse_remesh(imesh: tuple[Mesh, ...],
-                  omesh: tuple[Mesh, ...],
-                  reverse: bool = False
-                  ) -> Generator[bool]:
-    """Yield per-axis remesh flags (``True`` = half→main) by comparing *imesh* to *omesh*."""
-    if reverse:
-        imesh, omesh = reversed(imesh), reversed(omesh)
-    for im, om in zip(imesh, omesh, strict=True):
-        if im == om:
-            yield False
-        elif im == Mesh.HALF and om == Mesh.MAIN:
-            yield True
-        elif im == Mesh.MAIN and om == Mesh.HALF:
-            raise ValueError(f"Cannot remesh from MAIN mesh to HALF mesh.")
-        else:
-            raise ValueError(f"Invalid mesh combination: {im} → {om}.")

@@ -807,7 +807,7 @@ def get_psi_scale_properties(variable: PsiScales) -> Props:
 
 
 ModelType = Literal['mas', 'pot3d']
-"""Literal type alias for the three recognized PSI model types.
+"""Literal type alias for the two recognized PSI model types.
 
 ``'mas'``
     MAS (Magnetohydrodynamic Algorithm outside a Sphere) plasma model output.
@@ -815,14 +815,45 @@ ModelType = Literal['mas', 'pot3d']
     POT3D potential-field source-surface (PFSS) magnetic field output.
 """
 
+
+MODEL_TYPE = {'mas', 'pot3d'}
+"""Set of recognized PSI model type strings (``'mas'``, ``'pot3d'``)."""
+
 _PROP_GETTER_MAPPING = MappingProxyType({
     'mas': get_mas_quantity_properties,
     'pot3d': get_pot3d_quantity_properties,
     'scale': get_psi_scale_properties,})
-# TODO: include documentation
+"""Read-only mapping from model/scale label to its :class:`Props` getter function."""
 
 
 def get_model_prop_caller(model: ModelType) -> Callable:
+    """Return the :class:`Props` getter function for the given model type.
+
+    Parameters
+    ----------
+    model : ModelType
+        Case-insensitive model label.  Valid values: ``'mas'``, ``'pot3d'``,
+        ``'scale'``.
+
+    Returns
+    -------
+    out : Callable
+        The getter function associated with *model* — one of
+        :func:`get_mas_quantity_properties`, :func:`get_pot3d_quantity_properties`,
+        or :func:`get_psi_scale_properties`.
+
+    Raises
+    ------
+    ValueError
+        If *model* is not a recognized model label.
+
+    Examples
+    --------
+    >>> from psi_io._models import get_model_prop_caller
+    >>> caller = get_model_prop_caller('mas')
+    >>> caller('br').name
+    'br'
+    """
     try:
         return _PROP_GETTER_MAPPING[model.lower()]
     except KeyError:
@@ -849,7 +880,7 @@ Groups:
 1. Quantity name (e.g. ``'br'``, ``'heat'``).
 2. Sequence number (e.g. ``'001'``, ``'001001'``).
 
-Used by :func:`parse_mas_filename_schema`
+Used by :func:`parse_psi_filename_schema`
 
 See Also
 --------
@@ -880,7 +911,8 @@ def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -
 
     Examples
     --------
-    >>> from psi_io._models import extract_quantity_from_filepath    >>> from pathlib import Path
+    >>> from psi_io._models import extract_quantity_from_filepath
+    >>> from pathlib import Path
     >>> extract_quantity_from_filepath(Path('br001001.h5'))
     'br'
     >>> extract_quantity_from_filepath(Path('heat001.h5'))
@@ -956,7 +988,7 @@ def parse_psi_filename_schema(ifile: Path):
     --------
     >>> from pathlib import Path
     >>> from psi_io._models import parse_psi_filename_schema
-    >>> parse_mas_filename_schema(Path('br001001.h5'))
+    >>> parse_psi_filename_schema(Path('br001001.h5'))
     ('br', 1001)
     >>> parse_psi_filename_schema(Path('heat001.hdf'))
     ('heat', 1)
