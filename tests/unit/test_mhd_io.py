@@ -11,15 +11,14 @@ import h5py
 from psi_io._mesh import Mesh
 from psi_io._units import MAS_b
 from psi_io.mhd_io import (
-    HDF_EXT_MAPPING,
+    _HDF_EXT_MAPPING,
     METADATA_SCHEMA,
     Scales,
     _CODE_UNIT_ALIASES,
     _REAL_UNIT_ALIASES,
     _cast_to_slice,
     _parse_islice_args,
-    H5MasData,
-    H5Pot3dData,
+    H5Data,
     PsiData,
 )
 
@@ -66,7 +65,7 @@ def psi_h5_pot3d_file(tmp_path_factory):
 
 @pytest.fixture(scope='module')
 def mas_reader(psi_h5_mas_file):
-    """Open H5MasData reader; closed after the module finishes."""
+    """Open H5Data (MAS) reader; closed after the module finishes."""
     reader = PsiData(psi_h5_mas_file, model='mas')
     yield reader
     reader.close()
@@ -74,7 +73,7 @@ def mas_reader(psi_h5_mas_file):
 
 @pytest.fixture(scope='module')
 def pot3d_reader(psi_h5_pot3d_file):
-    """Open H5Pot3dData reader; closed after the module finishes."""
+    """Open H5Data (POT3D) reader; closed after the module finishes."""
     reader = PsiData(psi_h5_pot3d_file, model='pot3d')
     yield reader
     reader.close()
@@ -86,13 +85,13 @@ def pot3d_reader(psi_h5_pot3d_file):
 
 class TestHdfExtMapping:
     def test_h5_extension(self):
-        assert HDF_EXT_MAPPING['h5'] == '.h5'
+        assert _HDF_EXT_MAPPING['h5'] == '.h5'
 
     def test_h4_extension(self):
-        assert HDF_EXT_MAPPING['h4'] == '.hdf'
+        assert _HDF_EXT_MAPPING['h4'] == '.hdf'
 
     def test_only_two_keys(self):
-        assert set(HDF_EXT_MAPPING.keys()) == {'h5', 'h4'}
+        assert set(_HDF_EXT_MAPPING.keys()) == {'h5', 'h4'}
 
 
 class TestUnitAliases:
@@ -109,8 +108,8 @@ class TestUnitAliases:
 
 
 class TestMetadataSchema:
-    def test_has_four_keys(self):
-        assert set(METADATA_SCHEMA.keys()) == {'quantity', 'sequence', 'unit', 'mesh'}
+    def test_has_five_keys(self):
+        assert set(METADATA_SCHEMA.keys()) == {'quantity', 'sequence', 'unit', 'scalar', 'mesh'}
 
     def test_all_values_none(self):
         assert all(v is None for v in METADATA_SCHEMA.values())
@@ -159,37 +158,30 @@ class TestCastToSlice:
 class TestParseISliceArgs:
     def test_no_args_returns_full_slices(self):
         shape = (10, 20, 30)
-        remesh = (False, False, False)
-        slices = list(_parse_islice_args(shape=shape, remesh=remesh))
+        slices = list(_parse_islice_args(shape=shape))
         assert slices == [slice(None), slice(None), slice(None)]
 
     def test_single_arg_first_axis(self):
         shape = (10, 20, 30)
-        remesh = (False, False, False)
-        slices = list(_parse_islice_args(slice(0, 5), shape=shape, remesh=remesh))
+        slices = list(_parse_islice_args(slice(0, 5), shape=shape))
         assert slices[0] == slice(0, 5)
         assert slices[1] == slice(None)
         assert slices[2] == slice(None)
 
     def test_ellipsis_expands_to_full_slices(self):
         shape = (10, 20, 30)
-        remesh = (False, False, False)
-        slices = list(_parse_islice_args(slice(0, 3), ..., shape=shape, remesh=remesh))
+        slices = list(_parse_islice_args(slice(0, 3), ..., shape=shape))
         assert slices[0] == slice(0, 3)
         assert slices[1] == slice(None)
         assert slices[2] == slice(None)
 
-    def test_remesh_axis_too_small_raises(self):
-        shape = (10, 20, 30)
-        remesh = (True, False, False)
+    def test_empty_slice_raises(self):
         with pytest.raises(ValueError):
-            list(_parse_islice_args(slice(0, 1), shape=shape, remesh=remesh))
+            list(_parse_islice_args(slice(5, 5), shape=(10, 20, 30)))
 
-    def test_remesh_axis_two_elements_ok(self):
-        shape = (10, 20, 30)
-        remesh = (True, False, False)
-        slices = list(_parse_islice_args(slice(0, 2), shape=shape, remesh=remesh))
-        assert slices[0] == slice(0, 2)
+    def test_single_element_slice_ok(self):
+        slices = list(_parse_islice_args(slice(0, 1), shape=(10, 20, 30)))
+        assert slices[0] == slice(0, 1)
 
 
 # ===========================================================================
@@ -224,17 +216,17 @@ class TestPsiDataFactory:
 
     def test_returns_h5_mas_data(self, psi_h5_mas_file):
         reader = PsiData(psi_h5_mas_file, model='mas')
-        assert isinstance(reader, H5MasData)
+        assert isinstance(reader, H5Data)
         reader.close()
 
     def test_returns_h5_pot3d_data(self, psi_h5_pot3d_file):
         reader = PsiData(psi_h5_pot3d_file, model='pot3d')
-        assert isinstance(reader, H5Pot3dData)
+        assert isinstance(reader, H5Data)
         reader.close()
 
     def test_default_model_is_mas(self, psi_h5_mas_file):
         reader = PsiData(psi_h5_mas_file)
-        assert isinstance(reader, H5MasData)
+        assert isinstance(reader, H5Data)
         reader.close()
 
     def test_unsupported_model_raises(self, psi_h5_mas_file):
@@ -242,7 +234,7 @@ class TestPsiDataFactory:
             PsiData(psi_h5_mas_file, model='unknown')
 
     def test_wrong_extension_raises(self, tmp_path, psi_h5_mas_file):
-        # Rename .h5 to .hdf — H4MasData will raise on the wrong extension
+        # Rename .h5 to .hdf — H4Data will raise on the wrong extension
         wrong = tmp_path / "br001001.hdf"
         wrong.write_bytes(psi_h5_mas_file.read_bytes())
         with pytest.raises(Exception):
@@ -300,10 +292,10 @@ class TestH5MasDataProperties:
 
     def test_native_properties_is_props(self, mas_reader):
         from psi_io._models import Props
-        assert isinstance(mas_reader.native_properties, Props)
+        assert isinstance(mas_reader.props, Props)
 
     def test_native_properties_quantity_matches(self, mas_reader):
-        assert mas_reader.native_properties.name == mas_reader.quantity
+        assert mas_reader.props.name == mas_reader.quantity
 
     def test_scales_is_scales_namedtuple(self, mas_reader):
         assert isinstance(mas_reader.scales, Scales)

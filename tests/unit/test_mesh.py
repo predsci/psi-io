@@ -179,17 +179,17 @@ class TestRemeshArr:
         assert _remesh_array(np.ones((4, 5)), remesh=True).shape == (3, 4)
 
     def test_sequence_second_axis(self):
-        assert _remesh_array(np.ones((4, 5)), remesh=[False, True]).shape == (4, 4)
+        assert _remesh_array(np.ones((4, 5)), remesh=[False, True], order='C').shape == (4, 4)
 
     def test_sequence_first_axis(self):
-        assert _remesh_array(np.ones((4, 5)), remesh=[True, False]).shape == (3, 5)
+        assert _remesh_array(np.ones((4, 5)), remesh=[True, False], order='C').shape == (3, 5)
 
     def test_3d_selective(self):
-        assert _remesh_array(np.ones((6, 5, 4)), remesh=[True, False, True]).shape == (5, 5, 3)
+        assert _remesh_array(np.ones((6, 5, 4)), remesh=[True, False, True], order='C').shape == (5, 5, 3)
 
     def test_values_averaged(self):
         a = np.array([[1.0, 3.0], [5.0, 7.0]])
-        assert_allclose(_remesh_array(a, remesh=[False, True]), [[2.0], [6.0]])
+        assert_allclose(_remesh_array(a, remesh=[False, True], order='C'), [[2.0], [6.0]])
 
     def test_uniform_value_preserved(self):
         assert_allclose(_remesh_array(np.full((8, 8), 3.14), remesh=[True, True]), 3.14)
