@@ -1,8 +1,287 @@
 r"""Lazy HDF readers for PSI MAS and POT3D magnetohydrodynamic model output.
 
 This module provides a unified, unit-aware interface for reading three-dimensional
-MHD model output from Predictive Science Inc.'s MAS and POT3D solvers.  Both HDF4
-(``.hdf``) and HDF5 (``.h5``) files are supported through a common API.
+field variables from Predictive Science Inc.'s MAS and POT3D solvers.  Both HDF4
+(``.hdf``) and HDF5 (``.h5``) files are supported through a common API.  The sole
+public symbol exported by this module is :func:`PsiData`.
+
+.. rubric:: Entry Point
+
+:func:`PsiData` is a factory function that opens a PSI HDF file and returns a
+lazy reader object.  The file extension determines the I/O backend — ``.h5``
+files are read via `h5py <https://www.h5py.org/>`_ and ``.hdf`` files via
+`pyhdf <https://fhs.github.io/pyhdf/>`_.  The *model* argument (``'mas'`` or
+``'pot3d'``) selects the quantity-property and mesh-stagger metadata tables
+applied during metadata resolution:
+
+.. code-block:: python
+
+    from psi_io.mhd_io import PsiData
+
+    reader = PsiData('br001001.h5')                    # MAS HDF5 (default)
+    reader = PsiData('br001001.hdf', model='mas')      # MAS HDF4
+    reader = PsiData('br001.h5', model='pot3d')        # POT3D HDF5
+
+.. rubric:: Lazy Loading and Caching
+
+No data are read from disk at construction time.  Metadata — quantity name,
+sequence number, physical unit, and mesh stagger — are parsed from the filename
+stem and/or HDF file attributes.  Data are transferred from disk only when
+:meth:`read` or :meth:`vslice` is called.
+
+When a read or vslice call covers the *entire* dataset with no spatial
+restrictions, the result is cached on the reader object.  Subsequent full-array
+calls return the cached copy without a second disk read.  Partial reads — any
+call with at least one non-full-axis argument — are never cached.  The cache
+state is exposed via the ``is_cached`` property.
+
+.. rubric:: Attributes
+
+The following attributes are available on every object returned by
+:func:`PsiData`:
+
+``quantity`` : :class:`str`
+    Canonical lower-case quantity identifier (e.g. ``'br'``, ``'vr'``,
+    ``'t'``).  Resolved from the filename stem, HDF file attributes, or the
+    ``quantity`` keyword argument passed to :func:`PsiData`.
+
+``sequence`` : :class:`int`
+    Time-step sequence number extracted from the filename
+    (e.g. ``br001001.h5`` → ``1001``) or from HDF file attributes.
+
+``unit`` : :class:`~astropy.units.Unit`
+    Conversion factor from one code unit to physical units.  For MAS
+    quantities these are the custom normalization units defined in
+    :mod:`psi_io._units` (e.g. :data:`~psi_io._units.MAS_b` ≈ 2.2 G for
+    magnetic field, :data:`~psi_io._units.MAS_v` ≈ 481 km s⁻¹ for velocity).
+    For POT3D the default is dimensionless — see the :func:`PsiData` warning.
+
+``mesh`` : :class:`tuple` of :class:`~psi_io._mesh.Mesh`
+    Yee-grid stagger position for each spatial axis in physical ``(r, θ, φ)``
+    order.  Each element is either :attr:`~psi_io._mesh.Mesh.HALF` (offset by
+    half a cell spacing) or :attr:`~psi_io._mesh.Mesh.MAIN` (cell-centred).
+    The integer encoding and per-quantity stagger codes are defined in
+    :mod:`psi_io._mesh`; the canonical default for each quantity is stored in
+    its :class:`~psi_io._models.Props` descriptor (see :mod:`psi_io._models`).
+
+``props`` : :class:`~psi_io._models.Props`
+    Complete property descriptor for the quantity, bundling its name,
+    description, unit, and mesh code.  Looked up from the appropriate
+    quantity-properties mapping in :mod:`psi_io._models`.
+
+``description`` : :class:`str`
+    Human-readable description of the physical quantity
+    (e.g. ``'MAS Magnetic Field (Radial Component)'``).  Derived from
+    :attr:`~psi_io._models.Props.desc`.
+
+``scales`` : ``Scales(r, t, p)``
+    Named tuple of coordinate scale readers.  Each element wraps the
+    one-dimensional coordinate array stored in the HDF file.  The radial
+    coordinate uses :data:`~psi_io._units.PSI_rsun` (solar radii); the
+    co-latitude and longitude coordinates use
+    :data:`~psi_io._units.PSI_angle` (radians).  Each scale reader exposes
+    the same :meth:`read` interface as the main data reader.
+
+``shape`` : :class:`tuple` of :class:`int`
+    Array dimensions in HDF storage order ``(Nφ, Nθ, Nr)`` — the radial
+    axis is *last* due to Fortran column-major convention.  All slicing APIs
+    accept arguments in physical ``(r, θ, φ)`` order and reverse the indexing
+    internally.
+
+``ndim`` : :class:`int`
+    Number of spatial dimensions; always ``3`` for MAS and POT3D field
+    variables.
+
+``size`` : :class:`int`
+    Total element count (``Nφ × Nθ × Nr``).
+
+``nbytes`` : :class:`int`
+    Dataset size in bytes.
+
+``dtype`` : :class:`numpy.dtype`
+    Element type of the stored dataset (typically ``float32``).
+
+``attrs`` : :class:`dict`
+    HDF file-level attributes as a plain Python dictionary.
+
+``is_cached`` : :class:`bool`
+    ``True`` once a full-array read has populated the in-memory cache;
+    ``False`` otherwise.
+
+.. rubric:: Reading Data — ``read``
+
+.. code-block:: python
+
+    odata[, r, t, p] = reader.read(*args, unit=None, mesh=None, scales=True)
+
+Each positional argument restricts one spatial axis in physical ``(r, θ, φ)``
+order:
+
+- Omitted / ``None`` — full axis.
+- ``int`` — single index; axis retained as a length-1 dimension.
+- ``slice`` — standard Python slice.
+- ``(start, stop)`` or ``(start, stop, step)`` — converted to a slice.
+- ``Ellipsis`` — expands to ``None`` for all remaining axes.
+
+**unit**
+    Output unit.  String aliases ``'native'`` / ``'code'`` / ``'model'`` /
+    ``'psi'`` return values in MAS code units (the units defined in
+    :mod:`psi_io._units`).  Aliases ``'real'`` / ``'phys'`` / ``'physical'``
+    / ``'cgs'`` call :func:`~psi_io._units.decompose_mas_units` to express
+    values in CGS base units.  Any other string or
+    :class:`~astropy.units.Unit` instance is forwarded to
+    :meth:`astropy.units.Quantity.to`.
+
+**mesh**
+    Target mesh stagger (:data:`~psi_io._mesh.MeshCodeType`).  Axes that are
+    on the half mesh in the stored data but on the main mesh in *mesh* are
+    averaged via :func:`~psi_io._mesh.remesh_array`.  Up-sampling
+    (main → half) raises :exc:`ValueError`.
+
+**scales**
+    If ``True`` (default), return the corresponding coordinate slice for each
+    axis as additional :class:`~astropy.units.Quantity` values ``(r, t, p)``
+    after the data array.
+
+.. note::
+    PSI HDF files are written in Fortran column-major order so that numpy
+    reads them with shape ``(Nφ, Nθ, Nr)`` — the radial axis is *last*.  All
+    positional arguments to :meth:`read` and the returned coordinate scales
+    are in physical ``(r, θ, φ)`` order regardless of on-disk layout.
+
+.. rubric:: Value-Space Slicing — ``vslice``
+
+.. code-block:: python
+
+    odata[, r, t, p] = reader.vslice(*args, unit=None, mesh=None, scales=True,
+                                     bounds_error=True, fill_value=None)
+
+``vslice`` is a superset of :meth:`read` that additionally accepts physical
+coordinate values as positional arguments.  Passing a
+:class:`~astropy.units.Quantity` or a bare scalar for an axis locates the two
+nearest grid points, loads a 2-element window, and linearly interpolates to the
+target value; the resulting axis has size 1.  Index-space arguments (``slice``,
+``int``, ``None``, ``Ellipsis``) are handled identically to :meth:`read`.
+
+**bounds_error**
+    If ``True`` (default), raise :exc:`ValueError` when a value is outside the
+    coordinate range.  Set to ``False`` and supply a **fill_value** to replace
+    out-of-bounds points; pass ``fill_value=None`` to extrapolate silently.
+
+When ``scales=True``, value-interpolated axes return the target coordinate as
+a length-1 :class:`~astropy.units.Quantity`; index-space axes return the
+corresponding coordinate slice as usual.
+
+.. rubric:: File Lifecycle
+
+Readers hold an open HDF file handle.  Use the context-manager protocol to
+guarantee cleanup:
+
+.. code-block:: python
+
+    with PsiData('br001001.h5') as reader:
+        data, r, t, p = reader.read(unit='Gauss')
+
+Alternatively, call ``reader.close()`` and ``reader.open()`` to manage the
+handle explicitly.  The handle is also released automatically when the reader
+is garbage-collected.
+
+.. rubric:: Supported Quantities
+
+**MAS** (19 quantities):
+
+.. list-table::
+   :widths: 12 32 24 32
+   :header-rows: 1
+
+   * - Key(s)
+     - Description
+     - Code unit
+     - Stagger ``(r, θ, φ)``
+   * - ``br``, ``bt``, ``bp``
+     - Magnetic field components
+     - :data:`~psi_io._units.MAS_b` (≈ 2.2 G)
+     - ``HALF/MAIN/MAIN``, ``MAIN/HALF/MAIN``, ``MAIN/MAIN/HALF``
+   * - ``vr``, ``vt``, ``vp``
+     - Velocity components
+     - :data:`~psi_io._units.MAS_v` (≈ 481 km s⁻¹)
+     - ``MAIN/HALF/HALF``, ``HALF/MAIN/HALF``, ``HALF/HALF/MAIN``
+   * - ``jr``, ``jt``, ``jp``
+     - Current density components
+     - :data:`~psi_io._units.MAS_j`
+     - ``MAIN/HALF/HALF``, ``HALF/MAIN/HALF``, ``HALF/HALF/MAIN``
+   * - ``t``, ``te``, ``tp``
+     - Temperature (single / electron / proton)
+     - :data:`~psi_io._units.MAS_t` (≈ 28 MK)
+     - ``HALF/HALF/HALF``
+   * - ``rho``
+     - Mass density
+     - :data:`~psi_io._units.MAS_n` (10⁸ cm⁻³)
+     - ``HALF/HALF/HALF``
+   * - ``p``
+     - Thermal pressure
+     - :data:`~psi_io._units.MAS_p`
+     - ``HALF/HALF/HALF``
+   * - ``ep``, ``em``
+     - Alfvén wave energy density (outward / inward)
+     - :data:`~psi_io._units.MAS_p`
+     - ``HALF/HALF/HALF``
+   * - ``zp``, ``zm``
+     - Elsässer wave amplitudes (outward / inward)
+     - :data:`~psi_io._units.MAS_v`
+     - ``HALF/HALF/HALF``
+   * - ``heat``
+     - Volumetric coronal heating rate
+     - :data:`~psi_io._units.MAS_heat`
+     - ``HALF/HALF/HALF``
+
+**POT3D** (3 quantities): ``br``, ``bt``, ``bp`` — magnetic field components,
+unit :data:`~psi_io._units.POT3D_b` (dimensionless by default; see the
+:func:`PsiData` warning regarding unit declaration).
+
+.. rubric:: Examples
+
+Full MAS radial field read with coordinate scales:
+
+.. code-block:: python
+
+    from psi_io.mhd_io import PsiData
+
+    reader = PsiData('br001001.h5')
+    data, r, t, p = reader.read()              # code units (MAS_b)
+    data, r, t, p = reader.read(unit='Gauss')  # convert to Gauss on the fly
+
+Partial read — inner radial shell in CGS base units, coordinates suppressed:
+
+.. code-block:: python
+
+    data = reader.read(slice(0, 10), unit='physical', scales=False)
+
+Value-space slice — extract the r = 2.5 R☉ surface:
+
+.. code-block:: python
+
+    data, r, t, p = reader.vslice(2.5, unit='Gauss')  # bare scalar → native coord unit
+
+POT3D file — unit must be declared at construction because it is not encoded in
+the file:
+
+.. code-block:: python
+
+    reader = PsiData('br001.hdf', model='pot3d', unit='Gauss')
+    data, r, t, p = reader.read()
+
+Inspect metadata without loading data:
+
+.. code-block:: python
+
+    reader = PsiData('rho001001.h5')
+    reader.quantity      # 'rho'
+    reader.description   # 'MAS Density'
+    reader.unit          # MAS_n
+    reader.mesh          # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+    reader.is_cached     # False
+    reader.shape         # (Nφ, Nθ, Nr) — numpy storage order
 """
 
 from __future__ import annotations
@@ -1403,86 +1682,48 @@ def PsiData(ifile: PathLike, /,
             **kwargs):
     """Open a PSI MAS or POT3D HDF file and return the appropriate data reader.
 
-    This is the recommended entry point for reading PSI model output.  The
-    function inspects the file extension and the *model* argument to select the
-    correct concrete reader class, then instantiates and returns it.
+    Inspects the file extension and *model* argument, selects the correct
+    concrete reader (HDF5 or HDF4 backend), and returns it.  No data are read
+    from disk at construction time — metadata is resolved from the filename and
+    HDF file attributes, and data transfer happens only inside :meth:`read` or
+    :meth:`vslice`.  Full-array reads are cached automatically; partial reads
+    are not.
 
-    .. rubric:: Returned object
+    The returned reader exposes the following attributes:
 
-    The returned object is a lazy reader that holds an open file handle.  The
-    HDF dataset is *not* copied into memory at construction time — data transfer
-    happens only when :meth:`read` is called (or when the underlying
-    :attr:`data` handle is explicitly indexed).  The object exposes:
+    - ``quantity`` — canonical lower-case quantity identifier (e.g. ``'br'``).
+    - ``sequence`` — integer time-step sequence number.
+    - ``unit`` — :class:`~astropy.units.Unit` for code → physical conversion;
+      normalization constants are defined in :mod:`psi_io._units`.
+    - ``mesh`` — per-axis Yee-grid stagger as a tuple of
+      :class:`~psi_io._mesh.Mesh` members; see :mod:`psi_io._mesh`.
+    - ``props`` — full :class:`~psi_io._models.Props` descriptor (name,
+      description, unit, mesh code); see :mod:`psi_io._models`.
+    - ``description`` — human-readable quantity description.
+    - ``scales`` — ``Scales(r, t, p)`` named tuple of coordinate scale readers,
+      each supporting the same :meth:`read` interface as the main reader.
+    - ``shape``, ``ndim``, ``size``, ``nbytes``, ``dtype``, ``attrs`` — array
+      metadata; shape is in HDF storage order ``(Nφ, Nθ, Nr)``.
+    - ``is_cached`` — ``True`` after a full-array read has been cached.
 
-    - :meth:`read` — primary method for loading a slice of the dataset.
-    - :attr:`scales` — ``Scales(r, t, p)`` named tuple of coordinate scale
-      readers; each element supports the same :meth:`read` interface.
-    - :attr:`quantity` — canonical lower-case quantity string (e.g. ``'br'``).
-    - :attr:`sequence` — integer time-step sequence number.
-    - :attr:`unit` — :class:`~astropy.units.Unit` for converting from code units
-      to physical unit.
-    - :attr:`mesh` — tuple of :class:`~psi_io._mesh.Mesh` flags describing the
-      Yee-grid stagger position of each axis.
-    - :attr:`description` — human-readable description of the physical quantity.
-    - :attr:`props` — full :class:`~psi_io._models.Props` descriptor.
-
-    The object also supports the context-manager protocol; the file handle is
-    closed on exit from the ``with`` block.
-
-    .. rubric:: The read method
-
-    .. code-block:: python
-
-        odata[, r, t, p] = reader.read(*args, unit=None, mesh=None, scales=True)
-
-    **Positional arguments** — each positional argument selects elements along
-    one spatial axis in physical ``(r, θ, φ)`` order.  Supported forms:
-
-    - Omitted / ``None`` — full axis (``slice(None)``).
-    - ``int`` — single index; the axis is retained as a length-1 dimension.
-    - ``slice`` — standard Python slice.
-    - ``(start, stop)`` or ``(start, stop, step)`` — converted to a slice.
-    - ``Ellipsis`` — expands to ``None`` for all remaining axes.
-
-    **Keyword arguments**:
-
-    - ``unit`` — output unit.  String aliases: ``'native'`` / ``'code'`` /
-      ``'model'`` return values in the custom MAS code units; ``'real'`` /
-      ``'phys'`` / ``'physical'`` decompose to CGS base unit.  Any other
-      string is forwarded to :class:`~astropy.units.Unit` and must be
-      parseable by it — this includes SI and CGS unit names (``'Gauss'``,
-      ``'nT'``, ``'T'``), compound expressions (``'km/s'``,
-      ``'erg/cm**2/s'``), and scale prefixes (``'mG'``, ``'μT'``); see
-      :ref:`astropy:unit-format` for the full grammar.  An
-      :class:`~astropy.units.Unit` instance may also be passed directly.
-    - ``mesh`` — target mesh stagger (:data:`~psi_io._mesh.MeshCodeType`).
-      Half-mesh axes that are on the main mesh in *mesh* are averaged to the
-      main mesh via :func:`~psi_io._mesh.remesh_array` before return.
-    - ``scales`` — if ``True`` (default), return the coordinate slice for each
-      axis as additional :class:`~u.Quantity` values after the data.
-
-    .. note::
-        PSI HDF files are written in Fortran column-major order so that numpy
-        reads them with shape ``(Nφ, Nθ, Nr)`` — the *last* axis is radial.
-        The ``read`` positional arguments and coordinate scales are always
-        returned in physical ``(r, θ, φ)`` order regardless of storage order.
+    Use :meth:`read` to load a slice by index and :meth:`vslice` to slice by
+    physical coordinate value with linear interpolation.  Both return data as
+    :class:`~astropy.units.Quantity` objects in physical ``(r, θ, φ)`` order.
+    The object also supports the context-manager protocol.
 
     .. warning:: **POT3D unit convention**
 
-        POT3D applies **no normalization** to its output.  The stored values are in
-        whatever physical unit the input photospheric boundary magnetogram was
-        provided in — most commonly Gauss, but this is not encoded in the file.
-        The default ``unit`` for POT3D quantities is therefore
-        ``dimensionless_unscaled`` (scale factor 1), meaning that calling
-        ``read(unit='physical')`` will **not** perform a meaningful unit
-        conversion unless the correct unit is supplied explicitly via the *unit*
-        keyword argument at construction time:
+        POT3D applies no normalization to its output.  The stored values are in
+        whatever physical unit the input photospheric magnetogram used — most
+        commonly Gauss, but this is not encoded in the file.  The default
+        ``unit`` for POT3D is ``dimensionless_unscaled`` (scale factor 1), so
+        ``read(unit='physical')`` will not perform a meaningful conversion
+        unless the correct unit is supplied at construction:
 
         .. code-block:: python
 
             reader = PsiData('br001.h5', model='pot3d', unit='Gauss')
             data, r, t, p = reader.read()
-            # data.unit == u.Gauss
 
     Parameters
     ----------
@@ -1491,42 +1732,33 @@ def PsiData(ifile: PathLike, /,
     model : {'mas', 'pot3d'}, optional
         PSI model type.  Defaults to ``'mas'``.
     dataset_id : str, optional
-        Name of the dataset within the HDF file.  Defaults to the PSI standard
-        identifier for the given format.  Only needed when the file uses a
-        non-standard dataset name.
+        Dataset name within the HDF file.  Defaults to the PSI standard
+        identifier for the given format.
     quantity : str, optional
-        Override the quantity name inferred from the filename or file attributes
-        (e.g. ``'br'``).  Must be a key in the appropriate properties mapping.
+        Override the quantity name inferred from the filename or file attributes.
     sequence : int, optional
-        Override the time-step sequence number inferred from the filename or
-        file attributes.
+        Override the time-step sequence number.
     unit : str or u.Unit, optional
-        Override the code-to-physical unit derived from the quantity's
-        :class:`~psi_io._models.Props` entry.  Accepts any string parseable
-        by :class:`~astropy.units.Unit`, including named unit (``'Gauss'``,
-        ``'nT'``, ``'km/s'``), compound expressions (``'erg/cm**2/s'``),
-        and scale-prefixed forms (``'mG'``, ``'μT'``); see
-        :ref:`astropy:unit-format` for the complete unit grammar.  An
-        :class:`~astropy.units.Unit` instance may also be passed directly.
+        Override the code-to-physical unit from the quantity's
+        :class:`~psi_io._models.Props` entry.  Accepts any string parseable by
+        :class:`~astropy.units.Unit` or a :class:`~astropy.units.Unit` instance.
     mesh : MeshCodeType, optional
-        Override the mesh stagger inferred from the quantity's
-        :class:`~psi_io._models.Props` entry.  Useful for files whose stagger
-        differs from the PSI convention.
+        Override the mesh stagger from the quantity's
+        :class:`~psi_io._models.Props` entry.
 
     Returns
     -------
-    out : H5MasData or H4MasData or H5Pot3dData or H4Pot3dData
-        An open reader object implementing the full :class:`_HdfInterface` API.
-        The concrete type depends on *model* and the file extension.
+    out : H5Data or H4Data
+        Open reader implementing the full ``_HdfInterface`` API.  Concrete type
+        depends on the file extension.
 
     Raises
     ------
     ValueError
-        If the combination of file extension and *model* is not supported, or if
-        required metadata cannot be resolved from the file, its attributes, and
-        the supplied keyword arguments.
+        If the file extension / model combination is unsupported or required
+        metadata cannot be resolved.
     FileNotFoundError
-        If *ifile* does not exist on disk.
+        If *ifile* does not exist.
 
     See Also
     --------
@@ -1537,29 +1769,14 @@ def PsiData(ifile: PathLike, /,
 
     Examples
     --------
-    Read a MAS radial magnetic field file — full array with coordinate scales:
+    Read a MAS radial field — full array with coordinate scales, then convert:
 
     >>> from psi_io.mhd_io import PsiData                  # doctest: +SKIP
     >>> reader = PsiData('br001001.h5')
-    >>> data, r, t, p = reader.read()
-    >>> data.unit                                           # code units (MAS_b)
+    >>> data, r, t, p = reader.read()                      # code units (MAS_b)
+    >>> data, r, t, p = reader.read(unit='Gauss')          # convert to Gauss
 
-    Convert to Gauss on the fly:
-
-    >>> data, r, t, p = reader.read(unit='Gauss')         # doctest: +SKIP
-
-    Read only the inner radial shell (indices 0–9 in r) in CGS base unit,
-    without returning coordinate arrays:
-
-    >>> data = reader.read(slice(0, 10), unit='physical', scales=False)  # doctest: +SKIP
-
-    Read a POT3D HDF4 file.  The boundary magnetogram was in Gauss, so the
-    unit must be declared explicitly — it cannot be inferred from the file:
-
-    >>> reader = PsiData('br001.hdf', model='pot3d', unit='Gauss')  # doctest: +SKIP
-    >>> data, r, t, p = reader.read()
-
-    Use as a context manager to guarantee the file handle is released:
+    Use as a context manager:
 
     >>> with PsiData('vr001001.h5') as reader:              # doctest: +SKIP
     ...     data, r, t, p = reader.read(unit='km/s')
@@ -1567,11 +1784,10 @@ def PsiData(ifile: PathLike, /,
     Inspect metadata without loading data:
 
     >>> reader = PsiData('rho001001.h5')                    # doctest: +SKIP
-    >>> reader.quantity          # 'rho'
-    >>> reader.description       # 'Mass Density'
-    >>> reader.unit              # MAS_n (code units)
-    >>> reader.mesh              # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
-    >>> reader.shape             # (Nφ, Nθ, Nr) — numpy storage order
+    >>> reader.quantity    # 'rho'
+    >>> reader.unit        # MAS_n
+    >>> reader.mesh        # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+    >>> reader.is_cached   # False
     """
     ifile = Path(ifile)
     cls = _DATA_CLASS_MAP.get(ifile.suffix)
