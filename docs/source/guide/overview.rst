@@ -337,3 +337,6 @@ Using psi-io
 .. note::
    Not all PSI FORTRAN tools can read HDF4 files written by the :class:`pyhdf.SD` interface.
    If you have a problem, use the PSI tool ``hdfsd2hdf`` to convert.
+
+**Reading MHD Model Output (MAS / POT3D):**
+    - :func:`~psi_io.mhd_io.PsiData`

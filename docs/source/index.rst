@@ -12,6 +12,10 @@ HDF4 and HDF5 files, *viz.* those that adhere to PSI conventions. By providing a
 for working with both HDF4 and HDF5 files, ``psi-io`` enables users to seamlessly interact with PSI's
 data products without needing to worry about the underlying file format or conventions used.
 
+For reading PSI MAS and POT3D model output with physical units, lazy loading, and
+mesh-aware slicing, see :func:`~psi_io.mhd_io.PsiData` and the
+:ref:`overview` for an inventory of all supported quantities and coordinate scales.
+
 To get started, visit the :ref:`installation` guide. For a more in-depth overview of the conventions used
 throughout PSI's data products – as well as an inventory of the functions provided through ``psi-io`` –
 consult the :ref:`overview` page.

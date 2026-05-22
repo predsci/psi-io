@@ -188,8 +188,8 @@ numpydoc_xref_aliases = {
     "MasQuantities": "psi_io._models.MasQuantities",
     "Pot3dQuantities": "psi_io._models.Pot3dQuantities",
     "PsiScales": "psi_io._models.PsiScales",
+    "ModelType": "psi_io._models.ModelType",
     # --- psi_io.mhd_io ---
-    "ModelType": "psi_io.mhd_io.ModelType",
     "HdfVersionType": "psi_io.mhd_io.HdfVersionType",
     "Scales": "psi_io.mhd_io.Scales",
     "H5Scale": "psi_io.mhd_io.H5Scale",

@@ -8,4 +8,5 @@ Below you will find a series of examples demonstrating how to use ``psi-io`` for
 
     01_reading_files/index
     02_writing_files/index
+    03_mhd_io/index
 
