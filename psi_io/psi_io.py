@@ -73,6 +73,7 @@ __all__ = [
     "rdhdf_3d",
 
     "write_hdf_data",
+    "write_hdf_meta",
     "wrhdf_1d",
     "wrhdf_2d",
     "wrhdf_3d",
@@ -85,7 +86,7 @@ import math
 from collections import namedtuple
 from pathlib import Path
 from types import MappingProxyType
-from typing import Optional, Literal, Tuple, Sequence, List, Dict, Union, Callable, Any
+from typing import Optional, Literal, Tuple, Sequence, List, Dict, Union, Callable, Any, Mapping
 
 import numpy as np
 import h5py as h5
@@ -217,7 +218,7 @@ HdfExtType = Literal['.hdf', '.h5']
 """Type alias for possible HDF file extensions"""
 
 
-HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'imax'])
+HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'attr', 'imin', 'imax'])
 """
     Named tuple storing metadata for a single HDF scale (coordinate) dimension.
 
@@ -229,6 +230,8 @@ HdfScaleMeta = namedtuple('HdfScaleMeta', ['name', 'type', 'shape', 'imin', 'ima
         The data type of the scale.
     shape : tuple[int, ...]
         The shape of the scale array.
+    attr : dict[str, Any]
+        A dictionary of attributes associated with the dataset.
     imin : float
         The minimum value of the scale.
         This assumes the scale is monotonically increasing.
@@ -849,7 +852,21 @@ def read_hdf_meta(ifile: PathLike, /,
     Returns
     -------
     out : list[HdfDataMeta]
-        A list of metadata objects corresponding to the specified datasets.
+        A list of :class:`HdfDataMeta` named tuples, one per dataset (or one
+        for the requested *dataset_id*).  Each object exposes:
+
+        ``name`` — dataset name (e.g. ``'Data'`` or ``'Data-Set-2'``).
+
+        ``type`` — NumPy dtype string of the stored array.
+
+        ``shape`` — array shape tuple.
+
+        ``attr`` — :class:`dict` of attribute key-value pairs attached to the
+        dataset.  Empty when no attributes are present.
+
+        ``scales`` — list of :class:`HdfScaleMeta` objects, one per
+        coordinate dimension.  Each :class:`HdfScaleMeta` similarly carries
+        an ``attr`` dict for scale-level attributes.
 
     Raises
     ------
@@ -876,6 +893,10 @@ def read_hdf_meta(ifile: PathLike, /,
     'Data'
     >>> meta[0].shape
     (181, 100, 151)
+    >>> meta[0].attr                        # attributes attached to the dataset
+    {}
+    >>> len(meta[0].scales)                 # one HdfScaleMeta per dimension
+    3
     """
 
     return _dispatch_by_ext(ifile, _read_h4_meta, _read_h5_meta,
@@ -1409,6 +1430,72 @@ def write_hdf_data(ifile: PathLike, /,
     """
     return _dispatch_by_ext(ifile, _write_h4_data, _write_h5_data, data,
                             *scales, dataset_id=dataset_id, sync_dtype=sync_dtype, strict=strict, **kwargs)
+
+
+def write_hdf_meta(ifile: PathLike, /,
+                   meta: Optional[Mapping[str, Mapping[str, Any]]] = None,
+                   **kwargs) -> Path:
+    """
+    Add or update attributes on an existing HDF4 (.hdf) or HDF5 (.h5) file.
+
+    Unlike :func:`write_hdf_data`, this function does **not** create or overwrite
+    any dataset — it only attaches attribute key-value pairs to the file root
+    (via ``**kwargs``) or to named datasets within the file (via ``meta``).
+
+    Parameters
+    ----------
+    ifile : PathLike
+        Path to an existing HDF file.  The file must already contain any
+        datasets referenced by *meta*.
+    meta : Mapping[str, Mapping[str, Any]] | None, optional
+        Per-dataset attributes.  Each key is a dataset name (e.g. ``'Data'``
+        for HDF5, ``'Data-Set-2'`` for HDF4); the corresponding value is a
+        mapping of attribute name → attribute value to attach to that dataset.
+        ``None`` (the default) applies no per-dataset attributes.
+    **kwargs
+        File-level (root) attributes.  For HDF5 files these are written to
+        the root group; for HDF4 files they are written as SD-level global
+        attributes.  They do **not** appear on any dataset and will not be
+        returned by :func:`read_hdf_meta`.
+
+    Returns
+    -------
+    out : Path
+        The path to the modified HDF file.
+
+    Raises
+    ------
+    ValueError
+        If the file does not have a ``.hdf`` or ``.h5`` extension.
+
+    Notes
+    -----
+    This function delegates to :func:`_write_h5_meta` for HDF5 files and
+    :func:`_write_h4_meta` for HDF4 files based on the file extension.
+
+    Per-dataset attributes written via *meta* are subsequently accessible
+    through the :attr:`~HdfDataMeta.attr` field of the :class:`HdfDataMeta`
+    named tuple returned by :func:`read_hdf_meta`.
+
+    See Also
+    --------
+    write_hdf_data : Write dataset data (and optionally attributes) to a new file.
+    read_hdf_meta  : Read dataset metadata and attributes from an HDF file.
+
+    Examples
+    --------
+    >>> import tempfile, numpy as np
+    >>> from pathlib import Path
+    >>> from psi_io import write_hdf_data, write_hdf_meta, read_hdf_meta
+    >>> f = np.ones((30, 20, 10), dtype=np.float32)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     _ = write_hdf_data(Path(d) / "out.h5", f)
+    ...     _ = write_hdf_meta(Path(d) / "out.h5", meta={'Data': {'long_name': 'test field', 'units': 'G'}})
+    ...     meta = read_hdf_meta(Path(d) / "out.h5")
+    ...     meta[0].attr['long_name']
+    'test field'
+    """
+    return _dispatch_by_ext(ifile, _write_h4_meta, _write_h5_meta, meta, **kwargs)
 
 
 def convert(ifile: PathLike,
@@ -2113,6 +2200,7 @@ def _read_h5_meta(ifile: PathLike, /,
                             scales=[HdfScaleMeta(name=dimproxy.label,
                                                  type=dim.dtype,
                                                  shape=dim.shape,
+                                                 attr=dict(dim.attrs),
                                                  imin=dim[0],
                                                  imax=dim[-1])
                                     for dimproxy in v.dims if dimproxy and (dim := dimproxy[0])])
@@ -2158,6 +2246,7 @@ def _read_h4_meta(ifile: PathLike, /,
                         scales=[HdfScaleMeta(name=k_,
                                              type=SDC_TYPE_CONVERSIONS[v_[3]],
                                              shape=_cast_shape_tuple(v_[0]),
+                                             attr=hdf.select(k_).attributes(),
                                              imin=hdf.select(k_)[0],
                                              imax=hdf.select(k_)[-1])
                                 for k_, v_ in v.dimensions(full=1).items() if v_[3]])
@@ -2526,6 +2615,47 @@ def _write_h5_data(ifile: PathLike, /,
                     else:
                         print(f"Warning: Failed to set attribute '{key}' on dataset '{dataid}'; skipping.")
 
+    return ifile
+
+
+def _write_h4_meta(ifile: PathLike, /,
+                   meta: Optional[Mapping[str, Mapping[str, Any]]] = None,
+                   **kwargs) -> Path:
+    """HDF4 (.hdf) version of :func:`write_hdf_meta`."""
+    metadata = dict(meta or {})
+    h4file = h4.SD(str(ifile), h4.SDC.READ | h4.SDC.WRITE)
+
+    for k, v in kwargs.items():
+        npv = np.asarray(v)
+        attr_ = h4file.attr(k)
+        val = npv.tolist()
+        if isinstance(val, bytes):
+            val = val.decode('latin-1')
+        attr_.set(_dtype_to_sdc(npv.dtype), val)
+    for key, value in metadata.items():
+        sds_id = h4file.select(key)
+        for k, v in dict(value).items():
+            npv = np.asarray(v)
+            attr_ = sds_id.attr(k)
+            val = npv.tolist()
+            if isinstance(val, bytes):
+                val = val.decode('latin-1')
+            attr_.set(_dtype_to_sdc(npv.dtype), val)
+    h4file.end()
+
+    return ifile
+
+
+def _write_h5_meta(ifile: PathLike, /,
+                   meta: Optional[Mapping[str, Mapping[str, Any]]] = None,
+                   **kwargs) -> Path:
+    """HDF5 (.h5) version of :func:`write_hdf_meta`."""
+    metadata = dict(meta or {})
+    with h5.File(ifile, "r+") as h5file:
+        if kwargs:
+            h5file.attrs.update(**kwargs)
+        for key, value in metadata.items():
+            h5file[key].attrs.update(**dict(value))
     return ifile
 
 

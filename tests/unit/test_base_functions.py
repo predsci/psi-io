@@ -2,10 +2,13 @@ import pytest
 import numpy as np
 from numpy.testing import assert_array_equal
 
+from pathlib import Path
+
 from psi_io import (read_hdf_data,
                     read_hdf_meta,
                     read_rtp_meta,
                     write_hdf_data,
+                    write_hdf_meta,
                     read_hdf_by_index,
                     read_hdf_by_value,
                     read_hdf_by_ivalue,
@@ -280,3 +283,80 @@ def test_convert_psih4_to_psih5_equivalence(tmp_path, datatype, dimensionality, 
     original_data = read_hdf_data(h4_fp)
     for carray, oarray in zip(converted_data, original_data):
         assert_array_equal(carray, oarray)
+
+
+class TestWriteHdfMeta:
+
+    def test_returns_path(self, tmp_path, hdf_version):
+        ext = HDF_VERSION_MAPPINGS[hdf_version]['extension']
+        fp = tmp_path / f"meta_returns{ext}"
+        fdata, *_ = generate_mock_data(1, 'float32', False)
+        write_hdf_data(fp, fdata)
+        result = write_hdf_meta(fp)
+        assert isinstance(result, Path)
+        assert result == fp
+
+    def test_preserves_dataset(self, tmp_path, hdf_version, datatype, dimensionality, scales_included):
+        ext = HDF_VERSION_MAPPINGS[hdf_version]['extension']
+        data_id = HDF_VERSION_MAPPINGS[hdf_version]['data_id']
+        fp = tmp_path / f"meta_preserve_{datatype}_{dimensionality}d_{'ws' if scales_included else 'ns'}{ext}"
+        fdata, *sdata = generate_mock_data(dimensionality, datatype, scales_included)
+        write_hdf_data(fp, fdata, *sdata, dataset_id=data_id)
+        write_hdf_meta(fp, meta={data_id: {'note': 'added post-hoc'}})
+        readback = read_hdf_data(fp)
+        assert_array_equal(readback[0], fdata)
+
+    def test_dataset_attrs_roundtrip(self, tmp_path, hdf_version):
+        ext = HDF_VERSION_MAPPINGS[hdf_version]['extension']
+        data_id = HDF_VERSION_MAPPINGS[hdf_version]['data_id']
+        fp = tmp_path / f"meta_attrs{ext}"
+        fdata, *_ = generate_mock_data(2, 'float32', False)
+        write_hdf_data(fp, fdata, dataset_id=data_id)
+        attrs = {'long_name': 'test field', 'units': 'G'}
+        write_hdf_meta(fp, meta={data_id: attrs})
+        meta_result, *_ = read_hdf_meta(fp, dataset_id=data_id)
+        for k, v in attrs.items():
+            assert k in meta_result.attr
+            assert meta_result.attr[k] == v
+
+    def test_attr_types_roundtrip(self, tmp_path, hdf_version):
+        ext = HDF_VERSION_MAPPINGS[hdf_version]['extension']
+        data_id = HDF_VERSION_MAPPINGS[hdf_version]['data_id']
+        fp = tmp_path / f"meta_types{ext}"
+        fdata, *_ = generate_mock_data(1, 'float32', False)
+        write_hdf_data(fp, fdata, dataset_id=data_id)
+        attrs = dict(
+            test_str='hello',
+            test_int32=np.int32(42),
+            test_float32=np.float32(3.14),
+            test_array=np.array([1, 2, 3], dtype='int16'),
+        )
+        write_hdf_meta(fp, meta={data_id: attrs})
+        meta_result, *_ = read_hdf_meta(fp, dataset_id=data_id)
+        for k, v in attrs.items():
+            assert k in meta_result.attr
+            assert_array_equal(meta_result.attr[k], v)
+
+    def test_noop(self, tmp_path, hdf_version):
+        ext = HDF_VERSION_MAPPINGS[hdf_version]['extension']
+        data_id = HDF_VERSION_MAPPINGS[hdf_version]['data_id']
+        fp = tmp_path / f"meta_noop{ext}"
+        fdata, *_ = generate_mock_data(3, 'float32', False)
+        write_hdf_data(fp, fdata, dataset_id=data_id)
+        write_hdf_meta(fp)
+        readback = read_hdf_data(fp)
+        assert_array_equal(readback[0], fdata)
+        meta_result, *_ = read_hdf_meta(fp, dataset_id=data_id)
+        assert meta_result.attr == {}
+
+
+class TestReadHdfMetaAttr:
+
+    def test_attr_empty_when_no_attrs_written(self, hdf_version, datatype, generated_files):
+        meta_result, *_ = read_hdf_meta(generated_files[datatype][1][False])
+        assert meta_result.attr == {}
+
+    def test_scale_attr_is_dict(self, hdf_version, datatype, generated_files):
+        meta_result, *_ = read_hdf_meta(generated_files[datatype][3][True])
+        for scale in meta_result.scales:
+            assert isinstance(scale.attr, dict)
