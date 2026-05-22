@@ -1,8 +1,8 @@
-import pytest
-import numpy as np
-from numpy.testing import assert_array_equal
-
 from pathlib import Path
+
+import numpy as np
+import pytest
+from numpy.testing import assert_array_equal
 
 from psi_io import (read_hdf_data,
                     read_hdf_meta,
@@ -14,10 +14,11 @@ from psi_io import (read_hdf_data,
                     read_hdf_by_ivalue,
                     rdhdf_1d, rdhdf_2d, rdhdf_3d,
                     get_scales_1d, get_scales_2d, get_scales_3d,
-                    convert, convert_psih4_to_psih5
+                    convert_psih4_to_psih5
                     )
 from tests.conftest import HDF_VERSION_MAPPINGS
 from tests.utils import generate_data_shape, generate_mock_data
+
 
 def test_read_hdf_meta(hdf_version, datatype, dimensionality, scales_included, generated_files):
     result, *_ = read_hdf_meta(generated_files[datatype][dimensionality][scales_included])
