@@ -284,7 +284,7 @@ def _parse_remesh(imesh: tuple[Mesh, ...],
     """Yield per-axis remesh flags (``True`` = half→main) by comparing *imesh* to *omesh*."""
     if order == 'F':
         imesh, omesh = reversed(imesh), reversed(omesh)
-    for im, om in zip(imesh, omesh, strict=True):
+    for im, om in zip(imesh, omesh):
         if im == om:
             yield False
         elif im == Mesh.HALF and om == Mesh.MAIN:

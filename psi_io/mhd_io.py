@@ -294,11 +294,13 @@ from collections.abc import Sequence
 from itertools import repeat
 from pathlib import Path
 from types import MappingProxyType
-from typing import Optional, Literal, ClassVar
+from typing import TYPE_CHECKING, Optional, Literal, ClassVar
 import numpy as np
 import h5py as h5
 import astropy.units as u
-from astropy.units.typing import UnitLike, QuantityLike
+
+if TYPE_CHECKING:
+    from astropy.units.typing import UnitLike, QuantityLike
 
 try:
     import pyhdf.SD as h4
@@ -455,7 +457,7 @@ def _slice_array(data: QuantityLike,
     """
     if order == 'F':
         values, scales = reversed(values), reversed(scales)
-    for i, (v, s) in enumerate(zip(values, scales, strict=True)):
+    for i, (v, s) in enumerate(zip(values, scales)):
         if v is not None:
             if s is None:
                 raise ValueError("Cannot interpolate to a value when the corresponding scale is not provided.")
@@ -517,7 +519,7 @@ def _parse_islice_args(*args, shape: tuple[int, ...],):
     """
     sargs = _expand_args(*args, ndim=len(shape))
 
-    for arg, dim_size in zip(sargs, shape, strict=True):
+    for arg, dim_size in zip(sargs, shape):
         slice_ = _cast_to_slice(arg)
         start, stop, step = slice_.indices(dim_size)
         if stop <= start:
@@ -565,7 +567,7 @@ def _parse_vslice_args(*args,
         If *bounds_error* is ``True`` and a value lies outside its scale range.
     """
     sargs = _expand_args(*args, ndim=len(scales))
-    for arg, scale in zip(sargs, scales, strict=True):
+    for arg, scale in zip(sargs, scales):
         value = None
         if np.isscalar(arg):
             arg = arg * scale.unit
@@ -1184,7 +1186,7 @@ class _H5DataMixin:
     def _set_scales(self):
         """Construct :class:`H5Scale` objects from h5py dimension scales."""
         self._scales = Scales(*(H5Scale(self, scale, label.label)
-                                     for scale, label in zip('rtp', self.data.dims, strict=True)))
+                                     for scale, label in zip('rtp', self.data.dims)))
 
 
 class _H4DataMixin:
@@ -1266,7 +1268,7 @@ class _H4DataMixin:
         sds = self.data
         dims = list(reversed(list(sds.dimensions(full=1).items())))
         self._scales = Scales(*tuple(H4Scale(self, scale, k_)
-                                     for scale, (k_, v_) in zip('rtp', dims, strict=True)))
+                                     for scale, (k_, v_) in zip('rtp', dims)))
 
 
 # =============================================================================
@@ -1424,7 +1426,7 @@ class _HdfData(_HdfInterface, ABC):
                             unit=native_props.unit,
                             mesh=native_props.mesh)
 
-        attributes = native_attrs | file_attrs | input_attrs
+        attributes = {**native_attrs, **file_attrs, **input_attrs}
         if any(v is None for v in attributes.values()):
             missing_meta = ', '.join(k for k, v in attributes.items() if v is None)
             raise ValueError(f"Malformed metadata: {missing_meta} is missing. "
@@ -1626,13 +1628,13 @@ class _HdfData(_HdfInterface, ABC):
         pre_slice_data = _apply_units(self._read(*sargs, remesh=remesh_xand_svalue), unit)
 
         pre_slice_scales = tuple(scale[sarg] * scale.unit if sv is not None else None
-                             for scale, sarg, sv in zip(self.scales, sargs, slice_values, strict=True))
+                             for scale, sarg, sv in zip(self.scales, sargs, slice_values))
 
         sliced_data = _slice_array(pre_slice_data, slice_values, pre_slice_scales, fill_value)
         if not scales:
             return sliced_data
         sliced_scales = tuple(scale._read(sarg, remesh=rmesh) if sv is None else np.atleast_1d(sv)
-                                 for scale, sarg, sv, rmesh in zip(self.scales, sargs, slice_values, remesh, strict=True))
+                                 for scale, sarg, sv, rmesh in zip(self.scales, sargs, slice_values, remesh))
         return sliced_data, *sliced_scales
 
 
