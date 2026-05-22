@@ -9,9 +9,9 @@ from __future__ import annotations
 
 __all__ = ['PsiData',]
 
-import re
 from abc import abstractmethod, ABC
 from collections import namedtuple
+from collections.abc import Sequence
 from itertools import repeat
 from pathlib import Path
 from types import MappingProxyType
@@ -19,7 +19,7 @@ from typing import Optional, Literal, ClassVar
 import numpy as np
 import h5py as h5
 import astropy.units as u
-from astropy.units.typing import UnitLike
+from astropy.units.typing import UnitLike, QuantityLike
 
 try:
     import pyhdf.SD as h4
@@ -30,7 +30,7 @@ from psi_io._mesh import (Mesh,
                           MeshCodeType,
                           _normalize_mesh_code,
                           _remesh_array,
-                          _parse_remesh, remesh_array,
+                          _parse_remesh, ArrayOrdering,
                           )
 from psi_io._models import (Props,
                             PsiScales,
@@ -135,6 +135,81 @@ Created by :meth:`_HdfData._set_scales` during instantiation and exposed as
 """
 
 
+def _interpolate_dim(arr: QuantityLike,
+                     axis: int,
+                     value: QuantityLike,
+                     scale: QuantityLike,
+                     fill_value: Optional[QuantityLike]
+                     ) -> QuantityLike:
+    """Linearly interpolate *arr* along *axis* to *value*, collapsing that axis to size 1.
+
+    Both *value* and *scale* must carry the same unit (or both be dimensionless).
+    The result is a fill array when *value* is outside the 2-element *scale* window
+    and *fill_value* is not ``None``; otherwise a linear interpolation is performed.
+    Extrapolation occurs silently when *fill_value* is ``None``.
+    """
+    if arr.shape[axis] != 2 or len(scale) != 2:
+        raise ValueError("Interpolation is only supported for 2-element arrays and scales.")
+    if (value < scale[0] or value > scale[1]) and fill_value is not None:
+
+        return np.full(arr.shape[:axis] + (1,) + arr.shape[axis + 1:], fill_value, dtype=arr.dtype)
+    t = (value - scale[0]) / (scale[1] - scale[0])
+    slc_lo = [slice(None)] * arr.ndim
+    slc_hi = [slice(None)] * arr.ndim
+    slc_lo[axis] = slice(None, -1)
+    slc_hi[axis] = slice(1, None)
+    return (1.0 - t) * arr[tuple(slc_lo)] +  t * arr[tuple(slc_hi)]
+
+
+def _slice_array(data: QuantityLike,
+                 values: Sequence[Optional[QuantityLike]],
+                 scales: Sequence[Optional[QuantityLike]],
+                 fill_value: Optional[QuantityLike],
+                 order: ArrayOrdering = 'F') -> QuantityLike:
+    """Interpolate *data* to physical values along each axis that has a non-``None`` entry.
+
+    Iterates over axes in storage order (reversed from physical order when
+    ``order='F'``) and calls :func:`_interpolate_dim` for each axis whose
+    entry in *values* is not ``None``.  Axes with ``None`` entries are left
+    unchanged.  *scales* must be in the same order as *values* and provide the
+    two-element coordinate window for each interpolated axis.
+    """
+    if order == 'F':
+        values, scales = reversed(values), reversed(scales)
+    for i, (v, s) in enumerate(zip(values, scales, strict=True)):
+        if v is not None:
+            if s is None:
+                raise ValueError("Cannot interpolate to a value when the corresponding scale is not provided.")
+            data = _interpolate_dim(data, i, v, s, fill_value)
+    return data
+
+
+def _expand_args(*args, ndim: int) -> tuple:
+    """Expand *args* to a length-*ndim* tuple, replacing ``Ellipsis`` and padding with ``None``.
+
+    Parameters
+    ----------
+    *args : object
+        User-supplied dimension arguments.  An ``Ellipsis`` is replaced by the
+        appropriate number of ``None`` values so that the total length equals *ndim*.
+        If fewer than *ndim* arguments are provided, trailing ``None``\\ s are appended.
+    ndim : int
+        Target length of the returned tuple.
+
+    Returns
+    -------
+    out : tuple
+        Length-*ndim* tuple of dimension arguments.
+    """
+    if Ellipsis in args:
+        n_missing = ndim - (len(args) - 1)
+        idx = args.index(Ellipsis)
+        args = args[:idx] + (None,) * n_missing + args[idx + 1:]
+    if len(args) < ndim:
+        args += (None,) * (ndim - len(args))
+    return args
+
+
 def _parse_islice_args(*args, shape: tuple[int, ...],):
     """Normalize index-space slice arguments to a tuple of :class:`slice` objects.
 
@@ -161,62 +236,106 @@ def _parse_islice_args(*args, shape: tuple[int, ...],):
     TypeError
         If an argument cannot be converted to a slice (via :func:`_cast_to_slice`).
     """
-    if Ellipsis in args:
-        n_missing = len(shape) - (len(args) - 1)
-        idx = args.index(Ellipsis)
-        args = args[:idx] + (None,) * n_missing + args[idx + 1:]
-    if len(args) < len(shape):
-        args += (None,) * (len(shape) - len(args))
+    sargs = _expand_args(*args, ndim=len(shape))
 
-    for arg, dim_size in zip(args, shape, strict=True):
+    for arg, dim_size in zip(sargs, shape, strict=True):
         slice_ = _cast_to_slice(arg)
         start, stop, step = slice_.indices(dim_size)
         if stop <= start:
             raise ValueError(f"Slice argument {arg!r} yields an empty dimension.")
-        # if do_remesh and (stop - start) // step < 2:
-        #     raise ValueError(f"Cannot remesh dimension with slice {slice_} "
-        #                      f"because it does not include at least two indices.")
         yield slice_
 
 
-def _parse_vslice_args(dim, scale):
-    """Convert a value-space dimension specifier to an index-space slice.
+def _parse_vslice_args(*args,
+                       scales: Scales,
+                       bounds_error: bool):
+    """Convert value-space dimension arguments to ``(value, index_slice)`` pairs.
 
-    If *dim* is a bare float, it is treated as a value in the coordinate's native
-    unit and first converted to an :class:`~astropy.units.Quantity`.  If *dim* is
-    an :class:`~astropy.units.Quantity`, its value is located in *scale* via binary
-    search and a two-element neighborhood slice is returned for interpolation.
-    Non-quantity inputs are passed through to :func:`_cast_to_slice` unchanged.
+    For each axis, a bare scalar or :class:`~u.Quantity` triggers a
+    value-space lookup: the coordinate scale is searched to find the two bracketing
+    indices, and a 2-element slice is returned for later linear interpolation via
+    :func:`_interpolate_dim`.  All other argument types (``None``, ``int``,
+    ``slice``, tuple) are treated as index-space and passed through to
+    :func:`_cast_to_slice` unchanged, with ``None`` returned as the value.
 
     Parameters
     ----------
-    dim : float, astropy.units.Quantity, int, slice, or tuple
-        Dimension specifier.  Floats and Quantities trigger value-based lookup;
-        all other types are forwarded to :func:`_cast_to_slice`.
-    scale : H5Scale or H4Scale
-        Coordinate scale providing the values to search and the native unit for
-        unit conversion.
+    *args : scalar, u.Quantity, int, slice, tuple, None, or Ellipsis
+        One argument per spatial axis in physical ``(r, θ, φ)`` order.  Fewer
+        arguments than dimensions are padded with ``None`` via :func:`_expand_args`.
+    scales : Scales
+        Coordinate scale readers in physical ``(r, θ, φ)`` order.  Used to look
+        up the native unit and perform bounds checking.
+    bounds_error : bool
+        If ``True``, raise :class:`ValueError` when a value lies outside the
+        range of its coordinate scale.
+
+    Yields
+    ------
+    value : u.Quantity or None
+        The physical target value (in the scale's native unit) for value-space
+        axes; ``None`` for index-space axes.
+    s : slice
+        Corresponding index-space slice.  For value-space axes this is the
+        2-element bracketing window ``slice(i-1, i+1)``; for index-space axes
+        it is the result of :func:`_cast_to_slice`.
+
+    Raises
+    ------
+    ValueError
+        If *bounds_error* is ``True`` and a value lies outside its scale range.
+    """
+    sargs = _expand_args(*args, ndim=len(scales))
+    for arg, scale in zip(sargs, scales, strict=True):
+        value = None
+        if np.isscalar(arg):
+            arg = arg * scale.unit
+        if isinstance(arg, u.Quantity):
+            value = arg.to(scale.unit)
+            raw_value = value.value
+            if bounds_error and (raw_value < scale[0] or raw_value > scale[-1]):
+                raise ValueError(f"Value {arg} is out of bounds for scale '{scale.quantity}' "
+                                 f"with range {scale.data[0]:.3f} to {scale.data[-1]:.3f} {scale.unit}.")
+            index = int(np.clip(np.searchsorted(scale[...], raw_value), 1, scale.size - 1))
+            arg = (index - 1, index + 1)
+        slice_ = _cast_to_slice(arg)
+        start, stop, step = slice_.indices(scale.size)
+        if stop <= start:
+            raise ValueError(f"Slice argument {arg!r} yields an empty dimension.")
+        yield value, slice_
+
+
+def _apply_units(data: u.Quantity, unit: Optional[str | UnitLike]) -> u.Quantity:
+    """Apply a unit conversion to *data*, returning a :class:`~u.Quantity`.
+
+    Parameters
+    ----------
+    data : u.Quantity
+        Data in code units.
+    unit : str, u.Unit, or None
+        Requested output unit.  ``None`` is a no-op.  Special string aliases:
+        ``'native'`` / ``'code'`` / ``'model'`` / ``'psi'`` — return *data*
+        unchanged; ``'real'`` / ``'phys'`` / ``'physical'`` / ``'cgs'`` —
+        decompose to CGS base unit via
+        :func:`~psi_io._units.decompose_mas_units`.  Any other value is
+        forwarded to :meth:`~u.Quantity.to`.
 
     Returns
     -------
-    s : slice
-        Index-space slice (a two-index neighborhood for value lookups; the original
-        slice for index-space inputs).
-    val : astropy.units.Quantity or None
-        The matched physical value for value-based lookups, or ``None`` for
-        index-based inputs.
+    out : u.Quantity
+        *data* in the requested unit.
     """
-    val = None
-    if isinstance(dim, float):
-        dim = dim * scale.unit
-    if isinstance(dim, u.Quantity):
-        val = dim.to(scale.unit)
-        i1 = int(np.clip(np.searchsorted(scale.data, val.value), 1, scale.size - 2))
-        dim = (i1-1, i1+1)
-    return _cast_to_slice(dim), val
+    if unit is None:
+        return data
+    ounit = str(unit).lower()
+    if ounit in _CODE_UNIT_ALIASES:
+        return data
+    if ounit in _REAL_UNIT_ALIASES:
+        return decompose_mas_units(data)
+    return data.to(unit)
 
 
-def _cast_to_slice(input):
+def _cast_to_slice(input: None | int | slice | Sequence) -> slice:
     """Convert a dimension index argument to a :class:`slice` object.
 
     Parameters
@@ -351,7 +470,7 @@ class _HdfInterface(ABC):
     @property
     @abstractmethod
     def unit(self) -> u.Unit:
-        """Astropy unit that converts one code-unit value to physical units."""
+        """Astropy unit that converts one code-unit value to physical unit."""
         ...
 
     @property
@@ -423,7 +542,7 @@ class _HdfInterface(ABC):
     @abstractmethod
     def read(self,
              *args,
-             units: Optional[str | UnitLike] = None,
+             unit: Optional[str | UnitLike] = None,
              mesh: Optional[MeshCodeType] = None,
              ) -> tuple[u.Quantity, tuple[slice, ...], tuple[bool, ...]]:
         """Read a slice of data, applying optional unit conversion and remeshing.
@@ -446,18 +565,18 @@ class _HdfInterface(ABC):
             - ``(start, stop)`` or ``(start, stop, step)`` — converted to a slice.
             - ``Ellipsis`` — expands to ``None`` for all remaining axes.
 
-        units : str or astropy.units.Unit, optional
+        unit : str or u.Unit, optional
             Requested output unit.  Special string aliases are accepted:
 
             - ``'native'`` / ``'code'`` / ``'model'`` — return raw code-unit
-              values (an :class:`~astropy.units.Quantity` whose unit is the custom
+              values (an :class:`~u.Quantity` whose unit is the custom
               MAS unit, e.g. ``MAS_b``).
             - ``'real'`` / ``'phys'`` / ``'physical'`` — decompose to CGS base
-              units via :func:`~psi_io._units.decompose_mas_units`.
+              unit via :func:`~psi_io._units.decompose_mas_units`.
             - Any other string or :class:`~astropy.units.Unit` — passed directly
-              to :meth:`~astropy.units.Quantity.to`.
+              to :meth:`~u.Quantity.to`.
 
-            If ``None``, the data are returned in the native code unit without
+            If ``None``, the data are returned in the native code units without
             conversion.
 
         mesh : MeshCodeType, optional
@@ -469,8 +588,8 @@ class _HdfInterface(ABC):
 
         Returns
         -------
-        odata : astropy.units.Quantity
-            Data array with requested units and remeshing applied.
+        odata : u.Quantity
+            Data array with requested unit and remeshing applied.
         sargs : tuple[slice, ...]
             Slice tuple in physical ``(r, θ, φ)`` order, suitable for applying to
             coordinate scale arrays.
@@ -489,16 +608,7 @@ class _HdfInterface(ABC):
         sargs = tuple(sargs)
         remesh = tuple(remesh)
 
-        odata = self._read(*sargs, remesh=remesh)
-        if units is not None:
-            ounit = str(units).lower()
-            if ounit in _CODE_UNIT_ALIASES:
-                pass
-            elif ounit in _REAL_UNIT_ALIASES:
-                odata = decompose_mas_units(odata)
-            else:
-                odata = odata.to(units)
-
+        odata = _apply_units(self._read(*sargs, remesh=remesh), unit)
         return odata, sargs, remesh
 
     @abstractmethod
@@ -521,7 +631,7 @@ class _HdfInterface(ABC):
 
         Returns
         -------
-        out : astropy.units.Quantity
+        out : u.Quantity
             Sliced and optionally remeshed data in code units.
         """
 
@@ -621,7 +731,7 @@ class _HdfScale(_HdfInterface, ABC):
 
         Returns
         -------
-        out : astropy.units.Quantity
+        out : u.Quantity
             Coordinate values with the appropriate PSI unit attached.
         """
         odata, *_ = super().read(*args, **kwargs)
@@ -1057,7 +1167,7 @@ class _HdfData(_HdfInterface, ABC):
             Quantity name; stored as a string.
         sequence : int
             Sequence number; coerced to int.
-        unit : str or astropy.units.Unit
+        unit : str or u.Unit
             Unit; converted to :class:`~astropy.units.Unit` via ``u.Unit(str(unit))``.
         mesh : MeshCodeType
             Mesh stagger; normalized to ``tuple[Mesh, ...]`` via
@@ -1078,7 +1188,7 @@ class _HdfData(_HdfInterface, ABC):
 
     @property
     def unit(self) -> u.Unit:
-        """Astropy unit for converting code-unit values to physical units."""
+        """Astropy unit for converting code-unit values to physical unit."""
         return self._unit
 
     @property
@@ -1131,13 +1241,13 @@ class _HdfData(_HdfInterface, ABC):
 
         Returns
         -------
-        odata : astropy.units.Quantity
+        odata : u.Quantity
             Data array in the requested unit.
-        r_scale : astropy.units.Quantity
+        r_scale : u.Quantity
             Radial coordinate values in solar radii (only if ``scales=True``).
-        t_scale : astropy.units.Quantity
+        t_scale : u.Quantity
             Co-latitude values in radians (only if ``scales=True``).
-        p_scale : astropy.units.Quantity
+        p_scale : u.Quantity
             Longitude values in radians (only if ``scales=True``).
 
         Examples
@@ -1148,7 +1258,7 @@ class _HdfData(_HdfInterface, ABC):
 
         Read a radial sub-range and convert to physical CGS units:
 
-        >>> data, r, t, p = reader.read(slice(10, 50), units='physical')  # doctest: +SKIP
+        >>> data, r, t, p = reader.read(slice(10, 50), unit='physical')  # doctest: +SKIP
 
         Read data only (no coordinate arrays):
 
@@ -1165,6 +1275,86 @@ class _HdfData(_HdfInterface, ABC):
               remesh) -> u.Quantity:
         """Internal read using pre-validated slice args."""
         return super()._read(*sargs, remesh=remesh)
+
+
+    def vslice(self,
+               *args,
+               scales: bool = True,
+               unit: Optional[str | UnitLike] = None,
+               mesh: Optional[MeshCodeType] = None,
+               bounds_error: bool = True,
+               fill_value: Optional[QuantityLike] = None,
+               ) -> u.Quantity | tuple[u.Quantity, ...]:
+        """Read a slice of data by physical coordinate value with optional interpolation.
+
+        Each positional argument may be a physical coordinate value
+        (:class:`~u.Quantity` or bare scalar), in which case the
+        dataset is reduced to a 2-element window and linearly interpolated to that
+        value.  Index-space arguments (``slice``, ``int``, ``None``, ``Ellipsis``)
+        are also accepted and passed through without interpolation, making this
+        method a superset of :meth:`read`.
+
+        Parameters
+        ----------
+        *args : u.Quantity, scalar, int, slice, tuple, None, or Ellipsis
+            One argument per spatial axis in physical ``(r, θ, φ)`` order.
+            u.Quantity or bare scalar → value-space interpolation.
+            All other types → index-space slice (see :meth:`read`).
+        scales : bool, optional
+            If ``True`` (default), also return the corresponding coordinate value
+            for each axis.  Value-interpolated axes return the interpolation target
+            as a length-1 :class:`~astropy.units.Quantity`; index-space axes return the full slice.
+        unit : str or u.Unit, optional
+            Output unit; see :meth:`read` for accepted aliases and formats.
+        mesh : MeshCodeType, optional
+            Target mesh stagger.  Remeshing is skipped for axes that are being
+            value-interpolated (interpolation already collapses the half-mesh
+            window to a single value).
+        bounds_error : bool, optional
+            If ``True`` (default), raise :class:`ValueError` when a value argument
+            lies outside its coordinate scale range.
+        fill_value : QuantityLike or None, optional
+            Value substituted when a coordinate value falls outside the 2-element
+            interpolation window and *bounds_error* is ``False``.  ``None``
+            silently extrapolates.
+
+        Returns
+        -------
+        odata : u.Quantity
+            Sliced and interpolated data in the requested unit.
+        r_scale, t_scale, p_scale : u.Quantity
+            Coordinate values for each axis (only if ``scales=True``).
+            Value-interpolated axes return the interpolation target as a
+            length-1 array; index-space axes return the full coordinate slice.
+
+        Raises
+        ------
+        ValueError
+            If *bounds_error* is ``True`` and any value argument is out of range,
+            or if a value axis has no corresponding coordinate scale.
+        """
+        vslice_args = tuple(_parse_vslice_args(*args, scales=self.scales, bounds_error=bounds_error))
+        slice_values, sargs = zip(*vslice_args)
+
+        if mesh is None:
+            remesh = repeat(False, self.ndim)
+        else:
+            omesh_norm = _normalize_mesh_code(mesh, self.ndim)
+            remesh = _parse_remesh(self.mesh, omesh_norm, 'C')
+        remesh = tuple(remesh)
+        remesh_xand_svalue = tuple(rm and sv is None for rm, sv in zip(remesh, slice_values))
+
+        pre_slice_data = _apply_units(self._read(*sargs, remesh=remesh_xand_svalue), unit)
+
+        pre_slice_scales = tuple(scale[sarg] * scale.unit if sv is not None else None
+                             for scale, sarg, sv in zip(self.scales, sargs, slice_values, strict=True))
+
+        sliced_data = _slice_array(pre_slice_data, slice_values, pre_slice_scales, fill_value)
+        if not scales:
+            return sliced_data
+        sliced_scales = tuple(scale._read(sarg, remesh=rmesh) if sv is None else np.atleast_1d(sv)
+                                 for scale, sarg, sv, rmesh in zip(self.scales, sargs, slice_values, remesh, strict=True))
+        return sliced_data, *sliced_scales
 
 
 # =============================================================================
@@ -1230,7 +1420,7 @@ def PsiData(ifile: PathLike, /,
     - :attr:`quantity` — canonical lower-case quantity string (e.g. ``'br'``).
     - :attr:`sequence` — integer time-step sequence number.
     - :attr:`unit` — :class:`~astropy.units.Unit` for converting from code units
-      to physical units.
+      to physical unit.
     - :attr:`mesh` — tuple of :class:`~psi_io._mesh.Mesh` flags describing the
       Yee-grid stagger position of each axis.
     - :attr:`description` — human-readable description of the physical quantity.
@@ -1243,7 +1433,7 @@ def PsiData(ifile: PathLike, /,
 
     .. code-block:: python
 
-        odata[, r, t, p] = reader.read(*args, units=None, mesh=None, scales=True)
+        odata[, r, t, p] = reader.read(*args, unit=None, mesh=None, scales=True)
 
     **Positional arguments** — each positional argument selects elements along
     one spatial axis in physical ``(r, θ, φ)`` order.  Supported forms:
@@ -1256,9 +1446,9 @@ def PsiData(ifile: PathLike, /,
 
     **Keyword arguments**:
 
-    - ``units`` — output unit.  String aliases: ``'native'`` / ``'code'`` /
-      ``'model'`` return values in the custom MAS code unit; ``'real'`` /
-      ``'phys'`` / ``'physical'`` decompose to CGS base units.  Any other
+    - ``unit`` — output unit.  String aliases: ``'native'`` / ``'code'`` /
+      ``'model'`` return values in the custom MAS code units; ``'real'`` /
+      ``'phys'`` / ``'physical'`` decompose to CGS base unit.  Any other
       string is forwarded to :class:`~astropy.units.Unit` and must be
       parseable by it — this includes SI and CGS unit names (``'Gauss'``,
       ``'nT'``, ``'T'``), compound expressions (``'km/s'``,
@@ -1269,7 +1459,7 @@ def PsiData(ifile: PathLike, /,
       Half-mesh axes that are on the main mesh in *mesh* are averaged to the
       main mesh via :func:`~psi_io._mesh.remesh_array` before return.
     - ``scales`` — if ``True`` (default), return the coordinate slice for each
-      axis as additional :class:`~astropy.units.Quantity` values after the data.
+      axis as additional :class:`~u.Quantity` values after the data.
 
     .. note::
         PSI HDF files are written in Fortran column-major order so that numpy
@@ -1280,11 +1470,11 @@ def PsiData(ifile: PathLike, /,
     .. warning:: **POT3D unit convention**
 
         POT3D applies **no normalization** to its output.  The stored values are in
-        whatever physical units the input photospheric boundary magnetogram was
+        whatever physical unit the input photospheric boundary magnetogram was
         provided in — most commonly Gauss, but this is not encoded in the file.
         The default ``unit`` for POT3D quantities is therefore
         ``dimensionless_unscaled`` (scale factor 1), meaning that calling
-        ``read(units='physical')`` will **not** perform a meaningful unit
+        ``read(unit='physical')`` will **not** perform a meaningful unit
         conversion unless the correct unit is supplied explicitly via the *unit*
         keyword argument at construction time:
 
@@ -1310,10 +1500,10 @@ def PsiData(ifile: PathLike, /,
     sequence : int, optional
         Override the time-step sequence number inferred from the filename or
         file attributes.
-    unit : str or astropy.units.Unit, optional
+    unit : str or u.Unit, optional
         Override the code-to-physical unit derived from the quantity's
         :class:`~psi_io._models.Props` entry.  Accepts any string parseable
-        by :class:`~astropy.units.Unit`, including named units (``'Gauss'``,
+        by :class:`~astropy.units.Unit`, including named unit (``'Gauss'``,
         ``'nT'``, ``'km/s'``), compound expressions (``'erg/cm**2/s'``),
         and scale-prefixed forms (``'mG'``, ``'μT'``); see
         :ref:`astropy:unit-format` for the complete unit grammar.  An
@@ -1343,7 +1533,7 @@ def PsiData(ifile: PathLike, /,
     astropy.units.Unit : Unit constructor — accepts strings, compound
         expressions, and :class:`~astropy.units.Unit` instances.
     astropy.units.Quantity.to : Unit conversion used internally when
-        a ``units`` string is supplied to :meth:`read`.
+        a ``unit`` string is supplied to :meth:`read`.
 
     Examples
     --------
@@ -1352,16 +1542,16 @@ def PsiData(ifile: PathLike, /,
     >>> from psi_io.mhd_io import PsiData                  # doctest: +SKIP
     >>> reader = PsiData('br001001.h5')
     >>> data, r, t, p = reader.read()
-    >>> data.unit                                           # code unit (MAS_b)
+    >>> data.unit                                           # code units (MAS_b)
 
     Convert to Gauss on the fly:
 
-    >>> data, r, t, p = reader.read(units='Gauss')         # doctest: +SKIP
+    >>> data, r, t, p = reader.read(unit='Gauss')         # doctest: +SKIP
 
-    Read only the inner radial shell (indices 0–9 in r) in CGS base units,
+    Read only the inner radial shell (indices 0–9 in r) in CGS base unit,
     without returning coordinate arrays:
 
-    >>> data = reader.read(slice(0, 10), units='physical', scales=False)  # doctest: +SKIP
+    >>> data = reader.read(slice(0, 10), unit='physical', scales=False)  # doctest: +SKIP
 
     Read a POT3D HDF4 file.  The boundary magnetogram was in Gauss, so the
     unit must be declared explicitly — it cannot be inferred from the file:
@@ -1372,14 +1562,14 @@ def PsiData(ifile: PathLike, /,
     Use as a context manager to guarantee the file handle is released:
 
     >>> with PsiData('vr001001.h5') as reader:              # doctest: +SKIP
-    ...     data, r, t, p = reader.read(units='km/s')
+    ...     data, r, t, p = reader.read(unit='km/s')
 
     Inspect metadata without loading data:
 
     >>> reader = PsiData('rho001001.h5')                    # doctest: +SKIP
     >>> reader.quantity          # 'rho'
     >>> reader.description       # 'Mass Density'
-    >>> reader.unit              # MAS_n (code unit)
+    >>> reader.unit              # MAS_n (code units)
     >>> reader.mesh              # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
     >>> reader.shape             # (Nφ, Nθ, Nr) — numpy storage order
     """

@@ -114,6 +114,8 @@ exclusions = [
     "psi_io._models._PSI_SCALE_PROPS_MAPPING",
     "psi_io._models.MATCH_QUANTITIES",
     "psi_io._models.FILEPATH_SCHEMA",
+    "psi_io._models.MODEL_TYPE",
+    "psi_io._models._PROP_GETTER_MAPPING",
     "psi_io._models.Props._mesh",
 
     "psi_io._mesh._MESH_CODE_REVERSE_MAPPING",
@@ -123,6 +125,8 @@ exclusions = [
     "psi_io._mesh._parse_remesh",
     "psi_io._mesh.Mesh.HALF",
     "psi_io._mesh.Mesh.MAIN",
+
+    r"psi_io\.mhd_io\.(?!PsiData\b)",
 ]
 
 node_tree = build_node_tree(root_package,
@@ -167,6 +171,8 @@ numpydoc_xref_aliases = {
     # --- Astropy ---
     "u.Quantity": "astropy.units.Quantity",
     "u.Unit": "astropy.units.UnitBase",
+    "QuantityLike": "astropy.units.typing.QuantityLike",
+    "UnitLike": "astropy.units.typing.UnitLike",
     "astropy.units.Quantity": "astropy.units.Quantity",
     "astropy.units.Unit": "astropy.units.UnitBase",
     # --- psi_io.psi_io ---
@@ -188,10 +194,8 @@ numpydoc_xref_aliases = {
     "Scales": "psi_io.mhd_io.Scales",
     "H5Scale": "psi_io.mhd_io.H5Scale",
     "H4Scale": "psi_io.mhd_io.H4Scale",
-    "H5MasData": "psi_io.mhd_io.H5MasData",
-    "H4MasData": "psi_io.mhd_io.H4MasData",
-    "H5Pot3dData": "psi_io.mhd_io.H5Pot3dData",
-    "H4Pot3dData": "psi_io.mhd_io.H4Pot3dData",
+    "H5Data": "psi_io.mhd_io.H5Data",
+    "H4Data": "psi_io.mhd_io.H4Data",
 }
 
 # ------------------------------------------------------------------------------

@@ -94,7 +94,7 @@ individual quantity name in that family (e.g. ``MAS_br``, ``MAS_bt``, ``MAS_bp``
 so that the unit embedded in an :class:`~astropy.units.Quantity` always reflects
 the specific field component.
 
-.. list-table:: Registered PSI custom units
+.. list-table:: Registered PSI Custom Units
    :header-rows: 1
    :widths: 12 24 16 48
 
@@ -185,32 +185,32 @@ Gauss is included explicitly because :func:`astropy.units.compose` would otherwi
 resolve magnetic field to mixed electromagnetic CGS units.
 
 A tuple (not a set) is used so that Sphinx's autodoc renderer does not call
-``sorted()`` on the elements — astropy units raise :exc:`~astropy.units.UnitConversionError`
+``sorted()`` on the elements — astropy unit raise :exc:`~astropy.units.UnitConversionError`
 when compared across incompatible physical dimensions (e.g. ``g`` vs ``K``), and
 Sphinx 9+ does not catch that exception type.
 """
 
 
 def compose_mas_units(quantity: u.Quantity) -> u.Quantity:
-    """Express a quantity in the preferred MAS CGS unit basis.
+    """Express a quantity in the preferred MAS CGS units basis.
 
     Calls :meth:`astropy.units.UnitBase.compose` with :data:`FAVORED_UNITS` as the
     allowed unit set.  The first (simplest) composed unit that astropy returns is used.
 
     Parameters
     ----------
-    quantity : astropy.units.Quantity
+    quantity : u.Quantity
         Input quantity in any unit system.
 
     Returns
     -------
-    out : astropy.units.Quantity
-        Equivalent quantity expressed in the MAS-preferred CGS unit basis
+    out : u.Quantity
+        Equivalent quantity expressed in the MAS-preferred CGS units basis
         (erg, cm, s, K, Gauss, g, rad).
 
     See Also
     --------
-    decompose_mas_units : Decomposes to CGS *base* units rather than composing.
+    decompose_mas_units : Decomposes to CGS *base* unit rather than composing.
 
     Examples
     --------
@@ -223,26 +223,26 @@ def compose_mas_units(quantity: u.Quantity) -> u.Quantity:
 
 
 def decompose_mas_units(quantity: u.Quantity) -> u.Quantity:
-    """Decompose a quantity into the preferred MAS CGS base units.
+    """Decompose a quantity into the preferred MAS CGS base unit.
 
     Calls :meth:`astropy.units.Quantity.decompose` with :data:`FAVORED_UNITS` as the
     allowed bases.  Unlike :func:`compose_mas_units`, this always expands compound
-    units (e.g. Joule → erg) without attempting to find a compact composed form.
+    unit (e.g. Joule → erg) without attempting to find a compact composed form.
 
     Parameters
     ----------
-    quantity : astropy.units.Quantity
+    quantity : u.Quantity
         Input quantity in any unit system.
 
     Returns
     -------
-    out : astropy.units.Quantity
+    out : u.Quantity
         Equivalent quantity with all units decomposed into the MAS-preferred CGS
         bases.
 
     See Also
     --------
-    compose_mas_units : Composes to a simpler combined CGS unit where possible.
+    compose_mas_units : Composes to a simpler combined CGS units where possible.
 
     Examples
     --------
@@ -316,11 +316,11 @@ The Spitzer heat flux along the magnetic field is
 where :math:`\\kappa_0 = 9 \\times 10^{-7}` erg cm⁻¹ s⁻¹ K⁻⁷/² is the Spitzer
 conductivity coefficient for a fully ionized hydrogen plasma.  This constant is stored
 as a plain :class:`float` (not an astropy :class:`~astropy.units.Quantity`) because it
-is used directly in normalized code expressions; the associated physical units are
+is used directly in normalized code expressions; the associated physical unit are
 erg cm⁻¹ s⁻¹ K⁻⁷/².
 
 See :data:`FN_KAPPA` for the conductivity normalization that converts the dimensionless
-code conductivity back to physical units.
+code conductivity back to physical unit.
 """
 
 
@@ -340,7 +340,7 @@ VOLUMETRIC_RATE_UNIT = u.erg / (u.cm**3 * u.s)
 # =============================================================================
 
 G0NORM = 0.823
-"""Dimensionless surface gravity in MAS code units.
+"""Dimensionless surface gravity in MAS code unit.
 
 MAS defines a dimensionless gravitational acceleration profile
 
@@ -364,7 +364,7 @@ FNORML = RSUN
 """Characteristic length scale for MAS: the solar radius.
 
 :math:`L_0 = R_\\odot = 6.96 \\times 10^{10}` cm.  All spatial coordinates in MAS
-output are in units of :math:`L_0`.  Aliased as :data:`FN_LENGTH`.
+output are in unit of :math:`L_0`.  Aliased as :data:`FN_LENGTH`.
 """
 
 
@@ -433,7 +433,7 @@ heliospheric modelling.
 """
 
 # Magnetic field normalization requires a CGS–SI bridge.
-# MAS is formulated in Gaussian CGS but astropy's CGS electromagnetic units are
+# MAS is formulated in Gaussian CGS but astropy's CGS electromagnetic unit are
 # incomplete.  The SI μ₀ is used here as a conversion bridge: in Gaussian CGS the
 # Alfvénic normalization B₀ = V₀ √(4πρ₀) is algebraically equivalent to the SI
 # expression B₀ = V₀ √(μ₀ ρ₀) once the result is converted to Gauss.
@@ -443,7 +443,7 @@ MU0 = 4 * PI * 1e-7 * u.N / u.A**2
 :math:`\\mu_0 = 4\\pi \\times 10^{-7}` N A⁻², used here as an algebraic bridge to
 compute the magnetic field normalization :data:`FN_B` and current density
 normalization :data:`FN_J` in SI, which are then converted to the required CGS or
-SI output units.
+SI output unit.
 
 In Gaussian CGS, the Alfvénic magnetic normalization is
 :math:`B_0 = V_0\\sqrt{4\\pi\\rho_0}`, which is numerically equivalent to the SI
@@ -473,7 +473,7 @@ From Ampère's law :math:`\\mathbf{J} = \\mu_0^{-1}\\nabla\\times\\mathbf{B}` (S
 
    J_0 = \\frac{B_0}{\\mu_0\\,L_0}.
 
-SI units are used here because current density in Gaussian CGS (statampere cm⁻²) is
+SI unit are used here because current density in Gaussian CGS (statampere cm⁻²) is
 rarely used in practice.  See :data:`FN_J_CGS` for the Gaussian equivalent.
 """
 
@@ -487,7 +487,7 @@ so the natural normalization is
 
    E_0 = V_0\\,B_0.
 
-SI units are used for the same reasons as :data:`FN_J`.  See :data:`FN_E_CGS` for the
+SI unit are used for the same reasons as :data:`FN_J`.  See :data:`FN_E_CGS` for the
 Gaussian equivalent.
 """
 
@@ -497,7 +497,7 @@ Gaussian equivalent.
 C_CGS = 2.99792458e10
 """Speed of light in CGS: :math:`c = 2.998 \\times 10^{10}` cm s⁻¹.
 
-Used to convert between SI and Gaussian electromagnetic units.
+Used to convert between SI and Gaussian electromagnetic unit.
 """
 
 STATAMP_TO_AMPERE = 10 / C_CGS
@@ -515,7 +515,7 @@ of light in cm s⁻¹:
 FN_J_CGS = FN_J.value / (1e4 * STATAMP_TO_AMPERE) * u.statA / u.cm**2
 """Current density normalization for MAS, in Gaussian CGS (statA cm⁻²).
 
-Equivalent to :data:`FN_J` expressed in Gaussian electromagnetic units.  The
+Equivalent to :data:`FN_J` expressed in Gaussian electromagnetic unit.  The
 conversion from SI to Gaussian CGS is:
 
 .. math::
@@ -539,7 +539,7 @@ One statvolt (erg per statcoulomb) equals :math:`c \\times 10^{-8}` volts, where
 FN_E_CGS = FN_E.value / (1e2 * STATVOLT_TO_VOLT) * u.erg / u.statC / u.cm
 """Electric field normalization for MAS, in Gaussian CGS (statV cm⁻¹).
 
-Equivalent to :data:`FN_E` expressed in Gaussian electromagnetic units (statvolt per
+Equivalent to :data:`FN_E` expressed in Gaussian electromagnetic unit (statvolt per
 centimeter, where 1 statvolt = 1 erg / statcoulomb).  The conversion from SI to
 Gaussian CGS is:
 
@@ -583,8 +583,8 @@ FN_KAPPA = compose_mas_units(BOLTZ * FN0PHYS * np.power(FNORML, 2) / FNORMT)
 """Thermal conductivity normalization for MAS.
 
 The Spitzer parallel conductivity :math:`\\kappa = \\kappa_0 T^{5/2}` (with
-:data:`FKSPITZ` = :math:`\\kappa_0`) has units of erg cm⁻¹ s⁻¹ K⁻¹.  In MAS code
-units the dimensionless conductivity :math:`\\kappa_\\text{code}` satisfies
+:data:`FKSPITZ` = :math:`\\kappa_0`) has unit of erg cm⁻¹ s⁻¹ K⁻¹.  In MAS code
+unit the dimensionless conductivity :math:`\\kappa_\\text{code}` satisfies
 
 .. math::
 
@@ -657,7 +657,7 @@ FN_TIME = FNORMT
 """Alias for :data:`FNORMT`: the characteristic time scale :math:`T_0 \\approx 1446` s."""
 
 OMEGA_COROTATE = 0.004144 * u.rad / FN_TIME
-"""Default angular velocity of the MAS corotating frame, in physical units.
+"""Default angular velocity of the MAS corotating frame, in physical unit.
 
 MAS can be run in a frame rotating with the Sun.  The dimensionless code rotation
 rate 0.004144 rad per time unit converts to
@@ -878,7 +878,7 @@ POT3D_b = u.def_unit(
 
 One ``POT3D_b`` equals 1 (dimensionless).  POT3D is a potential-field solver driven
 by photospheric magnetogram boundary conditions; its output magnetic field is already
-expressed in the same physical units as the input map (typically Gauss), so no
+expressed in the same physical unit as the input map (typically Gauss), so no
 additional conversion factor is applied.
 """
 
@@ -891,7 +891,7 @@ PSI_rsun = u.def_unit(
 """Custom astropy unit for PSI radial coordinate grids.
 
 One ``PSI_rsun`` equals :data:`RSUN` = 6.96 × 10¹⁰ cm.  Radial coordinate arrays
-in MAS and POT3D HDF files are stored in units of solar radii; this unit allows
+in MAS and POT3D HDF files are stored in unit of solar radii; this unit allows
 astropy to convert them to cm, km, or AU automatically.
 """
 

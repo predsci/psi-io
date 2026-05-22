@@ -91,7 +91,7 @@ scale arrays map to axes as follows:
 MAS Model Quantities
 --------------------
 MAS outputs 19 3-D fields in spherical coordinates.  Code-unit values are converted
-to physical (CGS/SI) units by multiplying by the normalization constants defined in
+to physical (CGS/SI) unit by multiplying by the normalization constants defined in
 :mod:`psi_io._units`.  Approximate physical scales are given in parentheses.
 
 .. list-table::
@@ -237,17 +237,17 @@ magnetic field components:
    * - ``br``
      - :math:`B_r`
      - Radial magnetic field
-     - input magnetogram units (typically G)
+     - input magnetogram unit (typically G)
      - ``0b011``
    * - ``bt``
      - :math:`B_\theta`
      - Co-latitude magnetic field
-     - input magnetogram units
+     - input magnetogram unit
      - ``0b101``
    * - ``bp``
      - :math:`B_\varphi`
      - Longitude magnetic field
-     - input magnetogram units
+     - input magnetogram unit
      - ``0b110``
 
 .. note::
@@ -259,11 +259,11 @@ magnetic field components:
 
 .. warning::
 
-   POT3D does not apply a normalization: values are in whatever physical units the
+   POT3D does not apply a normalization: values are in whatever physical unit the
    input boundary magnetogram was provided in (typically Gauss, but run-dependent).
    The code unit :data:`~psi_io._units.POT3D_b` has a scale factor of 1
    (dimensionless-unscaled).  Always supply the correct unit explicitly when
-   converting; ``read(units='physical')`` without a ``unit`` override will return
+   converting; ``read(unit='physical')`` without a ``unit`` override will return
    dimensionless values.
 
 Staggered Grid Overview
@@ -363,7 +363,7 @@ See Also
 :mod:`psi_io._mesh` :
     Defines :class:`~psi_io._mesh.Mesh` and the mesh normalization helpers.
 :mod:`psi_io._units` :
-    Provides the custom astropy units referenced by each :class:`Props`.
+    Provides the custom astropy unit referenced by each :class:`Props`.
 :mod:`psi_io.mhd_io` :
     Uses these mappings to auto-configure lazy HDF readers.
 """
@@ -406,9 +406,9 @@ class Props:
         the filename prefix used in MAS and POT3D HDF output.
     desc : str
         Human-readable description of the physical quantity.
-    unit : astropy.units.Unit
+    unit : u.Unit
         Astropy unit whose scale factor converts one code unit of this quantity to
-        physical units.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
+        physical unit.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
     ndim : int
         Number of spatial dimensions of the output array (``3`` for MAS/POT3D fields,
         ``1`` for coordinate scale arrays).
@@ -510,12 +510,12 @@ class Props:
 
         Parameters
         ----------
-        other : numeric or astropy.units.Quantity
+        other : numeric or u.Quantity
             The value to multiply by :attr:`unit`.
 
         Returns
         -------
-        out : astropy.units.Quantity
+        out : u.Quantity
             ``other * self.unit``.
 
         Examples
@@ -535,12 +535,12 @@ class Props:
 
         Parameters
         ----------
-        other : numeric or astropy.units.Quantity
+        other : numeric or u.Quantity
             The value to multiply by :attr:`unit`.
 
         Returns
         -------
-        out : astropy.units.Quantity
+        out : u.Quantity
             ``other * self.unit``.
 
         Examples
@@ -560,12 +560,12 @@ class Props:
 
         Parameters
         ----------
-        other : numeric or astropy.units.Quantity
+        other : numeric or u.Quantity
             The numerator; divided by :attr:`unit`.
 
         Returns
         -------
-        out : astropy.units.Quantity
+        out : u.Quantity
             ``other / self.unit``.
 
         Examples
@@ -700,10 +700,10 @@ the magnetic field: ``'br'`` (radial), ``'bt'`` (co-latitude), and ``'bp'``
 
     POT3D output files carry **no intrinsic physical unit**.  The values are stored as
     dimensionless quantities (unit :data:`~psi_io._units.POT3D_b` = 1) whose physical
-    interpretation depends entirely on the units of the photospheric boundary
+    interpretation depends entirely on the unit of the photospheric boundary
     magnetogram used to drive the simulation — typically Gauss, but this is not
     guaranteed.  Always supply the correct unit explicitly via the ``unit`` keyword
-    argument of :func:`~psi_io.mhd_io.PsiData`; calling ``read(units='physical')``
+    argument of :func:`~psi_io.mhd_io.PsiData`; calling ``read(unit='physical')``
     on a reader opened without a ``unit`` override will **not** perform a meaningful
     conversion.
 """
@@ -756,7 +756,7 @@ PsiScales = Literal['r', 't', 'p',]
 """Literal type alias for the three PSI coordinate scale identifiers.
 
 ``'r'``
-    Radial coordinate in units of solar radii (:data:`~psi_io._units.PSI_rsun`).
+    Radial coordinate in unit of solar radii (:data:`~psi_io._units.PSI_rsun`).
 ``'t'``
     Co-latitude :math:`\\theta` in radians (:data:`~psi_io._units.PSI_angle`).
 ``'p'``
