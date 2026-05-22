@@ -5,7 +5,7 @@ Opening MHD Model Files with PsiData
 Explore a MAS radial-magnetic-field file through the :func:`~psi_io.mhd_io.PsiData`
 interface: inspect metadata attributes, trace the connections to :mod:`psi_io._models`,
 :mod:`psi_io._mesh`, and :mod:`psi_io._units`, and observe the lazy-loading and
-caching behaviour.
+caching behavior.
 
 This example demonstrates:
 
@@ -21,7 +21,7 @@ This example demonstrates:
    :mod:`psi_io.mhd_io`.  HDF4 (``.hdf``) and HDF5 (``.h5``) files are supported
    transparently; the file extension selects the I/O backend.
 """
-
+from pathlib import Path
 from psi_io import data
 from psi_io.mhd_io import PsiData
 
@@ -29,10 +29,32 @@ from psi_io.mhd_io import PsiData
 # **Opening a file**
 #
 # :func:`~psi_io.mhd_io.PsiData` takes a path to any PSI MAS or POT3D HDF file.
-# No data are read at this point — only the filename is parsed and minimal HDF
+# No data is read at this point — only the filename is parsed and minimal HDF
 # metadata is inspected to identify the quantity, units, and mesh code.
+#
+# To define the metadata data of the given input file, the reader follows a hierarchy of
+# inference steps to determine the values of the following core attributes:
+#
+# ``'quantity'``
+#     Canonical lower-case quantity identifier.
+# ``'sequence'``
+#     Integer time-step sequence number.
+# ``'unit'``
+#     Code-to-physical unit for this quantity, as an :class:`~astropy.units.Unit`
+#     or a string parseable by it.
+# ``'scalar'``
+#     ``True`` if the quantity is a scalar field; ``False`` for vector components.
+# ``'mesh'``
+#     Mesh code (:data:`~psi_io._mesh.MeshCodeType`) describing data staggering.
+#
+# If these values are not explicitly included in the :func:`~psi_io.mhd_io.PsiData`
+# constructor the reader falls back to reading the HDF metadata attributes (if present) and then
+# parsing the filename according to the PSI filename schema. The
+# reader then cross-references the quantity against the canonical properties defined
+# in :mod:`psi_io._models` to infer the remaining metadata attributes.
 
 br_filepath = data.get_3d_data()
+print(f"Filename : {Path(br_filepath).name}")
 reader = PsiData(br_filepath)
 
 # %%
@@ -40,7 +62,8 @@ reader = PsiData(br_filepath)
 #
 # The :attr:`quantity` and :attr:`sequence` attributes are extracted from the
 # filename stem using the PSI filename schema (*e.g.* ``br001001.h5`` gives
-# ``quantity='br'``, ``sequence=1001``).
+# ``quantity='br'``, ``sequence=1001``). Since the provided filename does not
+# contain an explicit sequence number, the reader defaults to ``sequence=0``.
 
 print(f"quantity  : {reader.quantity!r}")
 print(f"sequence  : {reader.sequence}")
@@ -96,9 +119,9 @@ print(f"in Gauss : {reader.unit.to('G'):.4f}")
 r_scale = reader.scales.r.read()
 t_scale = reader.scales.t.read()
 p_scale = reader.scales.p.read()
-print(f"r scale  : shape={r_scale.shape}  range=[{r_scale[0]:.3f}, {r_scale[-1]:.3f}]")
-print(f"θ scale  : shape={t_scale.shape}  range=[{t_scale[0]:.3f}, {t_scale[-1]:.3f}]")
-print(f"φ scale  : shape={p_scale.shape}  range=[{p_scale[0]:.3f}, {p_scale[-1]:.3f}]")
+print(f"r scale  : shape={r_scale.shape}  range=[{r_scale[0]:.5f}, {r_scale[-1]:.5f}]")
+print(f"θ scale  : shape={t_scale.shape}  range=[{t_scale[0]:.5f}, {t_scale[-1]:.5f}]")
+print(f"φ scale  : shape={p_scale.shape}  range=[{p_scale[0]:.5f}, {p_scale[-1]:.5f}]")
 
 # %%
 # **Lazy loading**

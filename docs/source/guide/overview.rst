@@ -319,9 +319,10 @@ Using psi-io
     - :func:`~psi_io.psi_io.read_hdf_by_value`
     - :func:`~psi_io.psi_io.read_hdf_by_ivalue`
 
-**Reading File Metadata:**
+**Reading & Writing File Metadata:**
     - :func:`~psi_io.psi_io.read_hdf_meta`
     - :func:`~psi_io.psi_io.read_rtp_meta`
+    - :func:`~psi_io.psi_io.write_hdf_meta`
 
 **Interpolating Data to Arbitrary Positions:**
     - :func:`~psi_io.psi_io.np_interpolate_slice_from_hdf`
@@ -330,6 +331,9 @@ Using psi-io
     - :func:`~psi_io.psi_io.interpolate_point_from_1d_slice`
     - :func:`~psi_io.psi_io.interpolate_point_from_2d_slice`
 
+**Reading Coordinate/Mesh-Aware MHD Model Output:**
+    - :func:`~psi_io.mhd_io.PsiData`
+
 .. note::
    The HDF type (HDF4 or HDF5) is automatically determined by the file extension
    (".hdf" for HDF4 and ".h5" for HDF5) when using ``psi-io`` functions.
@@ -337,6 +341,3 @@ Using psi-io
 .. note::
    Not all PSI FORTRAN tools can read HDF4 files written by the :class:`pyhdf.SD` interface.
    If you have a problem, use the PSI tool ``hdfsd2hdf`` to convert.
-
-**Reading MHD Model Output (MAS / POT3D):**
-    - :func:`~psi_io.mhd_io.PsiData`

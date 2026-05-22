@@ -26,6 +26,7 @@ This example demonstrates:
 import astropy.units as u
 import numpy as np
 from psi_io import data
+from psi_io._units import PSI_rsun
 from psi_io.mhd_io import PsiData
 
 # %%
@@ -103,21 +104,23 @@ print(f"r scale range : [{r_rslice[0]:.3f}, {r_rslice[-1]:.3f}]")
 # We first inspect the radial scale to pick a coordinate safely within the domain:
 
 r_scale = reader.scales.r.read()
-print(f"r domain : [{r_scale[0]:.3f}, {r_scale[-1]:.3f}]")
+print(f"r domain : [{r_scale[0]:.5f}, {r_scale[-1]:.5f}]")
 
 r_target = float(r_scale.value[len(r_scale) // 2])
-print(f"r target : {r_target:.3f} {r_scale.unit}")
+print(f"r target : {r_target:.5f} {r_scale.unit}")
 
 data_vs, r_vs, t_vs, p_vs = reader.vslice(r_target, unit='Gauss')
 print(f"vslice shape : {data_vs.shape}  (r axis collapsed to 1)")
-print(f"r value      : {r_vs[0]:.4f}")
+print(f"r value      : {r_vs[0]:.5f}")
 
 # %%
 # Passing an :class:`~astropy.units.Quantity` allows specifying the coordinate
-# in any compatible unit.  Here we use ``astropy.units.solRad`` (solar radii):
+# in any compatible unit.  Here we use :data:`~psi_io._units.PSI_rsun`, the
+# solar radius constant used internally by MAS coordinate scales:
 
-r_qty = r_target * u.solRad
+r_qty = r_scale[len(r_scale) // 2].to(u.cm)
 data_vsq, r_vsq, t_vsq, p_vsq = reader.vslice(r_qty, unit='Gauss')
+print(f"input (Qty) r  : {r_qty:.4e}")
 print(f"vslice (Qty) r : {r_vsq[0]:.4f}")
 np.testing.assert_allclose(data_vs.value, data_vsq.value, rtol=1e-5)
 print("Scalar and Quantity results match.")
@@ -131,7 +134,7 @@ print("Scalar and Quantity results match.")
 # the chosen target value and reads only the first five co-latitude grid points:
 
 data_mixed, r_mixed, t_mixed, p_mixed = reader.vslice(
-    r_qty,           # r: value-space → collapses to 1
+    r_qty,           # r: value-space (PSI_rsun) → collapses to 1
     slice(0, 5),     # θ: index-space → first 5 points
     None,            # φ: all points
     unit='Gauss',

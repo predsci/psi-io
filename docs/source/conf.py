@@ -161,6 +161,7 @@ numpydoc_xref_aliases = {
     "Path": "pathlib.Path",
     "Callable": "collections.abc.Callable",
     "Sequence": "collections.abc.Sequence",
+    "Mapping": "collections.abc.Mapping",
     "Any": "typing.Any",
     "Literal": "typing.Literal",
     # --- NumPy ---
