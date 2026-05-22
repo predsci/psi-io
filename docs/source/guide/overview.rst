@@ -8,6 +8,20 @@ interacting with the PSI HDF data ecosystem. It provides a unified interface for
 HDF4 and HDF5 files, as well as tools for reading portions of datasets and interpolating data to
 arbitrary positions.
 
+Quick Start
+===========
+
+The following example opens a MAS HDF5 file containing a radial magnetic field, reads the full
+3-D dataset remeshed to the main (cell-center) grid in CGS units (Gauss), and returns the data
+array alongside its three spherical coordinate scales (:math:`r`, :math:`\theta`, :math:`\varphi`).
+
+.. code-block:: python
+
+   import psi_io
+
+   with psi_io.PsiData('br002.h5') as mas_reader:
+         br, r_scale, t_scale, p_scale = mas_reader.read(mesh='main', unit='cgs')
+
 
 PSI Conventions
 ===============

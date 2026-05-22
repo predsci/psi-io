@@ -21,6 +21,7 @@ Required Dependencies
 - `Python >= 3.8 <https://www.python.org/>`_
 - `numpy <https://numpy.org/>`_
 - `h5py <https://docs.h5py.org/en/stable/>`_
+- `Astropy <https://www.astropy.org/>`_
 
 Optional Dependencies
 ----------------------
