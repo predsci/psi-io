@@ -1,4 +1,4 @@
-"""Unit tests for psi_io.mhd_io — everything except the read() method."""
+"""Unit tests for psi_io.mhd_io."""
 
 from __future__ import annotations
 
@@ -9,15 +9,20 @@ import astropy.units as u
 import h5py
 
 from psi_io._mesh import Mesh
-from psi_io._units import MAS_b
+from psi_io._units import MAS_b, PSI_rsun, PSI_angle
 from psi_io.mhd_io import (
     _HDF_EXT_MAPPING,
     METADATA_SCHEMA,
     Scales,
     _CODE_UNIT_ALIASES,
     _REAL_UNIT_ALIASES,
+    _apply_units,
     _cast_to_slice,
+    _expand_args,
+    _interpolate_dim,
     _parse_islice_args,
+    _parse_vslice_args,
+    _slice_array,
     H5Data,
     PsiData,
 )
@@ -401,3 +406,438 @@ class TestGetitem:
         # __getitem__ with no restriction returns full array in storage order
         full = mas_reader[slice(None), slice(None), slice(None)]
         assert full.shape == mas_reader.shape
+
+
+# ===========================================================================
+# _expand_args
+# ===========================================================================
+
+class TestExpandArgs:
+    def test_empty_args_pads_with_none(self):
+        assert _expand_args(ndim=3) == (None, None, None)
+
+    def test_single_arg_pads_trailing(self):
+        assert _expand_args(1, ndim=3) == (1, None, None)
+
+    def test_ellipsis_only_expands_to_all_none(self):
+        assert _expand_args(..., ndim=3) == (None, None, None)
+
+    def test_ellipsis_trailing_pads_remainder(self):
+        assert _expand_args(1, ..., ndim=3) == (1, None, None)
+
+    def test_ellipsis_leading_pads_before_last(self):
+        assert _expand_args(..., 2, ndim=3) == (None, None, 2)
+
+    def test_ellipsis_middle_fills_gaps(self):
+        assert _expand_args(1, ..., 2, ndim=4) == (1, None, None, 2)
+
+    def test_exact_fill_no_padding(self):
+        assert _expand_args(1, 2, 3, ndim=3) == (1, 2, 3)
+
+
+# ===========================================================================
+# _apply_units
+# ===========================================================================
+
+class TestApplyUnits:
+    @pytest.fixture
+    def qty(self):
+        return 2.0 * MAS_b
+
+    def test_none_returns_data_unchanged(self, qty):
+        assert _apply_units(qty, None) is qty
+
+    def test_native_alias_preserves_unit(self, qty):
+        assert _apply_units(qty, 'native').unit == qty.unit
+
+    def test_code_alias_preserves_unit(self, qty):
+        assert _apply_units(qty, 'code').unit == qty.unit
+
+    def test_model_alias_preserves_unit(self, qty):
+        assert _apply_units(qty, 'model').unit == qty.unit
+
+    def test_psi_alias_preserves_unit(self, qty):
+        assert _apply_units(qty, 'psi').unit == qty.unit
+
+    def test_real_alias_decomposes_to_cgs(self, qty):
+        result = _apply_units(qty, 'real')
+        assert result.unit != qty.unit
+        np.testing.assert_allclose(result.to(u.Gauss).value,
+                                   qty.to(u.Gauss).value, rtol=1e-5)
+
+    def test_phys_alias_decomposes(self, qty):
+        assert _apply_units(qty, 'phys').unit != qty.unit
+
+    def test_physical_alias_decomposes(self, qty):
+        assert _apply_units(qty, 'physical').unit != qty.unit
+
+    def test_cgs_alias_decomposes(self, qty):
+        assert _apply_units(qty, 'cgs').unit != qty.unit
+
+    def test_gauss_string_converts(self, qty):
+        result = _apply_units(qty, 'Gauss')
+        assert result.unit == u.Gauss
+        np.testing.assert_allclose(result.value, qty.to(u.Gauss).value, rtol=1e-5)
+
+    def test_unit_instance_converts(self, qty):
+        result = _apply_units(qty, u.Gauss)
+        assert result.unit == u.Gauss
+
+    def test_aliases_are_case_insensitive(self, qty):
+        assert _apply_units(qty, 'NATIVE').unit == qty.unit
+
+
+# ===========================================================================
+# _interpolate_dim
+# ===========================================================================
+
+class TestInterpolateDim:
+    def test_midpoint_gives_average(self):
+        arr = np.array([[0.0, 2.0], [4.0, 6.0]]) * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _interpolate_dim(arr, axis=0, value=0.5 * u.m, scale=scale, fill_value=None)
+        assert result.shape == (1, 2)
+        np.testing.assert_allclose(result.value, [[2.0, 4.0]])
+
+    def test_zero_parameter_returns_lo_slice(self):
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]]) * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _interpolate_dim(arr, axis=0, value=0.0 * u.m, scale=scale, fill_value=None)
+        assert result.shape == (1, 2)
+        np.testing.assert_allclose(result.value, [[1.0, 2.0]])
+
+    def test_one_parameter_returns_hi_slice(self):
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]]) * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _interpolate_dim(arr, axis=0, value=1.0 * u.m, scale=scale, fill_value=None)
+        assert result.shape == (1, 2)
+        np.testing.assert_allclose(result.value, [[3.0, 4.0]])
+
+    def test_axis_1_collapses_correct_dimension(self):
+        arr = np.array([[0.0, 1.0], [2.0, 3.0]]) * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _interpolate_dim(arr, axis=1, value=0.5 * u.m, scale=scale, fill_value=None)
+        assert result.shape == (2, 1)
+        np.testing.assert_allclose(result.value, [[0.5], [2.5]])
+
+    def test_fill_value_applied_when_out_of_bounds(self):
+        # fill_value must be a plain scalar — np.full(..., dtype=arr.dtype) converts
+        # it to the array dtype, which fails for Quantity units that aren't dimensionless.
+        arr = np.array([[0.0, 1.0]]) * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _interpolate_dim(arr, axis=1, value=2.0 * u.m, scale=scale, fill_value=99.0)
+        assert result.shape == (1, 1)
+        np.testing.assert_allclose(result, [[99.0]])
+
+    def test_none_fill_value_extrapolates(self):
+        arr = np.array([[0.0, 1.0]]) * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _interpolate_dim(arr, axis=1, value=2.0 * u.m, scale=scale, fill_value=None)
+        assert result.shape == (1, 1)
+        np.testing.assert_allclose(result.value, [[2.0]])
+
+
+# ===========================================================================
+# _slice_array
+# ===========================================================================
+
+class TestSliceArray:
+    def test_all_none_values_returns_array_unchanged(self):
+        arr = np.ones((2, 3, 4)) * u.m
+        result = _slice_array(arr, [None, None, None], [None, None, None], None)
+        assert result.shape == arr.shape
+        np.testing.assert_allclose(result.value, arr.value)
+
+    def test_r_interpolation_fortran_order_collapses_last_axis(self):
+        # Storage order (phi=2, theta=3, r=2); physical values = (v_r, None, None)
+        arr = np.zeros((2, 3, 2)) * u.m
+        arr[..., 1] = 1.0 * u.m   # r=1 is all ones, r=0 is all zeros
+        scale_r = np.array([0.0, 1.0]) * u.m
+        result = _slice_array(arr, [0.5 * u.m, None, None], [scale_r, None, None],
+                              None, order='F')
+        assert result.shape == (2, 3, 1)
+        np.testing.assert_allclose(result.value, 0.5)
+
+    def test_phi_interpolation_fortran_order_collapses_first_axis(self):
+        # Physical phi is last; storage phi is first axis (index 0)
+        arr = np.zeros((2, 3, 4)) * u.m
+        arr[1, ...] = 1.0 * u.m   # phi=1 all ones, phi=0 all zeros
+        scale_p = np.array([0.0, 1.0]) * u.m
+        result = _slice_array(arr, [None, None, 0.25 * u.m], [None, None, scale_p],
+                              None, order='F')
+        assert result.shape == (1, 3, 4)
+        np.testing.assert_allclose(result.value, 0.25)
+
+    def test_c_order_maps_first_physical_to_first_storage(self):
+        arr = np.zeros((2, 3)) * u.m
+        arr[1, :] = 1.0 * u.m
+        scale = np.array([0.0, 1.0]) * u.m
+        result = _slice_array(arr, [0.5 * u.m, None], [scale, None], None, order='C')
+        assert result.shape == (1, 3)
+        np.testing.assert_allclose(result.value, 0.5)
+
+
+# ===========================================================================
+# _parse_vslice_args (uses live scale readers from mas_reader)
+# ===========================================================================
+
+class TestParseVsliceArgs:
+    def test_none_arg_gives_full_slice_and_no_value(self, mas_reader):
+        value, s = next(iter(_parse_vslice_args(None, scales=mas_reader.scales,
+                                                bounds_error=True)))
+        assert value is None
+        assert s == slice(None)
+
+    def test_bare_scalar_gives_quantity_value_and_two_element_window(self, mas_reader):
+        value, s = next(iter(_parse_vslice_args(0.4, scales=mas_reader.scales,
+                                                bounds_error=True)))
+        assert isinstance(value, u.Quantity)
+        assert (s.stop - s.start) == 2
+
+    def test_quantity_arg_gives_two_element_window(self, mas_reader):
+        target = 0.4 * PSI_rsun
+        value, s = next(iter(_parse_vslice_args(target, scales=mas_reader.scales,
+                                                bounds_error=True)))
+        assert value is not None
+        assert (s.stop - s.start) == 2
+
+    def test_index_space_slice_passes_through_as_none_value(self, mas_reader):
+        value, s = next(iter(_parse_vslice_args(slice(0, 3), scales=mas_reader.scales,
+                                                bounds_error=True)))
+        assert value is None
+        assert s == slice(0, 3)
+
+    def test_out_of_bounds_raises_when_bounds_error_true(self, mas_reader):
+        with pytest.raises(ValueError):
+            list(_parse_vslice_args(2.0, scales=mas_reader.scales, bounds_error=True))
+
+    def test_out_of_bounds_no_raise_when_bounds_error_false(self, mas_reader):
+        pairs = list(_parse_vslice_args(2.0, scales=mas_reader.scales, bounds_error=False))
+        assert len(pairs) == mas_reader.ndim
+
+    def test_yields_one_pair_per_axis(self, mas_reader):
+        pairs = list(_parse_vslice_args(scales=mas_reader.scales, bounds_error=True))
+        assert len(pairs) == mas_reader.ndim
+
+
+# ===========================================================================
+# read() method
+# ===========================================================================
+
+class TestRead:
+    def test_returns_quantity(self, mas_reader):
+        result = mas_reader.read(scales=False)
+        assert isinstance(result, u.Quantity)
+
+    def test_shape_matches_storage_order(self, mas_reader):
+        result = mas_reader.read(scales=False)
+        assert result.shape == mas_reader.shape
+
+    def test_default_unit_is_mas_b(self, mas_reader):
+        result = mas_reader.read(scales=False)
+        assert result.unit == MAS_b
+
+    def test_scales_false_returns_quantity_not_tuple(self, mas_reader):
+        result = mas_reader.read(scales=False)
+        assert not isinstance(result, tuple)
+
+    def test_scales_true_returns_four_tuple(self, mas_reader):
+        result = mas_reader.read()
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    def test_r_scale_shape(self, mas_reader):
+        _, r, _, _ = mas_reader.read()
+        assert r.shape == (mas_reader.shape[-1],)
+
+    def test_t_scale_shape(self, mas_reader):
+        _, _, t, _ = mas_reader.read()
+        assert t.shape == (mas_reader.shape[-2],)
+
+    def test_p_scale_shape(self, mas_reader):
+        _, _, _, p = mas_reader.read()
+        assert p.shape == (mas_reader.shape[-3],)
+
+    def test_r_scale_unit_is_psi_rsun(self, mas_reader):
+        _, r, _, _ = mas_reader.read()
+        assert r.unit == PSI_rsun
+
+    def test_t_scale_unit_is_psi_angle(self, mas_reader):
+        _, _, t, _ = mas_reader.read()
+        assert t.unit == PSI_angle
+
+    def test_p_scale_unit_is_psi_angle(self, mas_reader):
+        _, _, _, p = mas_reader.read()
+        assert p.unit == PSI_angle
+
+    def test_unit_gauss_converts(self, mas_reader):
+        result = mas_reader.read(unit='Gauss', scales=False)
+        assert result.unit == u.Gauss
+
+    def test_unit_native_returns_code_units(self, mas_reader):
+        result = mas_reader.read(unit='native', scales=False)
+        assert result.unit == MAS_b
+
+    def test_unit_physical_decomposes_from_mas_b(self, mas_reader):
+        result = mas_reader.read(unit='physical', scales=False)
+        assert result.unit != MAS_b
+
+    def test_partial_r_slice_reduces_data_and_scale(self, mas_reader):
+        data, r, t, p = mas_reader.read(slice(0, 3))
+        assert data.shape[-1] == 3
+        assert r.shape == (3,)
+
+    def test_partial_r_slice_does_not_affect_t_or_p(self, mas_reader):
+        data, r, t, p = mas_reader.read(slice(0, 3))
+        assert t.shape == (mas_reader.shape[-2],)
+        assert p.shape == (mas_reader.shape[-3],)
+
+    def test_int_index_retains_axis_as_length_one(self, mas_reader):
+        data = mas_reader.read(0, scales=False)
+        assert data.shape[-1] == 1
+
+    def test_ellipsis_with_leading_r_slice(self, mas_reader):
+        data = mas_reader.read(slice(0, 2), ..., scales=False)
+        assert data.shape[-1] == 2
+
+    def test_data_values_all_ones(self, mas_reader):
+        result = mas_reader.read(scales=False)
+        np.testing.assert_allclose(result.value, 1.0)
+
+
+# ===========================================================================
+# Caching behaviour
+# ===========================================================================
+
+class TestCachingBehaviour:
+    def test_not_cached_initially(self, psi_h5_mas_file):
+        reader = PsiData(psi_h5_mas_file, model='mas')
+        assert not reader.is_cached
+        reader.close()
+
+    def test_full_read_populates_cache(self, psi_h5_mas_file):
+        reader = PsiData(psi_h5_mas_file, model='mas')
+        reader.read(scales=False)
+        assert reader.is_cached
+        reader.close()
+
+    def test_partial_read_does_not_populate_cache(self, psi_h5_mas_file):
+        reader = PsiData(psi_h5_mas_file, model='mas')
+        reader.read(slice(0, 3), scales=False)
+        assert not reader.is_cached
+        reader.close()
+
+    def test_load_method_populates_cache(self, psi_h5_mas_file):
+        reader = PsiData(psi_h5_mas_file, model='mas')
+        reader.load()
+        assert reader.is_cached
+        reader.close()
+
+    def test_cached_and_uncached_reads_agree(self, psi_h5_mas_file):
+        reader = PsiData(psi_h5_mas_file, model='mas')
+        first = reader.read(scales=False)
+        assert reader.is_cached
+        second = reader.read(scales=False)
+        np.testing.assert_array_equal(first.value, second.value)
+        reader.close()
+
+
+# ===========================================================================
+# vslice() method
+# ===========================================================================
+
+class TestVslice:
+    def test_bare_scalar_collapses_r_axis_to_one(self, mas_reader):
+        result = mas_reader.vslice(0.4, scales=False)
+        assert result.shape[-1] == 1
+
+    def test_bare_scalar_data_value_correct_for_uniform_field(self, mas_reader):
+        # All-ones data → interpolated value is 1.0 regardless of position
+        result = mas_reader.vslice(0.4, scales=False)
+        np.testing.assert_allclose(result.value, 1.0)
+
+    def test_returns_quantity(self, mas_reader):
+        result = mas_reader.vslice(0.4, scales=False)
+        assert isinstance(result, u.Quantity)
+
+    def test_scales_true_returns_four_tuple(self, mas_reader):
+        result = mas_reader.vslice(0.4)
+        assert isinstance(result, tuple) and len(result) == 4
+
+    def test_value_interpolated_r_scale_is_length_one(self, mas_reader):
+        _, r, _, _ = mas_reader.vslice(0.4)
+        assert r.shape == (1,)
+
+    def test_value_interpolated_r_scale_matches_target(self, mas_reader):
+        _, r, _, _ = mas_reader.vslice(0.4)
+        np.testing.assert_allclose(r.value, [0.4], rtol=1e-5)
+
+    def test_index_space_axes_return_full_coordinate(self, mas_reader):
+        _, r, t, p = mas_reader.vslice(0.4)
+        assert t.shape == (mas_reader.shape[-2],)
+        assert p.shape == (mas_reader.shape[-3],)
+
+    def test_scales_false_returns_quantity_not_tuple(self, mas_reader):
+        result = mas_reader.vslice(0.4, scales=False)
+        assert not isinstance(result, tuple)
+
+    def test_quantity_arg_accepted(self, mas_reader):
+        result = mas_reader.vslice(0.4 * PSI_rsun, scales=False)
+        assert result.shape[-1] == 1
+
+    def test_out_of_bounds_raises_by_default(self, mas_reader):
+        with pytest.raises(ValueError):
+            mas_reader.vslice(2.0, scales=False)
+
+    def test_out_of_bounds_no_raise_with_bounds_error_false(self, mas_reader):
+        result = mas_reader.vslice(2.0, bounds_error=False, scales=False)
+        assert isinstance(result, u.Quantity)
+
+    def test_unit_conversion_applied(self, mas_reader):
+        result = mas_reader.vslice(0.4, unit='Gauss', scales=False)
+        assert result.unit == u.Gauss
+
+    def test_index_space_arg_gives_same_result_as_read(self, mas_reader):
+        result_vslice = mas_reader.vslice(slice(0, 3), scales=False)
+        result_read = mas_reader.read(slice(0, 3), scales=False)
+        np.testing.assert_array_equal(result_vslice.value, result_read.value)
+
+    def test_mixed_value_and_index_space_args(self, mas_reader):
+        data, r, t, p = mas_reader.vslice(0.4, None, None)
+        assert data.shape[-1] == 1
+        assert r.shape == (1,)
+        assert t.shape == (mas_reader.shape[-2],)
+
+
+# ===========================================================================
+# Coordinate scale readers
+# ===========================================================================
+
+class TestCoordinateScaleReaders:
+    def test_r_scale_read_returns_quantity(self, mas_reader):
+        assert isinstance(mas_reader.scales.r.read(), u.Quantity)
+
+    def test_r_scale_unit_is_psi_rsun(self, mas_reader):
+        assert mas_reader.scales.r.read().unit == PSI_rsun
+
+    def test_t_scale_unit_is_psi_angle(self, mas_reader):
+        assert mas_reader.scales.t.read().unit == PSI_angle
+
+    def test_p_scale_unit_is_psi_angle(self, mas_reader):
+        assert mas_reader.scales.p.read().unit == PSI_angle
+
+    def test_r_scale_shape(self, mas_reader):
+        assert mas_reader.scales.r.read().shape == (mas_reader.shape[-1],)
+
+    def test_t_scale_shape(self, mas_reader):
+        assert mas_reader.scales.t.read().shape == (mas_reader.shape[-2],)
+
+    def test_p_scale_shape(self, mas_reader):
+        assert mas_reader.scales.p.read().shape == (mas_reader.shape[-3],)
+
+    def test_r_scale_read_with_slice(self, mas_reader):
+        assert mas_reader.scales.r.read(slice(0, 3)).shape == (3,)
+
+    def test_scale_values_monotonically_increasing(self, mas_reader):
+        r = mas_reader.scales.r.read()
+        assert np.all(np.diff(r.value) > 0)
