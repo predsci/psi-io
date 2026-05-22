@@ -66,5 +66,6 @@ jobs:
             --delete \
             --omit-dir-times --no-times \
             --no-perms --no-owner --no-group \
+            --chmod=D755,F644 \
             -e "ssh -p ${SSH_PORT:-22}" \
             docs/_build/html/ "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/"
