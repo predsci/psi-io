@@ -806,6 +806,11 @@ def get_psi_scale_properties(variable: PsiScales) -> Props:
                          f"Valid options are: {', '.join(_PSI_SCALE_PROPS_MAPPING.keys())}") from None
 
 
+# ----------------------------------------------------------------
+# Model Collection Factory
+# ----------------------------------------------------------------
+
+
 ModelType = Literal['mas', 'pot3d']
 """Literal type alias for the two recognized PSI model types.
 
@@ -861,6 +866,44 @@ def get_model_prop_caller(model: ModelType) -> Callable:
                          f"Valid options are: {', '.join(_PROP_GETTER_MAPPING.keys())}") from None
 
 
+_PROP_KEYS_MAPPING = MappingProxyType({
+    'mas': _MAS_QUANTITY_PROPS_MAPPING,
+    'pot3d': _POT3D_QUANTITY_PROPS_MAPPING,
+    'scale': _PSI_SCALE_PROPS_MAPPING,})
+"""Read-only mapping from model/scale label to its :class:`Props` getter function."""
+
+
+def get_model_prop_keys(model: ModelType) -> set[str]:
+    """Return the set of valid property keys for the given model type.
+
+    Parameters
+    ----------
+    model : ModelType
+        Case-insensitive model label.  Valid values: ``'mas'``, ``'pot3d'``,
+        ``'scale'``.
+
+    Returns
+    -------
+    out : set[str]
+        The set of valid property keys for *model*.
+    Raises
+    ------
+    ValueError
+        If *model* is not a recognized model label.
+    Examples
+    --------
+    >>> from psi_io._models import get_model_prop_keys
+    >>> get_model_prop_keys('pot3d')
+    {'br', 'bt', 'bp'}
+    """
+    try:
+        return set(_PROP_KEYS_MAPPING[model.lower()].keys())
+    except KeyError:
+        raise ValueError(f"Invalid model '{model}'. "
+                         f"Valid options are: {', '.join(_PROP_KEYS_MAPPING.keys())}") from None
+
+
+
 MATCH_QUANTITIES = '|'.join(re.escape(q) for q in sorted(_MAS_QUANTITY_PROPS_MAPPING.keys(), key=len, reverse=True))
 """Regex alternation string matching any valid MAS quantity name (case-insensitive).
 
@@ -892,8 +935,10 @@ extract_quantity_from_filepath :
 def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -> str | None:
     """Extract the MAS/POT3D quantity name from a filename stem.
 
-    Matches the longest recognized quantity prefix at the start of the stem (before
-    any digit or end-of-string).  The match is case-insensitive.
+    Searches for the first recognized quantity token anywhere in the stem.  A
+    match is accepted only when the token is not immediately preceded or followed
+    by another ASCII letter, so partial matches inside longer words are rejected.
+    The match is case-insensitive.
 
     Parameters
     ----------
@@ -901,13 +946,13 @@ def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -
         File path whose stem is examined.  Only the stem (filename without
         extension) is inspected.
     default : str or None, optional
-        Value to return when no quantity prefix is found.  Defaults to ``None``.
+        Value to return when no quantity token is found.  Defaults to ``None``.
 
     Returns
     -------
     out : str or None
-        Lower-case quantity name (e.g. ``'br'``), or *default* if the stem does not
-        begin with a recognized quantity prefix.
+        Lower-case quantity name (e.g. ``'br'``), or *default* if no recognized
+        quantity token is found in the stem.
 
     Examples
     --------
@@ -917,28 +962,30 @@ def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -
     'br'
     >>> extract_quantity_from_filepath(Path('heat001.h5'))
     'heat'
+    >>> extract_quantity_from_filepath(Path('run_br_001.h5'))
+    'br'
     >>> extract_quantity_from_filepath(Path('unknown.h5')) is None
     True
     >>> extract_quantity_from_filepath(Path('unknown.h5'), default='br')
     'br'
     """
-    match = re.match(rf'^({MATCH_QUANTITIES})(?=[^a-zA-Z]|$)', ifile.stem, re.IGNORECASE)
+    match = re.search(rf'(?<![a-zA-Z])({MATCH_QUANTITIES})(?![a-zA-Z])', ifile.stem, re.IGNORECASE)
     return match.group(1).lower() if match else default
 
 
 def extract_sequence_from_filepath(ifile: Path, default: Optional[int] = None) -> int | None:
     """Extract the sequence number from a filename stem.
 
-    Searches for the first occurrence of a 3- or 6-digit decimal run in the stem.
-    The match is not anchored to a particular position so it works for both the
-    strict MAS schema (``br001001.h5``) and looser naming conventions.
+    Searches for the first 3- or 6-digit decimal token in the stem that is not
+    immediately preceded or followed by another digit.  A 6-digit run is always
+    preferred over a 3-digit run at the same position.
 
     Parameters
     ----------
     ifile : Path
         File path whose stem is examined.
     default : int or None, optional
-        Value to return when no 3- or 6-digit run is found.  Defaults to ``None``.
+        Value to return when no 3- or 6-digit token is found.  Defaults to ``None``.
 
     Returns
     -------
@@ -956,7 +1003,7 @@ def extract_sequence_from_filepath(ifile: Path, default: Optional[int] = None) -
     >>> extract_sequence_from_filepath(Path('nosequence.h5')) is None
     True
     """
-    match = re.search(r'\d{3}(?:\d{3})?', ifile.stem)
+    match = re.search(r'(?<!\d)\d{3}(?:\d{3})?(?!\d)', ifile.stem)
     return int(match.group()) if match else default
 
 

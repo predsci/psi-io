@@ -288,10 +288,12 @@ from __future__ import annotations
 
 __all__ = ['PsiData',]
 
+import re
+import warnings
 from abc import abstractmethod, ABC
-from collections import namedtuple
-from collections.abc import Sequence
-from itertools import repeat
+from collections import namedtuple, UserDict
+from collections.abc import Sequence, Iterable, Collection
+from itertools import repeat, chain
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Optional, Literal, ClassVar
@@ -317,7 +319,7 @@ from psi_io._models import (Props,
                             PsiScales,
                             ModelType,
                             extract_quantity_from_filepath,
-                            extract_sequence_from_filepath, get_model_prop_caller, MODEL_TYPE)
+                            extract_sequence_from_filepath, get_model_prop_caller, MODEL_TYPE, parse_psi_filename_schema, get_model_prop_keys)
 from psi_io._units import decompose_mas_units
 from psi_io.psi_io import (PathLike,
                            PSI_DATA_ID,
@@ -489,6 +491,17 @@ def _expand_args(*args, ndim: int) -> tuple:
     if len(args) < ndim:
         args += (None,) * (ndim - len(args))
     return args
+
+
+def _expand_quantity_filter(quantities: Iterable[str]) -> set[str]:
+    out: set[str] = set()
+    for q in quantities:
+        q = q.lower()
+        if q in {'b', 'j', 'v'}:
+            out.update(f"{q}{c}" for c in 'rtp')
+        else:
+            out.add(q)
+    return out
 
 
 def _parse_islice_args(*args, shape: tuple[int, ...],):
@@ -1183,10 +1196,10 @@ class _H5DataMixin:
         """h5py Dataset object providing lazy access to the array."""
         return self._fileref[self._datalabel]
 
-    def _set_scales(self):
+    def _set_scales(self) -> Scales:
         """Construct :class:`H5Scale` objects from h5py dimension scales."""
-        self._scales = Scales(*(H5Scale(self, scale, label.label)
-                                     for scale, label in zip('rtp', self.data.dims)))
+        return Scales(*(H5Scale(self, scale, label.label)
+                        for scale, label in zip('rtp', self.data.dims)))
 
 
 class _H4DataMixin:
@@ -1259,7 +1272,7 @@ class _H4DataMixin:
         """pyhdf SDS object providing lazy access to the array."""
         return self._fileref.select(self._datalabel)
 
-    def _set_scales(self):
+    def _set_scales(self) -> Scales:
         """Construct :class:`H4Scale` objects from pyhdf SDS dimensions.
 
         HDF4 dimension order is reversed relative to HDF5 (Fortran vs. C order),
@@ -1267,8 +1280,8 @@ class _H4DataMixin:
         """
         sds = self.data
         dims = list(reversed(list(sds.dimensions(full=1).items())))
-        self._scales = Scales(*tuple(H4Scale(self, scale, k_)
-                                     for scale, (k_, v_) in zip('rtp', dims)))
+        return Scales(*tuple(H4Scale(self, scale, k_)
+                             for scale, (k_, v_) in zip('rtp', dims)))
 
 
 # =============================================================================
@@ -1290,6 +1303,7 @@ class _HdfData(_HdfInterface, ABC):
                  ifile: PathLike,
                  model: ModelType, /,
                  dataset_id: Optional[str] = None,
+                 scales: bool = True,
                  **kwargs):
         """Open an HDF file and parse metadata for one PSI output quantity.
 
@@ -1334,7 +1348,7 @@ class _HdfData(_HdfInterface, ABC):
         self._values = None
 
         self._set_properties(**self._parse_properties(**kwargs))
-        self._set_scales()
+        self._scales = self._set_scales() if scales else None
 
     def __enter__(self):
         """Open (or re-open) the file and return ``self`` for use as a context manager."""
@@ -1371,7 +1385,7 @@ class _HdfData(_HdfInterface, ABC):
         ...
 
     @abstractmethod
-    def _set_scales(self):
+    def _set_scales(self) -> Scales:
         """Construct and cache the :class:`Scales` named tuple of coordinate readers."""
         ...
 
