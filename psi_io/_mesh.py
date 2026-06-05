@@ -112,8 +112,11 @@ __all__ = [
 ]
 
 import enum
+import functools
+from collections.abc import Sequence as ABCSequence
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Sequence, Any, Union, Literal, Generator, Optional, Iterable
+from typing import Callable, Sequence, Any, Union, Literal, Generator, Optional, Iterable
 
 import numpy as np
 
@@ -125,7 +128,7 @@ _MESH_CODE_REVERSE_MAPPING = MappingProxyType({
 """String-token → integer (0/1) lookup used to validate per-axis sequence mesh codes."""
 
 
-MeshCodeType = Union[int, Literal['main', 'half'], Sequence[Any]]
+MeshCodeType = Union[bool, int, Literal['main', 'half'], Sequence[Any]]
 """Type alias for mesh stagger specifications accepted by :func:`remesh_array`.
 
 A mesh stagger may be expressed in any of three equivalent forms:
@@ -140,6 +143,9 @@ A mesh stagger may be expressed in any of three equivalent forms:
   be ``0``, ``1``, ``'m'``, ``'h'``, ``'main'``, ``'half'``, ``'true'``, or
   ``'false'``.
 """
+
+MeshLike = Union['Mesh', MeshCodeType]
+"""Type alias for any accepted mesh specification, including an existing :class:`Mesh`."""
 
 ArrayOrdering = Literal['F', 'C']
 """Type alias for the memory-order convention accepted by :func:`remesh_array`.
@@ -160,93 +166,226 @@ Controls how the bits of a :data:`MeshCodeType` integer map to numpy array axes.
 """
 
 
-class Mesh(enum.Enum):
-    """Enum identifying the stagger position of one array axis.
+def _coerce_mesh_target(method: Callable) -> Callable:
+    """Coerce the *target* argument of a :class:`Mesh` method to a :class:`Mesh`.
 
-    MAS and POT3D solve their equations on Yee-type staggered spherical grids.
-    Each axis of a multi-dimensional output array is independently classified as
-    :attr:`MAIN` (cell-center position) or :attr:`HALF` (cell-face/edge position,
-    displaced by half a grid spacing along that axis).
-
-    The stagger arrangement is physically motivated:
-
-    - Magnetic field components (:math:`B_r`, :math:`B_\\theta`, :math:`B_\\varphi`)
-      are face-centred — each component lives on the face through which it is the
-      outward normal — so that :math:`\\nabla \\cdot \\mathbf{B} = 0` is satisfied
-      exactly at the discrete level.
-    - Current density components follow from
-      :math:`\\mathbf{J} = \\nabla \\times \\mathbf{B}` and are therefore
-      edge-centred (half mesh on the two transverse axes).
-    - Scalar quantities (temperature, density, pressure) occupy the cell corners,
-      which correspond to the half-mesh position on all three axes (``0b111``).
-
-    :class:`Mesh` members appear as elements of the normalized mesh tuple returned
-    by :attr:`~psi_io._models.Props.mesh` and accepted by :func:`remesh_array`.
-
-    Attributes
-    ----------
-    MAIN : int
-        Cell-center mesh position; encoded as ``0``.
-    HALF : int
-        Cell-face/edge mesh position, offset by half a grid spacing; encoded as ``1``.
-
-    Examples
-    --------
-    >>> from psi_io._mesh import Mesh
-    >>> Mesh.MAIN.value
-    0
-    >>> Mesh.HALF.value
-    1
-    >>> Mesh('half')
-    <Mesh.HALF: 1>
-    >>> Mesh('m')
-    <Mesh.MAIN: 0>
-    >>> str(Mesh.HALF)
-    'HALF'
+    If *target* is already a :class:`Mesh`, its ``ndim`` is verified against
+    ``self.ndim``.  Otherwise :meth:`Mesh.parse` is called with
+    ``ndim=self.ndim`` to normalize it.
     """
-
-    HALF = 1
-    MAIN = 0
-
-    @classmethod
-    def _missing_(cls, key: Any) -> Mesh:
-        """Look up *key* in :data:`_MESH_CODE_REVERSE_MAPPING`; return ``None`` if unrecognized."""
-        code_ = _MESH_CODE_REVERSE_MAPPING.get(str(key).lower())
-        return cls(code_) if code_ is not None else None  # type: ignore
-
-
-    def __str__(self) -> str:
-        """Return the enum member name (``'MAIN'`` or ``'HALF'``)."""
-        return str(self.name)
+    @functools.wraps(method)
+    def wrapper(self: 'Mesh', target: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(target, Mesh):
+            if self.ndim != target.ndim:
+                raise ValueError(f"ndim mismatch: {self.ndim} vs {target.ndim}.")
+        elif target is None:
+            target = self
+        else:
+            target = Mesh.parse(target, ndim=self.ndim)
+        return method(self, target, *args, **kwargs)
+    return wrapper
 
 
-def _normalize_mesh_code(mesh_code: MeshCodeType, ndim: int) -> tuple[Mesh, ...]:
-    """Convert *mesh_code* to a length-*ndim* tuple of :class:`Mesh` members.
+@functools.total_ordering
+@dataclass(frozen=True)
+class Mesh:
+    """Compact, immutable representation of a multi-axis mesh stagger code.
+
+    Wraps a binary integer *code* whose bits indicate, per axis, whether the
+    data lives on the half mesh (``1``) or the main mesh (``0``).  The
+    most-significant bit maps to the first logical axis (physical :math:`r`
+    direction in PSI convention).
+
+    Prefer constructing via :meth:`parse` rather than directly, as it
+    accepts all forms described by :data:`MeshCodeType`.
 
     Parameters
     ----------
-    mesh_code : MeshCodeType
-        Integer, ``'main'``/``'half'`` shorthand, or per-axis sequence.
+    code : int
+        Binary-encoded stagger integer, must fit within *ndim* bits.
     ndim : int
-        Number of array dimensions.
+        Number of array dimensions (bits) represented by this code.
 
-    Returns
-    -------
-    out : tuple[Mesh, ...]
+    Raises
+    ------
+    ValueError
+        If *code* has bits set above position *ndim* - 1.
+
+    Examples
+    --------
+    >>> Mesh.parse(0b100, ndim=3)
+    Mesh(code=4, ndim=3)
+    >>> str(Mesh.parse(0b100, ndim=3))
+    'HALF, MAIN, MAIN'
+    >>> Mesh.parse('MMH', ndim=3)
+    Mesh(code=1, ndim=3)
+    >>> Mesh.parse([True, False, True], ndim=3)
+    Mesh(code=5, ndim=3)
     """
-    if isinstance(mesh_code, int):
-        mesh_code = format(mesh_code, f'0{ndim}b')
-    elif mesh_code == 'main':
-        mesh_code = '0' * ndim
-    elif mesh_code == 'half':
-        mesh_code = '1' * ndim
-    elif len(mesh_code) != ndim:
-        raise ValueError(f'Mesh code length {len(mesh_code)} does not match data ndim {ndim}.')
-    try:
-        return tuple(Mesh(_MESH_CODE_REVERSE_MAPPING[str(c).lower()]) for c in mesh_code)
-    except KeyError as e:
-        raise ValueError(f"Invalid mesh code character '{e.args[0]}'. "
-                         f"Valid characters are: {', '.join(_MESH_CODE_REVERSE_MAPPING.keys())}") from None
+
+    code: int
+    ndim: int
+
+    def __post_init__(self) -> None:
+        mask = (1 << self.ndim) - 1
+        if self.code & ~mask:
+            raise ValueError(f"Code 0b{self.code:b} exceeds {self.ndim} bits.")
+
+    def __repr__(self) -> str:
+        return f"Mesh({self})"
+
+    def __len__(self) -> int:
+        return self.ndim
+
+    def __bool__(self) -> bool:
+        return self.code != 0
+
+    def __index__(self) -> int:
+        return self.code
+
+    def __lt__(self, other: Mesh | int) -> bool:
+        if isinstance(other, Mesh):
+            if self.ndim != other.ndim:
+                raise ValueError(f"Cannot compare MeshCodes with different ndim: {self.ndim} vs {other.ndim}.")
+            return self.code < other.code
+        if isinstance(other, int):
+            return self.code < other
+        return NotImplemented
+
+    def __getitem__(self, item: int | slice) -> Mesh:
+        if isinstance(item, int):
+            if item < 0:
+                item += self.ndim
+            if not 0 <= item < self.ndim:
+                raise IndexError(f"Index {item} out of range for Mesh with ndim={self.ndim}.")
+            return Mesh((self.code >> (self.ndim - 1 - item)) & 1, 1)
+        if isinstance(item, slice):
+            indices = range(*item.indices(self.ndim))
+            code = 0
+            for i in indices:
+                code = (code << 1) | ((self.code >> (self.ndim - 1 - i)) & 1)
+            return Mesh(code, len(indices))
+        raise TypeError(f"Indices must be integers or slices, not {type(item).__name__!r}.")
+
+    def __iter__(self) -> Generator[bool, None, None]:
+        """Yield per-axis half-mesh flags MSB-first (logical axis order).
+
+        Yields ``True`` for each axis on the half mesh, ``False`` for main.
+        Iterating a :meth:`needs_remesh` result gives the remesh flags directly.
+        """
+        for i in range(self.ndim):
+            yield bool((self.code >> (self.ndim - 1 - i)) & 1)
+
+    def __reversed__(self) -> Generator[bool, None, None]:
+        return iter(self.reverse())
+
+    def __str__(self) -> str:
+        """Return a human-readable per-axis stagger string, e.g. ``'HALF, MAIN, MAIN'``."""
+        return ', '.join(
+            'HALF' if (self.code >> (self.ndim - 1 - i)) & 1 else 'MAIN'
+            for i in range(self.ndim)
+        )
+
+    def __rshift__(self, other: Optional[MeshLike]) -> tuple[bool]:
+        """Return remesh flags for ``self`` → ``other`` (axes that need averaging)."""
+        return self.remesh(other)
+
+    def reverse(self) -> Mesh:
+        """Return a new :class:`Mesh` with the axis order reversed (MSB ↔ LSB).
+
+        Useful for converting between C-order and F-order axis conventions.
+        """
+        result, code = 0, self.code
+        for _ in range(self.ndim):
+            result = (result << 1) | (code & 1)
+            code >>= 1
+        return Mesh(result, self.ndim)
+
+    @functools.singledispatchmethod
+    @classmethod
+    def parse(cls, mesh_code: MeshLike, *args: Any):
+        """Normalize *mesh_code* into a :class:`Mesh`.
+
+        Parameters
+        ----------
+        mesh_code : MeshCodeType or Mesh
+            Stagger specification in any accepted form: an integer, the
+            ``'main'``/``'half'`` shorthands, a per-axis sequence of tokens
+            (``0``/``1``, ``'m'``/``'h'``, ``True``/``False``, etc.), or an
+            existing :class:`Mesh` (returned as-is).
+        ndim : int, optional
+            Number of dimensions.  Required when *mesh_code* is an integer or
+            the ``'main'``/``'half'`` shorthand; inferred from sequence length
+            otherwise.  If both are provided they must agree.
+
+        Returns
+        -------
+        Mesh
+
+        Raises
+        ------
+        ValueError
+            If *ndim* is required but not supplied, if *ndim* conflicts with
+            the sequence length, or if any token is unrecognized.
+        """
+        if isinstance(mesh_code, Mesh):
+            return mesh_code
+        raise TypeError(f"Cannot convert {type(mesh_code).__name__!r} to Mesh.")
+
+    @parse.register(bool)
+    @classmethod
+    def _(cls, mesh_code, ndim: int):
+        return cls(0 if not mesh_code else (1 << ndim) - 1, ndim)
+
+    @parse.register(int)
+    @classmethod
+    def _(cls, mesh_code, ndim: int):
+        return cls(mesh_code, ndim)
+
+    @parse.register(str)
+    @classmethod
+    def _(cls, mesh_code, ndim: Optional[int] = None):
+        if mesh_code.lower() in ('main', 'half'):
+            if ndim is None:
+                raise ValueError("ndim is required for 'main'/'half' shorthands.")
+            return cls(0 if mesh_code == 'main' else (1 << ndim) - 1, ndim)
+        seq = list(mesh_code)
+        return cls.parse(seq, ndim)
+
+    @parse.register(ABCSequence)
+    @classmethod
+    def _(cls, mesh_code, ndim: Optional[int] = None):
+        if ndim is not None and ndim != len(mesh_code):
+            raise ValueError(f"ndim={ndim} conflicts with sequence length {len(mesh_code)}.")
+        code = 0
+        for c in mesh_code:
+            bit = _MESH_CODE_REVERSE_MAPPING.get(str(c).lower())
+            if bit is None:
+                raise ValueError(f"Invalid mesh code token {c!r}.")
+            code = (code << 1) | bit
+        return cls(code, ndim or len(mesh_code))
+
+    @_coerce_mesh_target
+    def remesh(self, target: Optional[MeshLike], strict: bool = True) -> tuple[bool]:
+        """Return a :class:`Mesh` whose set bits are axes that require averaging.
+
+        An axis needs remeshing when the source is on the half mesh (``1``) and
+        the target is on the main mesh (``0``).
+
+        Parameters
+        ----------
+        target : MeshCodeType or Mesh
+            Desired output stagger; coerced to :class:`Mesh` if necessary.
+
+        Returns
+        -------
+        Mesh
+            Bitmask of axes to average; ``0`` means no remeshing is needed.
+        """
+        mask = (1 << self.ndim) - 1
+        if strict and (~self.code & mask) & target.code:
+            raise ValueError(f"Cannot remesh from {self} to {target}: main → half transitions are not supported.")
+        return tuple(Mesh(self.code & (~target.code & mask), self.ndim))
 
 
 def _average_adjacent(arr: np.ndarray,
@@ -275,24 +414,6 @@ def _remesh_array(data: np.ndarray,
         if shift:
             data = _average_adjacent(data, i)
     return data
-
-
-def _parse_remesh(imesh: tuple[Mesh, ...],
-                  omesh: tuple[Mesh, ...],
-                  order: ArrayOrdering = 'F'
-                  ) -> Generator[bool]:
-    """Yield per-axis remesh flags (``True`` = half→main) by comparing *imesh* to *omesh*."""
-    if order == 'F':
-        imesh, omesh = reversed(imesh), reversed(omesh)
-    for im, om in zip(imesh, omesh):
-        if im == om:
-            yield False
-        elif im == Mesh.HALF and om == Mesh.MAIN:
-            yield True
-        elif im == Mesh.MAIN and om == Mesh.HALF:
-            raise ValueError(f"Cannot remesh from MAIN mesh to HALF mesh.")
-        else:
-            raise ValueError(f"Invalid mesh combination: {im} → {om}.")
 
 
 def remesh_array(data: np.ndarray,
@@ -377,8 +498,6 @@ def remesh_array(data: np.ndarray,
     """
     if omesh is None:
         return data
-    imesh_norm = _normalize_mesh_code(imesh, data.ndim)
-    omesh_norm = _normalize_mesh_code(omesh, data.ndim)
-    remesh_flags = _parse_remesh(imesh_norm, omesh_norm, order)
-    return _remesh_array(data, remesh_flags, order='C')
+    remesh = Mesh.parse(imesh, data.ndim).remesh(omesh)
+    return _remesh_array(data, remesh, order=order)
 
