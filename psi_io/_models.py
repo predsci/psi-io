@@ -380,19 +380,19 @@ __all__ = [
 ]
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Optional, Callable
 
 import astropy.units as u
 
-from psi_io._mesh import _normalize_mesh_code
+from psi_io._mesh import ArrayOrdering, Mesh
 from psi_io._units import MAS_v, MAS_b, MAS_j, MAS_t, MAS_n, MAS_p, MAS_heat, POT3D_b, PSI_rsun, PSI_angle
 
 
 @dataclass(frozen=True, repr=True)
-class Props:
+class ScaleProps:
     """Immutable property bundle for a single PSI model quantity.
 
     Associates a quantity name with its human-readable description, physical unit,
@@ -436,9 +436,9 @@ class Props:
 
     Examples
     --------
-    >>> from psi_io._models import Props
+    >>> from psi_io._models import ModelProps
     >>> import astropy.units as u
-    >>> p = Props('br', 'Radial B field', u.Gauss, 3, False, 0b100)
+    >>> p = ModelProps('br', 'Radial B field', u.Gauss, 3, False, 0b100)
     >>> str(p)
     'br'
     >>> p.ndim, p.scalar
@@ -452,39 +452,6 @@ class Props:
     name: str
     desc: str
     unit: u.Unit
-    ndim: int
-    scalar: bool
-    _mesh: Optional[int] = None
-
-    @property
-    def mesh(self):
-        """Normalized mesh-stagger tuple for this quantity.
-
-        Converts the integer :attr:`_mesh` code to a length-3 tuple of
-        :class:`~psi_io._mesh.Mesh` members via
-        :func:`~psi_io._mesh._normalize_mesh_code`.
-
-        Returns
-        -------
-        out : tuple[Mesh, Mesh, Mesh] or None
-            One :class:`~psi_io._mesh.Mesh` value per spatial dimension
-            ``(r, theta, phi)`` — in the order they appear in
-            :func:`~psi_io._mesh.main_mesh` processing (most-significant bit first,
-            mapping to the last numpy axis).  Returns ``None`` when :attr:`_mesh` is
-            ``None`` (coordinate scale arrays have no stagger).
-
-        Examples
-        --------
-        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
-        >>> from psi_io._mesh import Mesh
-        >>> _MAS_QUANTITY_PROPS_MAPPING['br'].mesh
-        (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
-        >>> _MAS_QUANTITY_PROPS_MAPPING['t'].mesh
-        (Mesh.HALF, Mesh.HALF, Mesh.HALF)
-        >>> _MAS_QUANTITY_PROPS_MAPPING['vr'].mesh
-        (Mesh.MAIN, Mesh.HALF, Mesh.HALF)
-        """
-        return _normalize_mesh_code(self._mesh, self.ndim) if self._mesh is not None else None
 
     def __str__(self) -> str:
         """Return the quantity name.
@@ -577,6 +544,112 @@ class Props:
         """
         return other / self.unit
 
+    def _asdict(self):
+        return asdict(self)
+
+
+@dataclass(frozen=True, repr=True)
+class ModelProps(ScaleProps):
+    """Immutable property bundle for a single PSI model quantity.
+
+    Associates a quantity name with its human-readable description, physical unit,
+    dimensionality, scalar/vector classification, and staggered-grid mesh code.
+    Instances are frozen (immutable) dataclass instances.
+
+    Parameters
+    ----------
+    name : str
+        Canonical lower-case quantity identifier (e.g. ``'br'``, ``'vr'``).  Matches
+        the filename prefix used in MAS and POT3D HDF output.
+    desc : str
+        Human-readable description of the physical quantity.
+    unit : u.Unit
+        Astropy unit whose scale factor converts one code unit of this quantity to
+        physical unit.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
+    ndim : int
+        Number of spatial dimensions of the output array (``3`` for MAS/POT3D fields,
+        ``1`` for coordinate scale arrays).
+    scalar : bool
+        ``True`` if the quantity is a scalar field (temperature, density, …);
+        ``False`` if it is a component of a vector field (velocity, magnetic field, …).
+    _mesh : int, optional
+        Integer mesh code encoding the stagger position on the three-dimensional grid.
+        Each binary bit indicates whether the quantity is on the half mesh (``1``) or
+        main mesh (``0``) along one coordinate axis.  ``None`` for coordinate scale
+        arrays that carry no stagger information (e.g. the radial scale ``'r'``).
+
+    Attributes
+    ----------
+    mesh : tuple[Mesh, ...] or None
+        Normalized form of :attr:`_mesh`, expanded to a length-:attr:`ndim` tuple of
+        :class:`~psi_io._mesh.Mesh` members.  Returns ``None`` when :attr:`_mesh` is
+        ``None`` (coordinate scale arrays have no stagger).
+
+    Notes
+    -----
+    The arithmetic dunder methods (``__mul__``, ``__rmul__``, ``__rtruediv__``)
+    delegate to :attr:`unit`, so ``some_value * props`` is equivalent to
+    ``some_value * props.unit`` and returns an :class:`~astropy.units.Quantity`.
+
+    Examples
+    --------
+    >>> from psi_io._models import ModelProps
+    >>> import astropy.units as u
+    >>> p = ModelProps('br', 'Radial B field', u.Gauss, 3, False, 0b100)
+    >>> str(p)
+    'br'
+    >>> p.ndim, p.scalar
+    (3, False)
+    >>> p.mesh          # doctest: +NORMALIZE_WHITESPACE
+    (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
+    >>> (2.5 * p).unit
+    Unit("G")
+    """
+
+    name: str
+    desc: str
+    unit: u.Unit
+    scalar: bool
+    _mesh: int
+    order: ArrayOrdering = 'F'
+    scales: tuple = tuple('rtp')
+
+    @property
+    def mesh(self):
+        """Normalized mesh-stagger tuple for this quantity.
+
+        Converts the integer :attr:`_mesh` code to a length-3 tuple of
+        :class:`~psi_io._mesh.Mesh` members via
+        :func:`~psi_io._mesh._normalize_mesh_code`.
+
+        Returns
+        -------
+        out : tuple[Mesh, Mesh, Mesh] or None
+            One :class:`~psi_io._mesh.Mesh` value per spatial dimension
+            ``(r, theta, phi)`` — in the order they appear in
+            :func:`~psi_io._mesh.main_mesh` processing (most-significant bit first,
+            mapping to the last numpy axis).  Returns ``None`` when :attr:`_mesh` is
+            ``None`` (coordinate scale arrays have no stagger).
+
+        Examples
+        --------
+        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
+        >>> from psi_io._mesh import Mesh
+        >>> _MAS_QUANTITY_PROPS_MAPPING['br'].mesh
+        (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
+        >>> _MAS_QUANTITY_PROPS_MAPPING['t'].mesh
+        (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+        >>> _MAS_QUANTITY_PROPS_MAPPING['vr'].mesh
+        (Mesh.MAIN, Mesh.HALF, Mesh.HALF)
+        """
+        return Mesh(self._mesh, len(self.scales))
+
+    def _asdict(self):
+        dout = asdict(self)
+        dout.update(mesh=self.mesh)
+        del dout['_mesh']
+        return dout
+
 
 # ----------------------------------------------------------------
 # MAS Model
@@ -619,30 +692,31 @@ Heating
 """
 
 _MAS_QUANTITY_PROPS_MAPPING = MappingProxyType({
-    'vr': Props('vr', 'MAS Velocity (Radial Component)', MAS_v, 3, False, 0b011),
-    'vt': Props('vt', 'MAS Velocity (Theta Component)', MAS_v, 3, False, 0b101),
-    'vp': Props('vp', 'MAS Velocity (Phi Component)', MAS_v, 3, False, 0b110),
-    'br': Props('br', 'MAS Magnetic Field (Radial Component)', MAS_b, 3, False, 0b100),
-    'bt': Props('bt', 'MAS Magnetic Field (Theta Component)', MAS_b, 3, False, 0b010),
-    'bp': Props('bp', 'MAS Magnetic Field (Phi Component)', MAS_b, 3, False, 0b001),
-    'jr': Props('jr', 'MAS Current Density (Radial Component)', MAS_j, 3, False, 0b011),
-    'jt': Props('jt', 'MAS Current Density (Theta Component)', MAS_j, 3, False, 0b101),
-    'jp': Props('jp', 'MAS Current Density (Phi Component)', MAS_j, 3, False, 0b110),
-    't': Props('t', 'MAS Temperature', MAS_t, 3, True, 0b111),
-    'te': Props('te', 'MAS Electron Temperature', MAS_t, 3, True, 0b111),
-    'tp': Props('tp', 'MAS Proton Temperature', MAS_t, 3, True, 0b111),
-    'rho': Props('rho', 'MAS Density', MAS_n, 3, True, 0b111),
-    'p': Props('p', 'MAS Pressure', MAS_p, 3, True, 0b111),
-    'ep': Props('ep', 'MAS Wave Energy Density (Parallel to the Field)', MAS_p, 3, True, 0b111),
-    'em': Props('em', 'MAS Wave Energy Density (Anti-Parallel to the Field)', MAS_p, 3, True, 0b111),
-    'zp': Props('zp', 'MAS Outward Propagating Wave Amplitude', MAS_v, 3, True, 0b111),
-    'zm': Props('zm', 'MAS Inward Propagating Wave Amplitude', MAS_v, 3, True, 0b111),
-    'heat': Props('heat', 'MAS Local Coronal Heating Rate', MAS_heat, 3, True, 0b111),
+    'vr': ModelProps('vr', 'MAS Velocity (Radial Component)', MAS_v, False, 0b011),
+    'vt': ModelProps('vt', 'MAS Velocity (Theta Component)', MAS_v, False, 0b101),
+    'vp': ModelProps('vp', 'MAS Velocity (Phi Component)', MAS_v, False, 0b110),
+    'br': ModelProps('br', 'MAS Magnetic Field (Radial Component)', MAS_b, False, 0b100),
+    'bt': ModelProps('bt', 'MAS Magnetic Field (Theta Component)', MAS_b, False, 0b010),
+    'bp': ModelProps('bp', 'MAS Magnetic Field (Phi Component)', MAS_b, False, 0b001),
+    'jr': ModelProps('jr', 'MAS Current Density (Radial Component)', MAS_j, False, 0b011),
+    'jt': ModelProps('jt', 'MAS Current Density (Theta Component)', MAS_j, False, 0b101),
+    'jp': ModelProps('jp', 'MAS Current Density (Phi Component)', MAS_j, False, 0b110),
+    't': ModelProps('t', 'MAS Temperature', MAS_t, True, 0b111),
+    'te': ModelProps('te', 'MAS Electron Temperature', MAS_t, True, 0b111),
+    'tp': ModelProps('tp', 'MAS Proton Temperature', MAS_t, True, 0b111),
+    'rho': ModelProps('rho', 'MAS Density', MAS_n, True, 0b111),
+    'p': ModelProps('p', 'MAS Pressure', MAS_p, True, 0b111),
+    'ep': ModelProps('ep', 'MAS Wave Energy Density (Parallel to the Field)', MAS_p, True, 0b111),
+    'em': ModelProps('em', 'MAS Wave Energy Density (Anti-Parallel to the Field)', MAS_p, True, 0b111),
+    'zp': ModelProps('zp', 'MAS Outward Propagating Wave Amplitude', MAS_v, True, 0b111),
+    'zm': ModelProps('zm', 'MAS Inward Propagating Wave Amplitude', MAS_v, True, 0b111),
+    'heat': ModelProps('heat', 'MAS Local Coronal Heating Rate', MAS_heat, True, 0b111),
 })
-"""Read-only mapping from MAS quantity name to its :class:`Props` descriptor."""
+"""Read-only mapping from MAS quantity name to its :class:`ModelProps` descriptor."""
 
-def get_mas_quantity_properties(variable: MasQuantities) -> Props:
-    """Return the :class:`~psi_io._models.Props` descriptor for a MAS quantity.
+
+def get_mas_quantity_properties(variable: MasQuantities) -> ModelProps:
+    """Return the :class:`~psi_io._models.ModelProps` descriptor for a MAS quantity.
 
     Parameters
     ----------
@@ -653,7 +727,7 @@ def get_mas_quantity_properties(variable: MasQuantities) -> Props:
 
     Returns
     -------
-    out : Props
+    out : ModelProps
         Immutable metadata descriptor for the requested MAS quantity.
 
     Raises
@@ -673,7 +747,7 @@ def get_mas_quantity_properties(variable: MasQuantities) -> Props:
     try:
         return _MAS_QUANTITY_PROPS_MAPPING[variable.lower()]
     except KeyError:
-        raise ValueError(f"Invalid variable '{variable}'. "
+        raise ValueError(f"Invalid variable {variable!r} for MAS model. "
                          f"Valid options are: {', '.join(_MAS_QUANTITY_PROPS_MAPPING.keys())}") from None
 
 
@@ -707,16 +781,17 @@ the magnetic field: ``'br'`` (radial), ``'bt'`` (co-latitude), and ``'bp'``
     on a reader opened without a ``unit`` override will **not** perform a meaningful
     conversion.
 """
+
 _POT3D_QUANTITY_PROPS_MAPPING = MappingProxyType({
-    'br': Props('br', 'POT3D Magnetic Field (Radial Component)', POT3D_b, 3, False, 0b011),
-    'bt': Props('bt', 'POT3D Magnetic Field (Theta Component)', POT3D_b, 3, False, 0b101),
-    'bp': Props('bp', 'POT3D Magnetic Field (Phi Component)', POT3D_b, 3, False, 0b110),
+    'br': ModelProps('br', 'POT3D Magnetic Field (Radial Component)', POT3D_b, False, 0b011),
+    'bt': ModelProps('bt', 'POT3D Magnetic Field (Theta Component)', POT3D_b, False, 0b101),
+    'bp': ModelProps('bp', 'POT3D Magnetic Field (Phi Component)', POT3D_b, False, 0b110),
 })
-"""Read-only mapping from POT3D quantity name to its :class:`Props` descriptor."""
+"""Read-only mapping from POT3D quantity name to its :class:`ModelProps` descriptor."""
 
 
-def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> Props:
-    """Return the :class:`~psi_io._models.Props` descriptor for a POT3D quantity.
+def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> ModelProps:
+    """Return the :class:`~psi_io._models.ModelProps` descriptor for a POT3D quantity.
 
     Parameters
     ----------
@@ -726,7 +801,7 @@ def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> Props:
 
     Returns
     -------
-    out : Props
+    out : ModelProps
         Immutable descriptor for the requested POT3D magnetic field component.
 
     Raises
@@ -743,7 +818,7 @@ def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> Props:
     try:
         return _POT3D_QUANTITY_PROPS_MAPPING[variable.lower()]
     except KeyError:
-        raise ValueError(f"Invalid variable '{variable}'. "
+        raise ValueError(f"Invalid variable {variable!r} for POT3D model. "
                          f"Valid options are: {', '.join(_POT3D_QUANTITY_PROPS_MAPPING.keys())}") from None
 
 
@@ -752,27 +827,34 @@ def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> Props:
 # ----------------------------------------------------------------
 
 
-PsiScales = Literal['r', 't', 'p',]
+PsiScales = Literal['r', 'radius', 't', 'theta', 'p', 'phi']
 """Literal type alias for the three PSI coordinate scale identifiers.
 
-``'r'``
+``'r'`` or ``'radius'``
     Radial coordinate in unit of solar radii (:data:`~psi_io._units.PSI_rsun`).
-``'t'``
+``'t'`` or ``'theta'``
     Co-latitude :math:`\\theta` in radians (:data:`~psi_io._units.PSI_angle`).
-``'p'``
+``'p'`` or ``'phi'``
     Longitude :math:`\\varphi` in radians (:data:`~psi_io._units.PSI_angle`).
 """
 
 
-_PSI_SCALE_PROPS_MAPPING = MappingProxyType({
-    'r': Props('r', 'PSI Radial Scale (Solar Radii)', PSI_rsun, 1, True),
-    't': Props('t', 'PSI Theta Scale (Co-Latitude)', PSI_angle, 1, True),
-    'p': Props('p', 'PSI Phi Scale (Longitude)', PSI_angle, 1, True),
+_BASE_SCALE_PROPS_MAPPING = MappingProxyType({
+    'r': ScaleProps('r', 'PSI Radial Scale (Solar Radii)', PSI_rsun,),
+    't': ScaleProps('t', 'PSI Theta Scale (Co-Latitude)', PSI_angle,),
+    'p': ScaleProps('p', 'PSI Phi Scale (Longitude)', PSI_angle,),
 })
 """Read-only mapping from coordinate scale label to its :class:`Props` descriptor."""
 
+_PSI_SCALE_PROPS_MAPPING = MappingProxyType({
+    **_BASE_SCALE_PROPS_MAPPING,
+    'radius': _BASE_SCALE_PROPS_MAPPING['r'],
+    'theta': _BASE_SCALE_PROPS_MAPPING['t'],
+    'phi': _BASE_SCALE_PROPS_MAPPING['p'],
+})
 
-def get_psi_scale_properties(variable: PsiScales) -> Props:
+
+def get_psi_scale_properties(variable: PsiScales) -> ScaleProps:
     """Return the :class:`~psi_io._models.Props` descriptor for a PSI coordinate scale.
 
     Parameters
@@ -800,9 +882,9 @@ def get_psi_scale_properties(variable: PsiScales) -> Props:
     't'
     """
     try:
-        return _PSI_SCALE_PROPS_MAPPING[variable.lower()[0]]
+        return _PSI_SCALE_PROPS_MAPPING[variable.lower()]
     except KeyError:
-        raise ValueError(f"Invalid variable '{variable}'. "
+        raise ValueError(f"Invalid variable {variable!r} for PSI coordinate scale. "
                          f"Valid options are: {', '.join(_PSI_SCALE_PROPS_MAPPING.keys())}") from None
 
 
@@ -821,13 +903,9 @@ ModelType = Literal['mas', 'pot3d']
 """
 
 
-MODEL_TYPE = {'mas', 'pot3d'}
-"""Set of recognized PSI model type strings (``'mas'``, ``'pot3d'``)."""
-
 _PROP_GETTER_MAPPING = MappingProxyType({
     'mas': get_mas_quantity_properties,
-    'pot3d': get_pot3d_quantity_properties,
-    'scale': get_psi_scale_properties,})
+    'pot3d': get_pot3d_quantity_properties,})
 """Read-only mapping from model/scale label to its :class:`Props` getter function."""
 
 
@@ -864,44 +942,6 @@ def get_model_prop_caller(model: ModelType) -> Callable:
     except KeyError:
         raise ValueError(f"Invalid model '{model}'. "
                          f"Valid options are: {', '.join(_PROP_GETTER_MAPPING.keys())}") from None
-
-
-_PROP_KEYS_MAPPING = MappingProxyType({
-    'mas': _MAS_QUANTITY_PROPS_MAPPING,
-    'pot3d': _POT3D_QUANTITY_PROPS_MAPPING,
-    'scale': _PSI_SCALE_PROPS_MAPPING,})
-"""Read-only mapping from model/scale label to its :class:`Props` getter function."""
-
-
-def get_model_prop_keys(model: ModelType) -> set[str]:
-    """Return the set of valid property keys for the given model type.
-
-    Parameters
-    ----------
-    model : ModelType
-        Case-insensitive model label.  Valid values: ``'mas'``, ``'pot3d'``,
-        ``'scale'``.
-
-    Returns
-    -------
-    out : set[str]
-        The set of valid property keys for *model*.
-    Raises
-    ------
-    ValueError
-        If *model* is not a recognized model label.
-    Examples
-    --------
-    >>> from psi_io._models import get_model_prop_keys
-    >>> get_model_prop_keys('pot3d')
-    {'br', 'bt', 'bp'}
-    """
-    try:
-        return set(_PROP_KEYS_MAPPING[model.lower()].keys())
-    except KeyError:
-        raise ValueError(f"Invalid model '{model}'. "
-                         f"Valid options are: {', '.join(_PROP_KEYS_MAPPING.keys())}") from None
-
 
 
 MATCH_QUANTITIES = '|'.join(re.escape(q) for q in sorted(_MAS_QUANTITY_PROPS_MAPPING.keys(), key=len, reverse=True))
