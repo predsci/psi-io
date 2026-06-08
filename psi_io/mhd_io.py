@@ -301,6 +301,12 @@ from typing import TYPE_CHECKING, Optional, Literal, ClassVar, Mapping
 import numpy as np
 import h5py as h5
 import astropy.units as u
+from astropy.table import QTable
+from numpy.lib.recfunctions import structured_to_unstructured
+try:
+    from scipy.interpolate import RegularGridInterpolator
+except ImportError:
+    RegularGridInterpolator = None  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from astropy.units.typing import UnitLike, QuantityLike
@@ -325,9 +331,13 @@ from psi_io._units import decompose_mas_units
 from psi_io.psi_io import (PathLike,
                            PSI_DATA_ID,
                            SDC_TYPE_CONVERSIONS,
-                           _dispatch_by_ext, )
+                           _dispatch_by_ext,
+                           _except_no_scipy, )
 
 class MetaDataWarning(UserWarning):
+    ...
+
+class CacheWarning(UserWarning):
     ...
 
 HdfVersionType = Literal[4, 5]
@@ -382,7 +392,6 @@ def _interpolate_dim(arr: QuantityLike,
                      axis: int,
                      value: QuantityLike,
                      scale: QuantityLike,
-                     fill_value: Optional[QuantityLike]
                      ) -> QuantityLike:
     """Linearly interpolate *arr* along *axis* to *value*, collapsing that axis to size 1.
 
@@ -393,8 +402,6 @@ def _interpolate_dim(arr: QuantityLike,
     """
     if arr.shape[axis] != 2 or len(scale) != 2:
         raise ValueError("Interpolation is only supported for 2-element arrays and scales.")
-    if (value < scale[0] or value > scale[1]) and fill_value is not None:
-        return np.full(arr.shape[:axis] + (1,) + arr.shape[axis + 1:], fill_value, dtype=arr.dtype)
     t = (value - scale[0]) / (scale[1] - scale[0])
     slc_lo = [slice(None)] * arr.ndim
     slc_hi = [slice(None)] * arr.ndim
@@ -404,9 +411,8 @@ def _interpolate_dim(arr: QuantityLike,
 
 
 def _slice_array(data: QuantityLike,
-                 values: Sequence[Optional[QuantityLike]],
                  scales: Sequence[Optional[QuantityLike]],
-                 fill_value: Optional[QuantityLike],
+                 values: Sequence[Optional[QuantityLike]],
                  order: ArrayOrdering = 'F') -> QuantityLike:
     """Interpolate *data* to physical values along each axis that has a non-``None`` entry.
 
@@ -420,9 +426,7 @@ def _slice_array(data: QuantityLike,
         values, scales = reversed(values), reversed(scales)
     for i, (v, s) in enumerate(zip(values, scales)):
         if v is not None:
-            if s is None:
-                raise ValueError("Cannot interpolate to a value when the corresponding scale is not provided.")
-            data = _interpolate_dim(data, i, v, s, fill_value)
+            data = _interpolate_dim(data, i, v, s)
     return data
 
 
@@ -481,90 +485,30 @@ def _parse_islice_args(*args,
 
 
 def _parse_vslice_args(*args,
-                       scales: tuple,
-                       bounds_error: bool):
-    """Convert value-space dimension arguments to ``(value, index_slice)`` pairs.
-
-    For each axis, a bare scalar or :class:`~u.Quantity` triggers a
-    value-space lookup: the coordinate scale is searched to find the two bracketing
-    indices, and a 2-element slice is returned for later linear interpolation via
-    :func:`_interpolate_dim`.  All other argument types (``None``, ``int``,
-    ``slice``, tuple) are treated as index-space and passed through to
-    :func:`_cast_to_slice` unchanged, with ``None`` returned as the value.
-
-    Parameters
-    ----------
-    *args : scalar, u.Quantity, int, slice, tuple, None, or Ellipsis
-        One argument per spatial axis in physical ``(r, θ, φ)`` order.  Fewer
-        arguments than dimensions are padded with ``None`` via :func:`_expand_args`.
-    scales : Scales
-        Coordinate scale readers in physical ``(r, θ, φ)`` order.  Used to look
-        up the native unit and perform bounds checking.
-    bounds_error : bool
-        If ``True``, raise :class:`ValueError` when a value lies outside the
-        range of its coordinate scale.
-
-    Yields
-    ------
-    value : u.Quantity or None
-        The physical target value (in the scale's native unit) for value-space
-        axes; ``None`` for index-space axes.
-    s : slice
-        Corresponding index-space slice.  For value-space axes this is the
-        2-element bracketing window ``slice(i-1, i+1)``; for index-space axes
-        it is the result of :func:`_cast_to_slice`.
-
-    Raises
-    ------
-    ValueError
-        If *bounds_error* is ``True`` and a value lies outside its scale range.
-    """
-    for arg, scale in zip(sargs, scales):
+                       scales: tuple[int, ...],
+                       remesh: tuple[bool, ...]):
+    for arg, scale, rmesh in zip(args, scales, remesh):
         if arg is None:
             yield (None, None), slice(None)
             continue
-        arg = np.atleast_1d(u.Quantity(arg, scale.unit, scale.dtype).value)
+        arg = u.Quantity(arg, unit=scale.unit, ndmin=1)
         if arg.size not in {1, 2}:
             raise ValueError(f"Invalid argument {arg!r}: expected a scalar or 2-element sequence.")
-        if np.isnan(arg[0]):
+        nan_mask = np.isnan(arg)
+        if nan_mask[0]:
             arg[0] = -np.inf
-        if np.isnan(arg[-1]):
-            arg[1] = np.inf
+        if nan_mask[-1]:
+            arg[-1] = np.inf
         if np.all(np.isinf(arg)):
             yield (None, None), slice(None)
             continue
-        if bounds_error:
-            if not np.isinf(arg[0]) and arg[0] < scale[0]:
-                raise ValueError(f"Value {arg} is out of bounds for scale '{scale.quantity}' "
-                                 f"with range {scale[0]:.6f} to {scale[-1]:.6f} {scale.unit}.")
-            if not np.isinf(arg[-1]) and arg[-1] > scale[-1]:
-                raise ValueError(f"Value {arg} is out of bounds for scale '{scale.quantity}' "
-                                 f"with range {scale[0]:.6f} to {scale[-1]:.6f} {scale.unit}.")
-        indices = np.clip(np.searchsorted(scale[...], arg), 1, scale.size - 1).tolist()
-        indices = (indices[0]-1, indices[-1]+1)
-        # v_ = np.asarray(arg, scale.dtype)
-        # if isinstance(v_, u.Quantity):
-        #     v_ = v_.to(scale.unit)
-        # else:
-        #     v_ << scale.unit
-
-
-        # value = None
-        # if np.isscalar(arg):
-        #     arg = arg * scale.unit
-        # if isinstance(arg, u.Quantity):
-        #     value = arg.to(scale.unit)
-        #     raw_value = value.value
-        #     if bounds_error and (raw_value < scale[0] or raw_value > scale[-1]):
-        #         raise ValueError(f"Value {arg} is out of bounds for scale '{scale.quantity}' "
-        #                          f"with range {scale.data[0]:.6f} to {scale.data[-1]:.6f} {scale.unit}.")
-        #     index = int(np.clip(np.searchsorted(scale[...], raw_value), 1, scale.size - 1))
-        #     arg = (index - 1, index + 1)
-        slice_ = _cast_to_slice(indices)
-        start, stop, step = slice_.indices(scale.size)
+        offset = int(rmesh)
+        n = scale.size
+        raw = np.clip(np.searchsorted(scale[:], arg), 1 + offset, n - 1 - offset).tolist()
+        start, stop = raw[0] - 1 - offset, raw[-1] + 1 + offset
         if stop <= start:
             raise ValueError(f"Slice argument {arg!r} yields an empty dimension.")
-        yield arg, slice_
+        yield arg, slice(start, stop)
 
 
 def _apply_units(data: u.Quantity,
@@ -623,8 +567,8 @@ def _cast_to_slice(input: None | int | slice | Sequence) -> slice:
         return slice(None)
     elif isinstance(input, int):
         return slice(input, input + 1) if input >= 0 else slice(input - 1, input)
-    # elif isinstance(input, slice):
-    #     return input
+    elif isinstance(input, slice):
+        return input
     elif isinstance(input, Collection):
         return slice(*input)
     else:
@@ -646,6 +590,9 @@ class _HdfArray(ABC):
                  **kwargs):
         self._vcache = None
         self._cache = cache and cache.lower()
+        if self._cache not in {'lazy', 'eager', None}:
+            raise ValueError(f"Invalid cache method: {cache!r}. "
+                             f"Expected 'lazy', 'eager', or None.")
 
         try:
             self._set_metadata(**self._parse_inputs(**kwargs))
@@ -653,7 +600,8 @@ class _HdfArray(ABC):
             raise ValueError("Missing or incompatible metadata") from e
 
         if self._cache == 'eager':
-            self.load()
+            self.load(recursive=False)
+
 
     def __str__(self):
         return f"{self.name}"
@@ -675,7 +623,7 @@ class _HdfArray(ABC):
             args = (args,)
         if self._reverse:
             args = args[::-1]
-        if self.cached:
+        if self._vcache is not None:
             return self._vcache[args]
         else:
             odata = self.dataset[args]
@@ -749,8 +697,12 @@ class _HdfArray(ABC):
         return self._order
 
     @property
-    def cached(self) -> bool:
+    def data_cached(self) -> bool:
         return self._vcache is not None
+
+    @property
+    def cached(self) -> bool:
+        return self.data_cached
 
     @property
     def cache(self) -> str:
@@ -762,10 +714,10 @@ class _HdfArray(ABC):
         if self._cache not in {'lazy', 'eager', None}:
             raise ValueError(f"Invalid cache method: {method!r}. "
                              f"Expected 'lazy', 'eager', or None.")
-        if self._cache == 'eager' and not self.cached:
+        if self._cache == 'eager':
             self.load()
-        else:
-            self._vcache = None
+        elif self._cache is None:
+            self.clear()
 
 
     @property
@@ -816,11 +768,16 @@ class _HdfArray(ABC):
     def _read(self, *args, remesh: tuple[bool,...]) -> u.Quantity:
         return _remesh_array(self[args], remesh=remesh, order=self.order) * self.unit
 
-    def load(self):
-        if not self._cache:
-            raise ValueError("Cannot load data: caching is disabled. "
-                             "Set cache to 'lazy' or 'eager' to enable caching.")
+    def load(self, **kwargs):
+        if self._cache is None:
+            warnings.warn(f"{self.__class__.__name__}({self}) has caching disabled; load() has no effect.", CacheWarning, stacklevel=3)
+            return
         self._vcache = self.dataset[:]
+
+    def clear(self, **kwargs):
+        if self._cache == 'eager':
+            warnings.warn(f"{self.__class__.__name__}({self}) has eager caching enabled; clear() was called explicitly.", CacheWarning, stacklevel=3)
+        self._vcache = None
 
 
 class _HdfScale(_HdfArray, ABC):
@@ -927,6 +884,10 @@ class _HdfData(_HdfArray, ABC):
     def scales(self) -> tuple:
         return self._scales
 
+    @property
+    def interp_cached(self) -> bool:
+        return self._icache is not None
+
     @abstractmethod
     def open(self):
         """Re-open the file handle if it was previously closed."""
@@ -1029,8 +990,44 @@ class _HdfData(_HdfArray, ABC):
         oscales = (scale._read(sarg, remesh=rmesh) for scale, sarg, rmesh in zip(self.scales, sargs, remesh))
         return odata, *oscales
 
-    def interp(self):
-        ...
+    def interp(self,
+               data,
+               unit: Optional[str | UnitLike] = None,
+               **kwargs
+               ) -> u.Quantity:
+        _except_no_scipy()
+        positions = QTable(data, names=self.scales._fields, units=[scale.unit for scale in self.scales])
+        positions = structured_to_unstructured(positions.as_array())
+
+        bounds_error = kwargs.get('bounds_error', True)
+        vslice_args = [(np.min(positions[:, i]), np.max(positions[:, i]))
+                       for i in range(positions.shape[-1])]
+
+        if self._cache is None:
+            data, *scales = self.vslice(*vslice_args, bounds_error=bounds_error, order='C')
+            return _apply_units(
+                RegularGridInterpolator(scales, data, **kwargs)(positions) << self.unit,
+                unit=unit,
+            )
+
+        needs_build = (
+            self._icache is None
+            or any(lo < g[0] or hi > g[-1]
+                   for g, (lo, hi) in zip(self._icache.grid, vslice_args))
+        )
+
+        if needs_build:
+            if self.data_cached:
+                arr = self._vcache[:].T if self._reverse else self._vcache[:]
+                self._icache = RegularGridInterpolator(
+                    [scale[:] for scale in self.scales], arr, **kwargs
+                )
+            else:
+                data, *scales = self.vslice(*vslice_args, bounds_error=bounds_error, order='C')
+                self._icache = RegularGridInterpolator(scales, data, **kwargs)
+
+        return _apply_units(self._icache(positions) << self.unit, unit=unit)
+
 
     def vslice(self,
                *args,
@@ -1039,33 +1036,73 @@ class _HdfData(_HdfArray, ABC):
                order: Optional[ArrayOrdering] = None,
                scales: bool = True,
                bounds_error: bool = True,
-               fill_value: Optional[QuantityLike] = None,
                ) -> u.Quantity | tuple[u.Quantity, ...]:
-        slice_values, slice_args = self._vslice(*args, bounds_error=bounds_error)
-        slice_mask = list(map(lambda s: s == 1, map(len, slice_values)))
-        remesh = self._parse_remesh(mesh)
+        remesh = self.mesh >> mesh
+        args = _expand_args(*args, ndim=self.ndim)
+        varg_pairs = _parse_vslice_args(*args, scales=self.scales, remesh=remesh)
+        slice_values, slice_args = map(list, zip(*varg_pairs))
+        slice_mask = [len(sv) == 1 for sv in slice_values]
 
-        remesh_xand_svalue = tuple(rm and not sm for rm, sm in zip(remesh, slice_mask))
+        remeshed_scales = [scale._read(sarg, remesh=rmesh)
+              for scale, sarg, rmesh in zip(self.scales, slice_args, remesh)]
+        for i, (svalue, rmesh) in enumerate(zip(slice_values, remesh)):
+            if rmesh:
+                if svalue[0] is not None and not np.isinf(svalue[0]) and svalue[0] > remeshed_scales[i][1]:
+                    slice_args[i] = slice(slice_args[i].start + 1, slice_args[i].stop, slice_args[i].step)
+                    remeshed_scales[i] = remeshed_scales[i][1:]
+                if svalue[-1] is not None and not np.isinf(svalue[-1]) and svalue[-1] < remeshed_scales[i][-2]:
+                    slice_args[i] = slice(slice_args[i].start, slice_args[i].stop - 1, slice_args[i].step)
+                    remeshed_scales[i] = remeshed_scales[i][:-1]
+            if bounds_error:
+                if svalue[0] is not None and not np.isinf(svalue[0]) and svalue[0] < remeshed_scales[i][0]:
+                    raise ValueError(f"Value {svalue[0]} is below the interpolation range {remeshed_scales[i][0]}.")
+                if svalue[-1] is not None and not np.isinf(svalue[-1]) and svalue[-1] > remeshed_scales[i][-1]:
+                    raise ValueError(f"Value {svalue[-1]} is above the interpolation range {remeshed_scales[i][-1]}.")
 
-        pre_slice_data = _apply_units(self._read(*slice_args, remesh=remesh_xand_svalue), unit)
+        pre_slice_data = _apply_units(self._read(*slice_args, remesh=remesh), unit)
+        if all(not sm for sm in slice_mask):
+            if order is not None and order.upper() != self.order:
+                pre_slice_data = pre_slice_data.T
+            if not scales:
+                return pre_slice_data
+            return pre_slice_data, *remeshed_scales
 
-        pre_slice_scales = tuple(scale[sarg] * scale.unit if sm else None
-                             for scale, sarg, sm in zip(self.scales, slice_args, slice_mask))
-        pre_slice_values = tuple(sv if sm else None for sv, sm in zip(slice_values, slice_mask))
+        pre_slice_scales = [sscale if sm else None for sscale, sm in zip(remeshed_scales, slice_mask)]
+        pre_slice_values = [sv if sm else None for sv, sm in zip(slice_values, slice_mask)]
 
-        sliced_data = _slice_array(pre_slice_data, pre_slice_values, pre_slice_scales, fill_value)
+        sliced_data = _slice_array(pre_slice_data, pre_slice_scales, pre_slice_values, self.order)
+        if order is not None and order.upper() != self.order:
+            sliced_data = sliced_data.T
         if not scales:
             return sliced_data
-        sliced_scales = tuple(scale._read(sarg, remesh=rmesh) if sv is None else np.atleast_1d(sv)
-                                 for scale, sarg, sv, rmesh in zip(self.scales, slice_args, slice_values, remesh))
+        sliced_scales = (psvalue if psvalue is not None else sscale for psvalue, sscale in zip(pre_slice_values, remeshed_scales))
         return sliced_data, *sliced_scales
 
-    def _vslice(self,
-               *args,
-               bounds_error: bool = True,
-               ):
-        slice_values, slice_args = zip(*_parse_vslice_args(*args, scales=self.scales, bounds_error=bounds_error))
-        return slice_values, slice_args
+    def load(self, interp: bool = False, recursive: bool = True):
+        if self._cache is None:
+            warnings.warn(f"{self.__class__.__name__}({self}) has caching disabled; load() has no effect.", CacheWarning, stacklevel=3)
+            return
+        super().load()
+        if recursive:
+            for scale in self.scales:
+                scale.load()
+        if interp:
+            _except_no_scipy()
+            arr = self._vcache[:].T if self._reverse else self._vcache[:]
+            self._icache = RegularGridInterpolator(
+                [scale[:] for scale in self.scales], arr
+            )
+
+    def clear(self, data: bool = True, interp: bool = True, recursive: bool = True):
+        if self._cache == 'eager':
+            warnings.warn(f"{self.__class__.__name__}({self}) has eager caching enabled; clear() was called explicitly.", CacheWarning, stacklevel=3)
+        if data:
+            super().clear()
+            if recursive:
+                for scale in self.scales:
+                    scale.clear()
+        if interp:
+            self._icache = None
 
 
 class _H5ArrayMixin:
@@ -1214,896 +1251,6 @@ class H5Data(_H5ArrayMixin, _HdfData):
         dims = self._get_dims()
         self._scales: Scales = Scales(*(H5Scale(self, dim.label, cache=self._cache, name=scale) for
                                         dim, scale in zip(dims, Scales._fields)))
-
-
-
-
-
-
-HERE = 5
-# class _HdfInterface(ABC):
-#     """Abstract base class defining the full public interface for PSI HDF data objects.
-#
-#     All concrete readers (MAS, POT3D, coordinate scales) and their format mixins
-#     satisfy this interface.  Consumers should program against this class rather than
-#     against concrete subclasses.
-#
-#     Subclasses must implement all abstract properties and the :meth:`read` and
-#     :meth:`_read` methods.  The ``read`` method in this base class provides shared
-#     unit-conversion and remeshing logic that concrete implementations invoke via
-#     ``super().read(*args, **kwargs)``.
-#
-#     Notes
-#     -----
-#     The ``__slots__ = ()`` declaration in this class is intentional: it ensures that
-#     concrete subclasses using ``__slots__`` do not incur a ``__dict__`` overhead
-#     from the abstract base.
-#     """
-#
-#     __slots__ = ()
-#
-#     _HDFN: ClassVar[HdfVersionType]                        # provided by format mixin
-#
-#     def __init__(self, dataset_id: str, **kwargs):
-#         self._datalabel = dataset_id
-#         self._values = None
-#         self._scales = tuple()
-#         self._set_properties(**self._parse_properties(**kwargs))
-#
-#     def __getitem__(self, args):
-#         """Index the underlying HDF dataset with physical ``(r, θ, φ)`` axis ordering.
-#
-#         PSI HDF files are written in Fortran column-major order so that the radial
-#         index ``r`` varies fastest.  When read into numpy (row-major), this results
-#         in storage shape ``(Nφ, Nθ, Nr)``.  This method re-reverses the user-supplied
-#         index tuple so that callers can use natural physical ordering ``(r, θ, φ)``:
-#
-#         .. code-block:: python
-#
-#             obj[r_slice, t_slice, p_slice]   # user order
-#             # internally becomes:
-#             obj.data[p_slice, t_slice, r_slice]  # numpy storage order
-#
-#         Parameters
-#         ----------
-#         args : int, slice, or tuple
-#             Index argument(s) in physical ``(r, θ, φ)`` order.  A single non-tuple
-#             argument is treated as indexing along the first physical axis (``r``).
-#
-#         Returns
-#         -------
-#         out : numpy.ndarray
-#             Slice of the dataset in numpy storage order ``(Nφ, Nθ, Nr)``.
-#         """
-#         # TODO: ensure ellipsis and fewer-than-3 args are handled correctly (expand to None)
-#         if not isinstance(args, tuple):
-#             args = (args,)
-#
-#         if self._values is not None:
-#             return self._values[args[::-1]]
-#         else:
-#             odata = self.data[args[::-1]]
-#             if odata.shape == self.shape:
-#                 self._values = odata
-#             return odata
-#
-#     def _parse_properties(self, **kwargs):
-#         """Resolve metadata fields by merging caller kwargs, file attrs, and filename.
-#
-#         Merges three sources (highest to lowest priority):
-#
-#         1. Keyword arguments in *kwargs* that match :data:`METADATA_SCHEMA` keys.
-#         2. HDF file-level attributes that match :data:`METADATA_SCHEMA` keys.
-#         3. Quantity name and sequence number inferred from the filename stem.
-#         4. The canonical :class:`~psi_io._models.Props` defaults for the resolved
-#            quantity (unit and mesh).
-#
-#         Parameters
-#         ----------
-#         **kwargs
-#             Caller-supplied metadata overrides.
-#
-#         Returns
-#         -------
-#         out : dict
-#             Fully populated metadata dict with keys
-#             ``{'quantity', 'sequence', 'unit', 'mesh'}``; the ``'scalar'`` key from
-#             :data:`METADATA_SCHEMA` is resolved internally but not forwarded to
-#             :meth:`_set_properties`.
-#
-#         Raises
-#         ------
-#         ValueError
-#             If any metadata field is still ``None`` after merging all sources.
-#         """
-#
-#         # def _set_properties(self, scale: str):
-#         #     """Look up and cache the unit for this coordinate axis."""
-#         #     self._model: str = 'scale'
-#         #     prop_getter = get_model_prop_caller(self._model)
-#         #     qprops = prop_getter(scale)
-#         #     if self.ndim != qprops.ndim:
-#         #         raise ValueError(f"Expected {qprops.ndim}D coordinate variable for scale '{scale}', "
-#         #                          f"found {self.ndim}D dataset with shape {self.shape}.")
-#         #     self._name: PsiScales = qprops.name
-#         #     self._desc: str = qprops.desc
-#         #     self._unit: u.Unit = qprops.unit
-#         #     self._scalar: bool = qprops.scalar
-#         #     self._mesh: tuple[Mesh, ...] = self._dataref.mesh['rtp'.index(self._quantity)],
-#         #     self._sequence: Optional[int] = self._dataref.sequence
-#         #     self._scales = None  # coordinate scales do not have their own scales
-#
-#         input_attrs = {k: v for k, v in kwargs.items() if k in METADATA_SCHEMA}
-#         file_attrs = {k: v for k, v in self.attrs.items() if k in METADATA_SCHEMA}
-#
-#         model = input_attrs.get('model',
-#                                 file_attrs.get('model', 'custom'))
-#
-#         quantity = input_attrs.get('name',
-#                                    file_attrs.get('name',
-#                                                   extract_quantity_from_filepath(self._filepath, '')))
-#         sequence = input_attrs.get('sequence',
-#                                    file_attrs.get('sequence',
-#                                                   extract_sequence_from_filepath(self._filepath, 0)))
-#
-#         try:
-#             prop_getter = get_model_prop_caller(str(model))
-#             native_props = prop_getter(quantity)
-#             if self.ndim != native_props.ndim:
-#                 raise ValueError(f"Expected {native_props.ndim}D dataset for quantity '{quantity}', "
-#                                  f"found {self.ndim}D dataset with shape {self.shape}.")
-#
-#             native_attrs = dict(name=native_props.name,
-#                                 sequence=sequence,
-#                                 unit=native_props.unit,
-#                                 mesh=native_props.mesh)
-#         except ValueError as e:
-#             warnings.warn(f"Could not resolve native properties for quantity '{quantity}' in model '{model}': {e}.")
-#             native_attrs = {**METADATA_SCHEMA, 'desc':'', 'sequence':0, 'model': str(model), }
-#
-#         attributes = {**native_attrs, **file_attrs, **input_attrs}
-#         if any(v is None for v in attributes.values()):
-#             missing_meta = ', '.join(k for k, v in attributes.items() if v is None)
-#             raise ValueError(f"Malformed metadata: {missing_meta} is missing. "
-#                              f"Provide these as keyword arguments or ensure they "
-#                              f"are present in the file attributes.")
-#
-#         return attributes
-#
-#     def _set_properties(self,
-#                         name: str,
-#                         desc: str,
-#                         unit: str,
-#                         scalar: bool,
-#                         mesh: MeshCodeType,
-#                         sequence: int,
-#                         model: ModelType,):
-#         """Store validated and type-coerced metadata on the instance.
-#
-#         Parameters
-#         ----------
-#         quantity : str
-#             Quantity name; stored as a string.
-#         sequence : int
-#             Sequence number; coerced to int.
-#         unit : str or u.Unit
-#             Unit; converted to :class:`~astropy.units.Unit` via ``u.Unit(str(unit))``.
-#         mesh : MeshCodeType
-#             Mesh stagger; normalized to ``tuple[Mesh, ...]`` via
-#             :func:`~psi_io._mesh._normalize_mesh_code`.
-#
-#         Raises
-#         ------
-#         ValueError
-#             If type coercion of any field fails.
-#         """
-#         try:
-#             self._quantity: str = str(quantity)
-#             self._sequence: int = int(sequence)
-#             self._unit: u.Unit = u.Unit(str(unit))
-#             self._mesh: tuple[Mesh, ...] = _normalize_mesh_code(mesh, self.ndim)
-#         except (ValueError, TypeError) as e:
-#             raise ValueError(f"Metadata type coercion failed: {e}") from e
-#
-#     @property
-#     @abstractmethod
-#     def shape(self) -> tuple[int, ...]:
-#         """Shape of the underlying numpy array in storage order ``(Nφ, Nθ, Nr)``."""
-#         ...
-#
-#     @property
-#     @abstractmethod
-#     def dtype(self) -> np.dtype:
-#         """NumPy dtype of the stored array."""
-#         ...
-#
-#     @property
-#     @abstractmethod
-#     def size(self) -> int:
-#         """Total number of elements in the array."""
-#         ...
-#
-#     @property
-#     @abstractmethod
-#     def nbytes(self) -> int:
-#         """Total memory occupied by the array in bytes."""
-#         ...
-#
-#     @property
-#     @abstractmethod
-#     def ndim(self) -> int:
-#         """Number of array dimensions (always 3 for data objects, 1 for scales)."""
-#         ...
-#
-#     @property
-#     @abstractmethod
-#     def attrs(self) -> dict:
-#         """HDF attributes attached to this dataset as a plain Python dict."""
-#         ...
-#
-#     @property
-#     def name(self) -> str:
-#         """Canonical lower-case quantity identifier (e.g. ``'br'``)."""
-#         return self._name
-#
-#     @property
-#     def desc(self) -> str:
-#         """Human-readable description of the quantity (e.g. ``'MAS Radial Magnetic Field
-#         Component'``)."""
-#         return self._desc
-#
-#     @property
-#     def unit(self) -> u.Unit:
-#         """Astropy unit that converts one code-unit value to physical unit."""
-#         return self._unit
-#
-#     @property
-#     def mesh(self) -> tuple[Mesh, ...]:
-#         """Normalized mesh-stagger tuple, one :class:`~psi_io._mesh.Mesh` per axis."""
-#         return self._mesh
-#
-#     @property
-#     def scalar(self) -> bool:
-#         """``True`` if the quantity is a scalar field; ``False`` for vector components."""
-#         return self._scalar
-#
-#     @property
-#     def sequence(self) -> Optional[int]:
-#         """Integer time-step sequence number, if available; otherwise ``None``."""
-#         return self._sequence
-#
-#     @property
-#     def model(self) -> ModelType:
-#         return self._model
-#
-#     @property
-#     def scales(self) -> tuple:
-#         return self._scales
-#
-#     @property
-#     @abstractmethod
-#     def data(self) -> np.ndarray:
-#         """Raw array view into the HDF dataset (not yet loaded into RAM).
-#
-#         For HDF5 objects this is an h5py :class:`~h5py.Dataset`; for HDF4 objects
-#         it is a pyhdf ``SDS`` object.  Actual data transfer occurs only when the
-#         returned object is indexed or converted to a numpy array.
-#         """
-#         ...
-#
-#     @property
-#     def is_cached(self) -> bool:
-#         """Flag indicating whether the data have been loaded into memory."""
-#         return self._values is not None
-#
-#     def load(self):
-#         """Read the full dataset into memory and cache it in ``_values``."""
-#         # TODO: ensure this works for hdf4 and hdf5
-#         self._values = self.data[...]
-#
-#     def read(self,
-#              *args,
-#              scales: bool = True,
-#              unit: Optional[str | UnitLike] = None,
-#              mesh: Optional[MeshCodeType] = None,
-#              ) -> u.Quantity | tuple[u.Quantity, ...]:
-#         """Read a slice of data, applying optional unit conversion and remeshing.
-#
-#         This base implementation handles unit conversion and remesh flag computation.
-#         Concrete subclasses call ``super().read(...)`` and then attach coordinate
-#         scales or perform additional post-processing.
-#
-#         Parameters
-#         ----------
-#         *args : int, slice, tuple, or None
-#             Index arguments in physical ``(r, θ, φ)`` axis order.  Each positional
-#             argument selects elements along one spatial axis in the order
-#             ``(r, θ, φ)``.  Accepted forms per axis:
-#
-#             - ``None`` or omitted — full axis (equivalent to ``slice(None)``).
-#             - ``int`` — single index (output retains that axis as a length-1
-#               dimension).
-#             - ``slice`` — standard Python slice.
-#             - ``(start, stop)`` or ``(start, stop, step)`` — converted to a slice.
-#             - ``Ellipsis`` — expands to ``None`` for all remaining axes.
-#
-#         unit : str or u.Unit, optional
-#             Requested output unit.  Special string aliases are accepted:
-#
-#             - ``'native'`` / ``'code'`` / ``'model'`` — return raw code-unit
-#               values (an :class:`~u.Quantity` whose unit is the custom
-#               MAS unit, e.g. ``MAS_b``).
-#             - ``'real'`` / ``'phys'`` / ``'physical'`` — decompose to CGS base
-#               unit via :func:`~psi_io._units.decompose_mas_units`.
-#             - Any other string or :class:`~astropy.units.Unit` — passed directly
-#               to :meth:`~u.Quantity.to`.
-#
-#             If ``None``, the data are returned in the native code units without
-#             conversion.
-#
-#         mesh : MeshCodeType, optional
-#             Target mesh stagger.  If provided, half-mesh axes in the stored data
-#             that are on the main mesh in *mesh* are averaged to the main mesh before
-#             return (via :func:`~psi_io._mesh.remesh_array`).  Attempting to up-sample
-#             from main to half mesh raises :class:`ValueError`.  If ``None``, no
-#             remeshing is performed.
-#
-#         Returns
-#         -------
-#         odata : u.Quantity
-#             Data array with requested unit and remeshing applied.
-#         sargs : tuple[slice, ...]
-#             Slice tuple in physical ``(r, θ, φ)`` order, suitable for applying to
-#             coordinate scale arrays.
-#         remesh : tuple[bool, ...]
-#             Boolean flags in physical ``(r, θ, φ)`` order indicating which axes were
-#             remeshed from half to main mesh.
-#         """
-#
-#         sargs = _parse_islice_args(*args, shape=self.shape[::-1])
-#         if mesh is None:
-#             remesh = repeat(False, self.ndim)
-#         else:
-#             omesh_norm = _normalize_mesh_code(mesh, self.ndim)
-#             remesh = _parse_remesh(self.mesh, omesh_norm, 'C')
-#
-#         sargs = tuple(sargs)
-#         remesh = tuple(remesh)
-#
-#         odata = _apply_units(self._read(*sargs, remesh=remesh), unit)
-#         if not scales:
-#             return odata
-#         oscales = (scale._read(sarg, remesh=rmesh) for scale, sarg, rmesh in zip(self.scales, sargs, remesh))
-#         return odata, *oscales
-#
-#     def _read(self,
-#               *sargs,
-#               remesh) -> u.Quantity:
-#         """Internal read using pre-validated slice args and remesh flags.
-#
-#         Applies *sargs* directly to the dataset via :meth:`__getitem__` (which
-#         performs the axis reversal) and then remeshes the result.  Called by
-#         :meth:`_HdfData.read` when reading coordinate scales to avoid re-parsing
-#         slice arguments.
-#
-#         Parameters
-#         ----------
-#         *sargs : slice
-#             Pre-validated slices in physical ``(r, θ, φ)`` order.
-#         remesh : tuple[bool, ...]
-#             Remesh flags in physical ``(r, θ, φ)`` order.
-#
-#         Returns
-#         -------
-#         out : u.Quantity
-#             Sliced and optionally remeshed data in code units.
-#         """
-#
-#         return _remesh_array(self[sargs], remesh=remesh, order='F') * self.unit
-
-
-# =============================================================================
-# Scale classes
-# =============================================================================
-
-# class _HdfScale(_HdfInterface, ABC):
-#     """Abstract base for HDF coordinate scale variables (r, t, p).
-#
-#     A scale object wraps a one-dimensional coordinate array stored alongside the
-#     main data in an HDF file.  It exposes the same :class:`_HdfInterface` API as
-#     data objects so that coordinate arrays can be sliced and unit-converted with the
-#     same :meth:`read` call.
-#
-#     Subclasses supply the format-specific :attr:`data` property and the array
-#     introspection properties (``shape``, ``dtype``, etc.).
-#     """
-#
-#     __slots__ = ()
-#
-#     def __init__(self,
-#                  parent,
-#                  **kwargs):
-#         """Initialize a scale from a parent data reader and dimension metadata.
-#
-#         Parameters
-#         ----------
-#         parent : _HdfData
-#             The data reader to which this scale belongs.  The scale holds a reference
-#             to *parent* so it can share the open file handle.
-#         dim_label : str
-#             Coordinate axis label — one of ``'r'``, ``'t'``, ``'p'``.  Used to look
-#             up the physical unit via :func:`get_psi_scale_properties`.
-#         data_label : str
-#             Dataset or SDS name within the HDF file where the coordinate values are
-#             stored.
-#
-#         Raises
-#         ------
-#         ValueError
-#             If the underlying coordinate dataset is not one-dimensional.
-#         """
-#         self._dataref = parent
-#         super().__init__(**kwargs)
-
-
-# class H5Scale(_HdfScale):
-#     """HDF5 coordinate scale variable backed by an h5py dimension scale dataset."""
-#
-#     __slots__ = _SCALE_SLOTS
-#
-#     @property
-#     def shape(self) -> tuple[int, ...]:
-#         """Shape of the coordinate array (always a length-1 tuple for 1-D scales)."""
-#         return self.data.shape
-#
-#     @property
-#     def dtype(self) -> np.dtype:
-#         """NumPy dtype of the coordinate array."""
-#         return self.data.dtype
-#
-#     @property
-#     def size(self) -> int:
-#         """Total number of coordinate points."""
-#         return self.data.size
-#
-#     @property
-#     def nbytes(self) -> int:
-#         """Total memory occupied by the coordinate array in bytes."""
-#         return self.data.nbytes
-#
-#     @property
-#     def ndim(self) -> int:
-#         """Number of dimensions (always 1 for coordinate scale arrays)."""
-#         return self.data.ndim
-#
-#     @property
-#     def attrs(self) -> dict:
-#         """HDF5 attributes attached to this dimension scale dataset."""
-#         return dict(self.data.attrs)
-#
-#     @property
-#     def data(self) -> np.ndarray:
-#         """h5py Dataset object for this coordinate dimension."""
-#         return self._dataref._fileref[self._datalabel]
-#
-#
-# class H4Scale(_HdfScale):
-#     """HDF4 coordinate scale variable backed by a pyhdf SDS dimension."""
-#
-#     __slots__ = _SCALE_SLOTS
-#
-#     @property
-#     def shape(self) -> tuple[int, ...]:
-#         """Shape of the coordinate array (always a length-1 tuple for 1-D scales)."""
-#         return self.data.info()[2],
-#
-#     @property
-#     def dtype(self) -> np.dtype:
-#         """NumPy dtype of the coordinate array."""
-#         return SDC_TYPE_CONVERSIONS[self.data.info()[3]]
-#
-#     @property
-#     def size(self) -> int:
-#         """Total number of coordinate points."""
-#         return int(np.prod(self.shape))
-#
-#     @property
-#     def nbytes(self) -> int:
-#         """Total memory occupied by the coordinate array in bytes."""
-#         return self.size * self.dtype.itemsize
-#
-#     @property
-#     def ndim(self) -> int:
-#         """Number of dimensions (always 1 for coordinate scale arrays)."""
-#         return self.data.info()[1]
-#
-#     @property
-#     def attrs(self) -> dict:
-#         """HDF4 attributes attached to this SDS dimension."""
-#         return self.data.attributes()
-#
-#     @property
-#     def data(self) -> np.ndarray:
-#         """pyhdf SDS object for this coordinate dimension."""
-#         return self._dataref._fileref.select(self._datalabel)
-
-
-# =============================================================================
-# Format mixins (HDF5 and HDF4 file I/O + raw array access)
-# =============================================================================
-
-# class _H5DataMixin:
-#     """Mixin providing HDF5 file I/O and raw array access via h5py.
-#
-#     Concrete data classes inherit from both this mixin and :class:`_HdfData`.
-#     The mixin supplies the ``_HDFN = 'h5'`` class variable, the
-#     :meth:`read_file` class method, and properties that delegate to the open
-#     :class:`h5py.File` handle.
-#     """
-#
-#     __slots__ = ()
-#     _HDFN = 5
-#
-#     @classmethod
-#     def read_file(cls, ifile: PathLike):
-#         """Open an HDF5 file for reading and return the :class:`h5py.File` handle."""
-#         return h5.File(ifile, 'r')
-#
-#     def open(self):
-#         """Re-open the HDF5 file if it was previously closed.  Returns ``self``."""
-#         if not self._fileref:
-#             self._fileref = self.read_file(self._filepath)
-#         return self
-#
-#     def close(self):
-#         """Close the HDF5 file handle.  Returns ``self``."""
-#         if self._fileref is not None:
-#             self._fileref.close()
-#             self._fileref = None
-#         return self
-#
-#     def delete(self):
-#         """Close the file handle during garbage collection (called by ``__del__``)."""
-#         fileref = getattr(self, '_fileref', None)
-#         if fileref is not None:
-#             fileref.close()
-#             self._fileref = None
-#
-#     @property
-#     def shape(self) -> tuple[int, ...]:
-#         """Array shape in storage order ``(Nφ, Nθ, Nr)``."""
-#         return self.data.shape
-#
-#     @property
-#     def dtype(self) -> np.dtype:
-#         """NumPy dtype of the stored array."""
-#         return self.data.dtype
-#
-#     @property
-#     def size(self) -> int:
-#         """Total number of elements in the array."""
-#         return self.data.size
-#
-#     @property
-#     def nbytes(self) -> int:
-#         """Total memory occupied by the array in bytes."""
-#         return self.data.nbytes
-#
-#     @property
-#     def ndim(self) -> int:
-#         """Number of array dimensions."""
-#         return self.data.ndim
-#
-#     @property
-#     def attrs(self) -> dict:
-#         """HDF5 attributes attached to this dataset as a plain Python dict."""
-#         return dict(self.data.attrs)
-#
-#     @property
-#     def data(self) -> np.ndarray:
-#         """h5py Dataset object providing lazy access to the array."""
-#         return self._fileref[self._datalabel]
-#
-#     def _set_scales(self) -> tuple:
-#         """Construct :class:`H5Scale` objects from h5py dimension scales."""
-#         return Scales(*(H5Scale(self,
-#                                 dataset_id=label.label,
-#                                 name=scale,
-#                                 model='scale')
-#                         for scale, label in zip('rtp', self.data.dims)))
-#
-#
-# class _H4DataMixin:
-#     """Mixin providing HDF4 file I/O and raw array access via pyhdf.
-#
-#     Analogous to :class:`_H5DataMixin` but for HDF4 files.  Raises an informative
-#     error at import time if pyhdf is not installed, via :func:`_except_no_pyhdf`.
-#     """
-#
-#     __slots__ = ()
-#     _HDFN = 4
-#
-#     @classmethod
-#     def read_file(cls, ifile: PathLike):
-#         """Open an HDF4 file for reading and return the pyhdf ``SD`` object."""
-#         _except_no_pyhdf()
-#         return h4.SD(str(ifile), h4.SDC.READ)
-#
-#     def open(self):
-#         """Re-open the HDF4 file if it was previously closed.  Returns ``self``."""
-#         if not self._fileref:
-#             self._fileref = self.read_file(self._filepath)
-#         return self
-#
-#     def close(self):
-#         """Close the HDF4 file handle via ``end()``."""
-#         if self._fileref is not None:
-#             self._fileref.end()
-#             self._fileref = None
-#
-#     def delete(self):
-#         """Close the HDF4 file handle during garbage collection."""
-#         fileref = getattr(self, '_fileref', None)
-#         if fileref is not None:
-#             fileref.end()
-#             self._fileref = None
-#
-#     @property
-#     def shape(self) -> tuple[int, ...]:
-#         """Array shape in storage order ``(Nφ, Nθ, Nr)``."""
-#         return tuple(self.data.info()[2])
-#
-#     @property
-#     def dtype(self) -> np.dtype:
-#         """NumPy dtype of the stored array."""
-#         return SDC_TYPE_CONVERSIONS[self.data.info()[3]]
-#
-#     @property
-#     def size(self) -> int:
-#         """Total number of elements in the array."""
-#         return int(np.prod(self.shape))
-#
-#     @property
-#     def nbytes(self) -> int:
-#         """Total memory occupied by the array in bytes."""
-#         return self.size * self.dtype.itemsize
-#
-#     @property
-#     def ndim(self) -> int:
-#         """Number of array dimensions."""
-#         return self.data.info()[1]
-#
-#     @property
-#     def attrs(self) -> dict:
-#         """HDF4 attributes attached to this SDS dataset as a plain Python dict."""
-#         return self.data.attributes()
-#
-#     @property
-#     def data(self) -> np.ndarray:
-#         """pyhdf SDS object providing lazy access to the array."""
-#         return self._fileref.select(self._datalabel)
-#
-#     def _set_scales(self) -> tuple:
-#         """Construct :class:`H4Scale` objects from pyhdf SDS dimensions.
-#
-#         HDF4 dimension order is reversed relative to HDF5 (Fortran vs. C order),
-#         so the dimension list is reversed before zipping with ``'rtp'``.
-#         """
-#         sds = self.data
-#         dims = list(reversed(list(sds.dimensions(full=1).items())))
-#         return Scales(*tuple(H4Scale(self,
-#                                      dataset_id=k_,
-#                                      name=scale,
-#                                      model='scale')
-#                              for scale, (k_, v_) in zip('rtp', dims)))
-
-
-# =============================================================================
-# Abstract data base
-# =============================================================================
-
-# class _HdfData(_HdfInterface, ABC):
-#     """Abstract base for a single PSI HDF dataset (data fields, not coordinate scales).
-#
-#     Handles file opening, metadata resolution, and scale construction.  Concrete
-#     subclasses are produced by combining this class with a format mixin
-#     (:class:`_H5DataMixin` or :class:`_H4DataMixin`) to form :class:`H5Data` and
-#     :class:`H4Data`.  Use :func:`PsiData` rather than instantiating these directly.
-#     """
-#
-#     __slots__ = ()
-#
-#     def __init__(self,
-#                  ifile: PathLike, /,
-#                  dataset_id: Optional[str] = None,
-#                  **kwargs):
-#         """Open an HDF file and parse metadata for one PSI output quantity.
-#
-#         Parameters
-#         ----------
-#         ifile : PathLike
-#             Path to the HDF4 or HDF5 file.  Must exist and have the extension
-#             expected by the format mixin (``'.h5'`` or ``'.hdf'``).
-#         dataset_id : str, optional
-#             Name of the dataset (SDS in HDF4, group key in HDF5) to open.  Defaults
-#             to the PSI standard dataset identifier for this format
-#             (:data:`~psi_io.psi_io.PSI_DATA_ID`).
-#         **kwargs
-#             Optional metadata overrides.  Accepted keys (from
-#             :data:`METADATA_SCHEMA`): ``'quantity'``, ``'sequence'``, ``'unit'``,
-#             ``'scalar'``, ``'mesh'``.  Caller-supplied values take precedence over
-#             both file attributes and filename inference.
-#
-#         Raises
-#         ------
-#         FileNotFoundError
-#             If *ifile* does not exist on disk.
-#         ValueError
-#             If *ifile* has the wrong extension for this format mixin, if the
-#             dataset is not three-dimensional, or if any required metadata field
-#             cannot be resolved.
-#         """
-#         ifile = Path(ifile)
-#         hdfv = f'h{self._HDFN}'
-#         if not ifile.is_file():
-#             raise FileNotFoundError(f"File '{ifile}' does not exist.")
-#         if ifile.suffix != _HDF_EXT_MAPPING[hdfv]:
-#             raise ValueError(f"File '{ifile}' does not have the correct extension for "
-#                              f"{self._HDFN} files (expected '{_HDF_EXT_MAPPING[hdfv]}' extension).")
-#
-#         self._filepath: Path = ifile
-#         self._fileref = self.read_file(ifile)
-#         super().__init__(dataset_id=dataset_id or PSI_DATA_ID[hdfv], **kwargs)
-#         self._scales = self._set_scales()
-#
-#     def __enter__(self):
-#         """Open (or re-open) the file and return ``self`` for use as a context manager."""
-#         self.open()
-#         return self
-#
-#     def __exit__(self, *args):
-#         """Close the file handle when exiting the context manager."""
-#         self.close()
-#
-#     def __del__(self):
-#         """Close the file handle when the object is garbage-collected."""
-#         self.delete()
-#
-#     @classmethod
-#     @abstractmethod
-#     def read_file(cls, ifile: PathLike):
-#         """Open the HDF file at *ifile* and return the format-specific file handle."""
-#         ...
-#
-#     @abstractmethod
-#     def open(self):
-#         """Re-open the file handle if it was previously closed."""
-#         ...
-#
-#     @abstractmethod
-#     def close(self):
-#         """Close the open file handle and set the internal reference to ``None``."""
-#         ...
-#
-#     @abstractmethod
-#     def delete(self):
-#         """Release the file handle during garbage collection (called by ``__del__``)."""
-#         ...
-#
-#     @abstractmethod
-#     def _set_scales(self) -> tuple:
-#         """Construct and return the coordinate scale objects for this dataset."""
-#         ...
-#
-#     def vslice(self,
-#                *args,
-#                scales: bool = True,
-#                unit: Optional[str | UnitLike] = None,
-#                mesh: Optional[MeshCodeType] = None,
-#                bounds_error: bool = True,
-#                fill_value: Optional[QuantityLike] = None,
-#                ) -> u.Quantity | tuple[u.Quantity, ...]:
-#         """Read a slice of data by physical coordinate value with optional interpolation.
-#
-#         Each positional argument may be a physical coordinate value
-#         (:class:`~u.Quantity` or bare scalar), in which case the
-#         dataset is reduced to a 2-element window and linearly interpolated to that
-#         value.  Index-space arguments (``slice``, ``int``, ``None``, ``Ellipsis``)
-#         are also accepted and passed through without interpolation, making this
-#         method a superset of :meth:`read`.
-#
-#         Parameters
-#         ----------
-#         *args : u.Quantity, scalar, int, slice, tuple, None, or Ellipsis
-#             One argument per spatial axis in physical ``(r, θ, φ)`` order.
-#             u.Quantity or bare scalar → value-space interpolation.
-#             All other types → index-space slice (see :meth:`read`).
-#         scales : bool, optional
-#             If ``True`` (default), also return the corresponding coordinate value
-#             for each axis.  Value-interpolated axes return the interpolation target
-#             as a length-1 :class:`~astropy.units.Quantity`; index-space axes return the full slice.
-#         unit : str or u.Unit, optional
-#             Output unit; see :meth:`read` for accepted aliases and formats.
-#         mesh : MeshCodeType, optional
-#             Target mesh stagger.  Remeshing is skipped for axes that are being
-#             value-interpolated (interpolation already collapses the half-mesh
-#             window to a single value).
-#         bounds_error : bool, optional
-#             If ``True`` (default), raise :class:`ValueError` when a value argument
-#             lies outside its coordinate scale range.
-#         fill_value : QuantityLike or None, optional
-#             Value substituted when a coordinate value falls outside the 2-element
-#             interpolation window and *bounds_error* is ``False``.  ``None``
-#             silently extrapolates.
-#
-#         Returns
-#         -------
-#         odata : u.Quantity
-#             Sliced and interpolated data in the requested unit.
-#         r_scale, t_scale, p_scale : u.Quantity
-#             Coordinate values for each axis (only if ``scales=True``).
-#             Value-interpolated axes return the interpolation target as a
-#             length-1 array; index-space axes return the full coordinate slice.
-#
-#         Raises
-#         ------
-#         ValueError
-#             If *bounds_error* is ``True`` and any value argument is out of range,
-#             or if a value axis has no corresponding coordinate scale.
-#         """
-#         vslice_args = tuple(_parse_vslice_args(*args, scales=self.scales, bounds_error=bounds_error))
-#         slice_values, sargs = zip(*vslice_args)
-#
-#         if mesh is None:
-#             remesh = repeat(False, self.ndim)
-#         else:
-#             omesh_norm = _normalize_mesh_code(mesh, self.ndim)
-#             remesh = _parse_remesh(self.mesh, omesh_norm, 'C')
-#         remesh = tuple(remesh)
-#         remesh_xand_svalue = tuple(rm and sv is None for rm, sv in zip(remesh, slice_values))
-#
-#         pre_slice_data = _apply_units(self._read(*sargs, remesh=remesh_xand_svalue), unit)
-#
-#         pre_slice_scales = tuple(scale[sarg] * scale.unit if sv is not None else None
-#                              for scale, sarg, sv in zip(self.scales, sargs, slice_values))
-#
-#         sliced_data = _slice_array(pre_slice_data, slice_values, pre_slice_scales, fill_value)
-#         if not scales:
-#             return sliced_data
-#         sliced_scales = tuple(scale._read(sarg, remesh=rmesh) if sv is None else np.atleast_1d(sv)
-#                                  for scale, sarg, sv, rmesh in zip(self.scales, sargs, slice_values, remesh))
-#         return sliced_data, *sliced_scales
-
-
-# =============================================================================
-# Concrete data classes
-# =============================================================================
-
-# class H5Data(_H5DataMixin, _HdfData):
-#     """HDF5-backed MAS model data reader.
-#
-#     Combines :class:`_H5DataMixin` (h5py file I/O) with :class:`_HdfData`
-#     (MAS metadata and :meth:`read` logic).  Use :func:`PsiData` to instantiate
-#     rather than calling this class directly.
-#     """
-#
-#     __slots__ = _DATA_SLOTS
-#
-#
-# class H4Data(_H4DataMixin, _HdfData):
-#     """HDF4-backed MAS model data reader.
-#
-#     Combines :class:`_H4DataMixin` (pyhdf file I/O) with :class:`_HdfData`
-#     (MAS metadata and :meth:`read` logic).  Requires the optional ``pyhdf``
-#     dependency.  Use :func:`PsiData` to instantiate rather than calling this class
-#     directly.
-#     """
-#
-#     __slots__ = _DATA_SLOTS
-
-# =============================================================================
-# Private helpers
-# =============================================================================
 
 
 def PsiData(ifile: PathLike, /,
