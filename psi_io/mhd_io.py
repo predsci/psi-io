@@ -33,17 +33,21 @@ When a read or vslice call covers the *entire* dataset with no spatial
 restrictions, the result is cached on the reader object.  Subsequent full-array
 calls return the cached copy without a second disk read.  Partial reads — any
 call with at least one non-full-axis argument — are never cached.  The cache
-state is exposed via the ``is_cached`` property.
+state is exposed via the ``data_cached`` and ``interp_cached`` properties.
 
 .. rubric:: Attributes
 
 The following attributes are available on every object returned by
 :func:`PsiData`:
 
-``quantity`` : :class:`str`
+``name`` : :class:`str`
     Canonical lower-case quantity identifier (e.g. ``'br'``, ``'vr'``,
     ``'t'``).  Resolved from the filename stem, HDF file attributes, or the
-    ``quantity`` keyword argument passed to :func:`PsiData`.
+    ``name`` keyword argument passed to :func:`PsiData`.
+
+``desc`` : :class:`str`
+    Human-readable description of the physical quantity
+    (e.g. ``'MAS Magnetic Field (Radial Component)'``).
 
 ``sequence`` : :class:`int`
     Time-step sequence number extracted from the filename
@@ -56,27 +60,16 @@ The following attributes are available on every object returned by
     magnetic field, :data:`~psi_io._units.MAS_v` ≈ 481 km s⁻¹ for velocity).
     For POT3D the default is dimensionless — see the :func:`PsiData` warning.
 
-``mesh`` : :class:`tuple` of :class:`~psi_io._mesh.Mesh`
+``mesh`` : :class:`~psi_io._mesh.Mesh`
     Yee-grid stagger position for each spatial axis in physical ``(r, θ, φ)``
-    order.  Each element is either :attr:`~psi_io._mesh.Mesh.HALF` (offset by
-    half a cell spacing) or :attr:`~psi_io._mesh.Mesh.MAIN` (cell-centred).
-    The integer encoding and per-quantity stagger codes are defined in
-    :mod:`psi_io._mesh`; the canonical default for each quantity is stored in
-    its :class:`~psi_io._models.Props` descriptor (see :mod:`psi_io._models`).
+    order.  Each element is either half-mesh (offset by half a cell spacing)
+    or main-mesh (cell-centred).  The integer encoding and per-quantity stagger
+    codes are defined in :mod:`psi_io._mesh`; the canonical default for each
+    quantity is stored in its :class:`~psi_io._models.ModelProps` descriptor.
 
-``props`` : :class:`~psi_io._models.Props`
-    Complete property descriptor for the quantity, bundling its name,
-    description, unit, and mesh code.  Looked up from the appropriate
-    quantity-properties mapping in :mod:`psi_io._models`.
-
-``description`` : :class:`str`
-    Human-readable description of the physical quantity
-    (e.g. ``'MAS Magnetic Field (Radial Component)'``).  Derived from
-    :attr:`~psi_io._models.Props.desc`.
-
-``scales`` : ``Scales(r, t, p)``
-    Named tuple of coordinate scale readers.  Each element wraps the
-    one-dimensional coordinate array stored in the HDF file.  The radial
+``scales`` : named tuple of scale readers
+    Named tuple of coordinate scale readers ``(r, t, p)``.  Each element wraps
+    the one-dimensional coordinate array stored in the HDF file.  The radial
     coordinate uses :data:`~psi_io._units.PSI_rsun` (solar radii); the
     co-latitude and longitude coordinates use
     :data:`~psi_io._units.PSI_angle` (radians).  Each scale reader exposes
@@ -104,9 +97,13 @@ The following attributes are available on every object returned by
 ``attrs`` : :class:`dict`
     HDF file-level attributes as a plain Python dictionary.
 
-``is_cached`` : :class:`bool`
-    ``True`` once a full-array read has populated the in-memory cache;
+``data_cached`` : :class:`bool`
+    ``True`` once a full-array read has populated the in-memory data cache;
     ``False`` otherwise.
+
+``interp_cached`` : :class:`bool`
+    ``True`` once a :class:`~scipy.interpolate.RegularGridInterpolator` has been
+    built and stored in memory; ``False`` otherwise.
 
 .. rubric:: Reading Data — ``read``
 
@@ -276,11 +273,11 @@ Inspect metadata without loading data:
 .. code-block:: python
 
     reader = PsiData('rho001001.h5')
-    reader.quantity      # 'rho'
-    reader.description   # 'MAS Density'
+    reader.name          # 'rho'
+    reader.desc          # 'MAS Density'
     reader.unit          # MAS_n
-    reader.mesh          # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
-    reader.is_cached     # False
+    reader.mesh          # Mesh(HALF, HALF, HALF)
+    reader.data_cached   # False
     reader.shape         # (Nφ, Nθ, Nr) — numpy storage order
 """
 
@@ -335,10 +332,36 @@ from psi_io.psi_io import (PathLike,
                            _except_no_scipy, )
 
 class MetaDataWarning(UserWarning):
-    ...
+    """Warning raised when HDF metadata is missing, ambiguous, or inconsistent.
+
+    Emitted by :meth:`_HdfArray.validate_metadata` and its overrides when a
+    required attribute (quantity name, unit, mesh code) cannot be resolved
+    unambiguously from the file and keyword arguments.
+
+    Examples
+    --------
+    >>> import warnings
+    >>> from psi_io.mhd_io import MetaDataWarning
+    >>> issubclass(MetaDataWarning, UserWarning)
+    True
+    """
+
 
 class CacheWarning(UserWarning):
-    ...
+    """Warning raised when a cache operation is ignored or conflicts with the cache mode.
+
+    Emitted by :meth:`_HdfArray.load` when caching is disabled (``cache=None``),
+    and by :meth:`_HdfArray.clear` when the cache mode is ``'eager'`` and
+    ``clear()`` is called explicitly.
+
+    Examples
+    --------
+    >>> import warnings
+    >>> from psi_io.mhd_io import CacheWarning
+    >>> issubclass(CacheWarning, UserWarning)
+    True
+    """
+
 
 HdfVersionType = Literal[4, 5]
 """Literal type alias for the two supported HDF file format versions.
@@ -375,17 +398,71 @@ converted to physical CGS units via :func:`~psi_io._units.decompose_mas_units`.
 """
 
 _BASE_SLOTS = ('_ref', '_id', '_cache', '_name', '_desc', '_unit', '_scalar', '_mesh', '_order', '_vcache',)
+"""Slot names shared by all :class:`_HdfArray` subclasses."""
+
 _SCALE_SLOTS = _BASE_SLOTS
+"""Slot names for :class:`_HdfScale` subclasses (identical to :data:`_BASE_SLOTS`)."""
+
 _DATA_SLOTS = _BASE_SLOTS + ('_filepath', '_sequence', '_model', '_scales', '_icache')
+"""Slot names for :class:`_HdfData` subclasses; extends :data:`_BASE_SLOTS` with data-reader fields."""
 
 
 METADATA_SCHEMA = dict.fromkeys(['name', 'desc', 'unit', 'scalar', 'mesh', 'order', 'sequence', 'model', 'scales'])
-# TODO: docstring
+"""Template dictionary of recognized HDF dataset-level metadata keys.
+
+Keys that appear in an HDF dataset's attribute mapping and also appear here are
+extracted and merged with keyword arguments during :meth:`_HdfData._parse_inputs`.
+The value for each key is always ``None`` in this template; it is used only for
+membership testing.
+
+Keys
+----
+name : str
+    Canonical lower-case quantity identifier (e.g. ``'br'``).
+desc : str
+    Human-readable quantity description.
+unit : str
+    String representation of the code-to-physical unit.
+scalar : bool
+    Whether the quantity is a scalar (``True``) or vector component (``False``).
+mesh : int
+    Integer mesh stagger code.
+order : str
+    Array memory layout (``'F'`` or ``'C'``).
+sequence : int
+    Time-step sequence number.
+model : str
+    PSI model type (``'mas'`` or ``'pot3d'``).
+scales : sequence of str
+    Names of the coordinate scale axes.
+"""
 
 SCALES_SCHEMA = dict.fromkeys(['name', 'desc', 'unit',])
-# TODO: docstring
+"""Template dictionary of recognized HDF scale-dataset metadata keys.
+
+Used analogously to :data:`METADATA_SCHEMA` for the one-dimensional coordinate
+scale arrays.
+
+Keys
+----
+name : str
+    Coordinate axis name (``'r'``, ``'t'``, or ``'p'``).
+desc : str
+    Human-readable axis description.
+unit : str
+    String representation of the coordinate unit.
+"""
 
 CacheType = Optional[Literal['lazy', 'eager']]
+"""Type alias for the three valid cache modes.
+
+``'lazy'``
+    Cache the full data array on the first full-array read.
+``'eager'``
+    Cache immediately at construction time via :meth:`_HdfArray.load`.
+``None``
+    Never cache; every read goes to disk.
+"""
 
 
 def _interpolate_dim(arr: QuantityLike,
@@ -395,10 +472,39 @@ def _interpolate_dim(arr: QuantityLike,
                      ) -> QuantityLike:
     """Linearly interpolate *arr* along *axis* to *value*, collapsing that axis to size 1.
 
-    Both *value* and *scale* must carry the same unit (or both be dimensionless).
-    The result is a fill array when *value* is outside the 2-element *scale* window
-    and *fill_value* is not ``None``; otherwise a linear interpolation is performed.
-    Extrapolation occurs silently when *fill_value* is ``None``.
+    Both *value* and *scale* must carry compatible units.  The interpolated
+    result retains all other axes unchanged; the axis dimension is reduced from
+    2 to 1.
+
+    Parameters
+    ----------
+    arr : QuantityLike
+        Data array of shape ``(..., 2, ...)`` where ``2`` is along *axis*.
+    axis : int
+        Index of the axis to interpolate and collapse.
+    value : QuantityLike
+        Target coordinate value.  Must have the same unit as *scale*.
+    scale : QuantityLike
+        Two-element coordinate array bounding *value*.
+
+    Returns
+    -------
+    out : QuantityLike
+        Interpolated array with the *axis* dimension reduced to 1.
+
+    Raises
+    ------
+    ValueError
+        If ``arr.shape[axis] != 2`` or ``len(scale) != 2``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import astropy.units as u
+    >>> arr = np.array([[1.0, 2.0]]) * u.Gauss
+    >>> scale = np.array([0.0, 1.0]) * u.R_sun
+    >>> _interpolate_dim(arr, axis=1, value=0.5 * u.R_sun, scale=scale)
+    <Quantity [[1.5]] G>
     """
     if arr.shape[axis] != 2 or len(scale) != 2:
         raise ValueError("Interpolation is only supported for 2-element arrays and scales.")
@@ -414,13 +520,40 @@ def _slice_array(data: QuantityLike,
                  scales: Sequence[Optional[QuantityLike]],
                  values: Sequence[Optional[QuantityLike]],
                  order: ArrayOrdering = 'F') -> QuantityLike:
-    """Interpolate *data* to physical values along each axis that has a non-``None`` entry.
+    """Interpolate *data* to physical coordinate values along each non-``None`` axis.
 
     Iterates over axes in storage order (reversed from physical order when
     ``order='F'``) and calls :func:`_interpolate_dim` for each axis whose
     entry in *values* is not ``None``.  Axes with ``None`` entries are left
-    unchanged.  *scales* must be in the same order as *values* and provide the
-    two-element coordinate window for each interpolated axis.
+    unchanged.
+
+    Parameters
+    ----------
+    data : QuantityLike
+        Data array to interpolate.
+    scales : sequence of QuantityLike or None
+        Two-element coordinate windows for each axis, in the same order as
+        *values*.  ``None`` entries correspond to axes that are not interpolated.
+    values : sequence of QuantityLike or None
+        Target coordinate values for each axis.  ``None`` means skip that axis.
+    order : {'F', 'C'}, optional
+        Array memory layout.  ``'F'`` reverses the axis iteration order so that
+        axis 0 corresponds to the last physical axis.  Default is ``'F'``.
+
+    Returns
+    -------
+    out : QuantityLike
+        *data* with each non-``None`` axis collapsed to size 1 by interpolation.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import astropy.units as u
+    >>> data = np.ones((2, 3)) * u.Gauss
+    >>> scale = np.array([0.0, 1.0]) * u.R_sun
+    >>> result = _slice_array(data, [scale, None], [0.5 * u.R_sun, None], order='C')
+    >>> result.shape
+    (1, 3)
     """
     if order == 'F':
         values, scales = reversed(values), reversed(scales)
@@ -446,6 +579,20 @@ def _expand_args(*args, ndim: int) -> tuple:
     -------
     out : tuple
         Length-*ndim* tuple of dimension arguments.
+
+    Raises
+    ------
+    ValueError
+        If the number of explicit arguments (excluding ``Ellipsis``) exceeds *ndim*.
+
+    Examples
+    --------
+    >>> _expand_args(0, 1, ndim=3)
+    (0, 1, None)
+    >>> _expand_args(..., 5, ndim=3)
+    (None, None, 5)
+    >>> _expand_args(ndim=2)
+    (None, None)
     """
     if Ellipsis in args:
         n_missing = ndim - (len(args) - 1)
@@ -459,6 +606,29 @@ def _expand_args(*args, ndim: int) -> tuple:
 
 
 def _expand_quantity_filter(quantities: Iterable[str]) -> set[str]:
+    """Expand shorthand quantity group names to a flat set of canonical identifiers.
+
+    The single-letter codes ``'b'``, ``'j'``, and ``'v'`` each expand to the
+    three spherical-component variants (e.g. ``'b'`` → ``{'br', 'bt', 'bp'}``).
+    All other strings are passed through unchanged after lowercasing.
+
+    Parameters
+    ----------
+    quantities : iterable of str
+        Quantity identifiers or group codes to expand.
+
+    Returns
+    -------
+    out : set[str]
+        Flat set of lower-case canonical quantity names.
+
+    Examples
+    --------
+    >>> sorted(_expand_quantity_filter(['b', 'rho']))
+    ['bp', 'br', 'bt', 'rho']
+    >>> sorted(_expand_quantity_filter(['vr', 'V']))
+    ['vp', 'vr', 'vt']
+    """
     out: set[str] = set()
     for q in quantities:
         q = q.lower()
@@ -472,6 +642,37 @@ def _expand_quantity_filter(quantities: Iterable[str]) -> set[str]:
 def _parse_islice_args(*args,
                        shape: tuple[int, ...],
                        remesh: tuple[bool, ...],):
+    """Validate and normalize index-space slice arguments for each array axis.
+
+    Converts each element of *args* to a :class:`slice` and adjusts the stop
+    index when the axis needs remeshing (to include the extra element required
+    for averaging).
+
+    Parameters
+    ----------
+    *args : None | int | slice | tuple
+        One argument per axis in physical ``(r, t, p)`` order.  Passed through
+        :func:`_cast_to_slice`.
+    shape : tuple[int, ...]
+        Array shape in physical order.
+    remesh : tuple[bool, ...]
+        Per-axis remesh flags from :meth:`Mesh.__rshift__`.
+
+    Yields
+    ------
+    out : slice
+        Validated slice for each axis.
+
+    Raises
+    ------
+    ValueError
+        If a slice yields an empty dimension or uses a non-unit step.
+
+    Examples
+    --------
+    >>> list(_parse_islice_args(None, 1, shape=(10, 5), remesh=(False, False)))
+    [slice(None, None, None), slice(1, 2, None)]
+    """
     for arg, size, rmesh in zip(args, shape, remesh):
         slice_ = _cast_to_slice(arg)
         if rmesh and slice_.stop is not None:
@@ -487,9 +688,47 @@ def _parse_islice_args(*args,
 def _parse_vslice_args(*args,
                        scales: tuple[int, ...],
                        remesh: tuple[bool, ...]):
+    """Parse value-space slice arguments, returning coordinate values and index slices.
+
+    For each axis argument, determines whether it is an index-space argument
+    (``None``, ``int``, ``slice``, tuple) or a physical-coordinate argument
+    (:class:`~astropy.units.Quantity` or bare scalar).  Physical values are
+    converted to the scale unit, ``NaN`` is treated as an open bound, and the
+    surrounding index window is computed via :func:`numpy.searchsorted`.
+
+    Parameters
+    ----------
+    *args : None | int | slice | tuple | QuantityLike
+        One argument per axis in physical ``(r, t, p)`` order.
+    scales : tuple
+        Scale reader objects for each axis; used for unit conversion and
+        coordinate lookup.
+    remesh : tuple[bool, ...]
+        Per-axis remesh flags from :meth:`Mesh.__rshift__`.
+
+    Yields
+    ------
+    value : tuple[QuantityLike | None, QuantityLike | None]
+        Target coordinate value(s) for interpolation, or ``(None, None)`` for
+        index-space axes.
+    slice_ : slice
+        Index window into the axis that brackets the target coordinate.
+
+    Raises
+    ------
+    ValueError
+        If a physical-coordinate argument has more than 2 elements, or if it
+        yields an empty index window.
+
+    Examples
+    --------
+    >>> # Index-space arguments pass through as (None, None) / full slice
+    >>> list(_parse_vslice_args(None, scales=[None], remesh=[False]))
+    [((None, None), slice(None, None, None))]
+    """
     for arg, scale, rmesh in zip(args, scales, remesh):
-        if arg is None:
-            yield (None, None), slice(None)
+        if arg is None or isinstance(arg, (slice, int)):
+            yield (None, None), _cast_to_slice(arg)
             continue
         arg = u.Quantity(arg, unit=scale.unit, ndmin=1)
         if arg.size not in {1, 2}:
@@ -531,6 +770,20 @@ def _apply_units(data: u.Quantity,
     -------
     out : u.Quantity
         *data* in the requested unit.
+
+    Raises
+    ------
+    astropy.units.UnitConversionError
+        If *unit* is not compatible with the unit of *data*.
+
+    Examples
+    --------
+    >>> import astropy.units as u
+    >>> data = 1.0 * u.Gauss
+    >>> _apply_units(data, None) is data
+    True
+    >>> _apply_units(data, 'native').unit
+    Unit("G")
     """
     if unit is None:
         return data
@@ -562,6 +815,17 @@ def _cast_to_slice(input: None | int | slice | Sequence) -> slice:
     ------
     TypeError
         If *input* is not one of the recognized types.
+
+    Examples
+    --------
+    >>> _cast_to_slice(None)
+    slice(None, None, None)
+    >>> _cast_to_slice(3)
+    slice(3, 4, None)
+    >>> _cast_to_slice((2, 8))
+    slice(2, 8, None)
+    >>> _cast_to_slice(slice(1, 5, 2))
+    slice(1, 5, 2)
     """
     if input is None:
         return slice(None)
@@ -579,6 +843,31 @@ def _cast_to_slice(input: None | int | slice | Sequence) -> slice:
 # =============================================================================
 
 class _HdfArray(ABC):
+    """Abstract base class for a single HDF dataset with optional caching.
+
+    Provides the common interface for both data arrays (:class:`_HdfData`) and
+    coordinate scale arrays (:class:`_HdfScale`).  Concrete subclasses supply
+    the HDF-version-specific implementations of the abstract properties
+    (:attr:`_shape`, :attr:`dtype`, :attr:`size`, :attr:`nbytes`, :attr:`ndim`,
+    :attr:`attrs`) and the :meth:`_dataset` factory.
+
+    Subclasses must not be instantiated directly.  Use :func:`PsiData` or the
+    concrete classes :class:`H4Data`, :class:`H5Data`, :class:`H4Scale`, and
+    :class:`H5Scale`.
+
+    Attributes
+    ----------
+    _vcache : np.ndarray | None
+        In-memory copy of the full dataset array, or ``None`` when not cached.
+    _cache : CacheType
+        Active cache mode: ``'lazy'``, ``'eager'``, or ``None``.
+
+    See Also
+    --------
+    _HdfData : Subclass that adds interpolation and scale management.
+    _HdfScale : Subclass for one-dimensional coordinate arrays.
+    PsiData : Public factory function.
+    """
 
     __slots__ = ()
 
@@ -588,6 +877,25 @@ class _HdfArray(ABC):
                  *args,
                  cache: CacheType = 'lazy',
                  **kwargs):
+        """Initialize the array with metadata and optionally load data into cache.
+
+        Parameters
+        ----------
+        *args : object
+            Passed to :meth:`_parse_inputs` by subclass constructors.
+        cache : CacheType, optional
+            Cache mode.  ``'lazy'`` caches on first full read, ``'eager'`` loads
+            immediately, ``None`` disables caching entirely.  Default is
+            ``'lazy'``.
+        **kwargs : object
+            Metadata keyword arguments forwarded to :meth:`_parse_inputs`.
+
+        Raises
+        ------
+        ValueError
+            If *cache* is not one of ``'lazy'``, ``'eager'``, or ``None``, or if
+            metadata cannot be resolved from *kwargs*.
+        """
         self._vcache = None
         self._cache = cache and cache.lower()
         if self._cache not in {'lazy', 'eager', None}:
@@ -604,9 +912,34 @@ class _HdfArray(ABC):
 
 
     def __str__(self):
+        """Return the quantity name as a string.
+
+        Returns
+        -------
+        out : str
+            The :attr:`name` of the dataset (e.g. ``'br'``).
+
+        Examples
+        --------
+        >>> str(reader)  # doctest: +SKIP
+        'br'
+        """
         return f"{self.name}"
 
     def __repr__(self):
+        """Return a detailed string representation including key metadata.
+
+        Returns
+        -------
+        out : str
+            String of the form
+            ``ClassName(name=... [...], order=..., shape=..., unit=..., mesh=..., cached=...)``.
+
+        Examples
+        --------
+        >>> repr(reader)  # doctest: +SKIP
+        "H5Data(name='br' [...], order='F', shape=(...), unit=..., mesh=..., cached=False)"
+        """
         return (f"{self.__class__.__name__}("
                 f"name={self.name!r} [{self.desc}], "
                 f"order={self.order!r}, "
@@ -616,6 +949,28 @@ class _HdfArray(ABC):
                 f"cached={self.cached!r})")
 
     def __getitem__(self, args: str | int | slice | tuple):
+        """Index into the dataset, returning from cache when available.
+
+        When *args* is a string, delegates to :meth:`_dataset` (attribute
+        lookup on the HDF file object).  Otherwise applies the index tuple to
+        the cached array if available, or reads directly from the HDF file and
+        caches the result for full-array reads.
+
+        Parameters
+        ----------
+        args : str | int | slice | tuple
+            Index expression.  String values select HDF sub-datasets by name.
+
+        Returns
+        -------
+        out : np.ndarray
+            Indexed data.
+
+        Examples
+        --------
+        >>> reader[0]        # first element along axis 0  # doctest: +SKIP
+        >>> reader[:]        # full array (may populate cache)  # doctest: +SKIP
+        """
         if isinstance(args, str):
             return self._dataset(args)
 
@@ -632,84 +987,217 @@ class _HdfArray(ABC):
             return odata
 
     def select(self, id_: str) -> Sequence:
+        """Return the HDF dataset or sub-dataset identified by *id_*.
+
+        Parameters
+        ----------
+        id_ : str
+            Dataset key within the open HDF file.
+
+        Returns
+        -------
+        out : Sequence
+            The format-specific dataset object.
+
+        Examples
+        --------
+        >>> reader.select('Data-Set-2')  # doctest: +SKIP
+        """
         return self._dataset(id_)
 
     @property
     @abstractmethod
     def _shape(self) -> tuple[int, ...]:
+        """Raw dataset shape in HDF storage order (not reversed for Fortran arrays)."""
         ...
 
     @property
     @abstractmethod
     def dtype(self) -> np.dtype:
+        """Element data type of the HDF dataset.
+
+        Returns
+        -------
+        out : np.dtype
+            NumPy dtype (typically ``float32``).
+        """
         ...
 
     @property
     @abstractmethod
     def size(self) -> int:
+        """Total number of elements in the dataset.
+
+        Returns
+        -------
+        out : int
+            Product of all dimension sizes.
+        """
         ...
 
     @property
     @abstractmethod
     def nbytes(self) -> int:
+        """Dataset size in bytes.
+
+        Returns
+        -------
+        out : int
+            ``size * dtype.itemsize``.
+        """
         ...
 
     @property
     @abstractmethod
     def ndim(self) -> int:
+        """Number of spatial dimensions in the dataset.
+
+        Returns
+        -------
+        out : int
+            Always ``3`` for MAS/POT3D field variables; ``1`` for scale arrays.
+        """
         ...
 
     @property
     @abstractmethod
     def attrs(self) -> dict:
+        """HDF dataset-level attributes as a plain Python dictionary.
+
+        Returns
+        -------
+        out : dict
+            Mapping of attribute name strings to their values.
+        """
         ...
 
     @property
     def name(self) -> str:
+        """Canonical lower-case quantity identifier.
+
+        Returns
+        -------
+        out : str
+            E.g. ``'br'``, ``'vr'``, ``'t'``, ``'r'``.
+        """
         return self._name
 
     @property
     def desc(self) -> str:
+        """Human-readable description of the physical quantity.
+
+        Returns
+        -------
+        out : str
+            E.g. ``'MAS Magnetic Field (Radial Component)'``.
+        """
         return self._desc
 
     @desc.setter
     def desc(self, value: str):
+        """Set the human-readable description."""
         self._desc = str(value)
 
     @property
     def unit(self) -> u.Unit:
+        """Astropy unit for converting from code units to physical units.
+
+        Returns
+        -------
+        out : u.Unit
+            E.g. :data:`~psi_io._units.MAS_b` for MAS magnetic field.
+        """
         return self._unit
 
     @unit.setter
     def unit(self, value: UnitLike):
+        """Set the physical unit from a unit-like value."""
         self._unit = u.Unit(str(value))
 
     @property
     def mesh(self) -> Mesh:
+        """Yee-grid stagger code for this dataset.
+
+        Returns
+        -------
+        out : Mesh
+            :class:`~psi_io._mesh.Mesh` instance encoding per-axis stagger.
+        """
         return self._mesh
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """Array shape in physical ``(r, t, p)`` order.
+
+        For Fortran-order (``order='F'``) arrays the raw HDF shape is reversed.
+
+        Returns
+        -------
+        out : tuple[int, ...]
+            Dimension sizes in physical coordinate order.
+        """
         return self._shape[::-1] if self._reverse else self._shape
 
     @property
     def order(self) -> ArrayOrdering:
+        """Memory layout of the stored array.
+
+        Returns
+        -------
+        out : str
+            ``'F'`` for Fortran (column-major, PSI default) or ``'C'`` for C
+            (row-major).
+        """
         return self._order
 
     @property
     def data_cached(self) -> bool:
+        """Whether the full data array is currently held in memory.
+
+        Returns
+        -------
+        out : bool
+            ``True`` if :attr:`_vcache` is not ``None``.
+        """
         return self._vcache is not None
 
     @property
     def cached(self) -> bool:
+        """Alias for :attr:`data_cached`.
+
+        Returns
+        -------
+        out : bool
+            ``True`` if the data array is cached.
+        """
         return self.data_cached
 
     @property
     def cache(self) -> str:
+        """Active cache mode.
+
+        Returns
+        -------
+        out : str | None
+            ``'lazy'``, ``'eager'``, or ``None``.
+        """
         return self._cache
 
     @cache.setter
     def cache(self, method: CacheType):
+        """Set the cache mode and trigger load or clear as appropriate.
+
+        Parameters
+        ----------
+        method : CacheType
+            New cache mode.  Setting ``'eager'`` calls :meth:`load`; setting
+            ``None`` calls :meth:`clear`.
+
+        Raises
+        ------
+        ValueError
+            If *method* is not ``'lazy'``, ``'eager'``, or ``None``.
+        """
         self._cache = method and method.lower()
         if self._cache not in {'lazy', 'eager', None}:
             raise ValueError(f"Invalid cache method: {method!r}. "
@@ -719,29 +1207,54 @@ class _HdfArray(ABC):
         elif self._cache is None:
             self.clear()
 
-
     @property
     def _reverse(self) -> bool:
+        """Whether axis order should be reversed when indexing (Fortran-order arrays)."""
         return self.order == 'F'
 
     @property
     def dataset(self):
+        """The primary HDF dataset object for this reader.
+
+        Returns
+        -------
+        out : object
+            Format-specific dataset handle for the main data array.
+        """
         return self._dataset(self._id)
 
     @abstractmethod
     def _dataset(self, id_: str):
+        """Return the HDF dataset identified by *id_*."""
         ...
 
     @abstractmethod
     def _parse_inputs(self, **kwargs) -> dict:
+        """Parse and merge file attributes with keyword overrides into a metadata dict."""
         ...
 
     @abstractmethod
     def _set_metadata(self, **kwargs) -> None:
+        """Apply the merged metadata dictionary to instance attributes."""
         ...
 
     @abstractmethod
     def validate_metadata(self) -> None:
+        """Validate resolved metadata and emit :exc:`MetaDataWarning` for any issues.
+
+        The base implementation warns when :attr:`unit` is dimensionless.
+        Subclasses should call ``super().validate_metadata()`` before applying
+        additional checks.
+
+        Raises
+        ------
+        MetaDataWarning
+            If the unit is dimensionless or other metadata is inconsistent.
+
+        Examples
+        --------
+        >>> reader.validate_metadata()  # doctest: +SKIP
+        """
         if self.unit == u.dimensionless_unscaled:
             warnings.warn(f"{self.__class__.__name__}({self}) has a dimensionless unit. "
                           f"Ensure the correct unit is declared at instantiation or written to "
@@ -754,6 +1267,40 @@ class _HdfArray(ABC):
              mesh: Optional[MeshLike] = None,
              order: Optional[ArrayOrdering] = None,
              scales: bool = False) -> u.Quantity | tuple[u.Quantity, ...]:
+        """Read data from the HDF dataset, optionally remeshing and converting units.
+
+        Parameters
+        ----------
+        *args : None | int | tuple | slice
+            Index-space axis arguments in physical ``(r, t, p)`` order.
+            ``None`` selects the full axis; ``int`` selects a single element;
+            ``tuple`` is converted to a :class:`slice`; ``Ellipsis`` expands
+            to ``None`` for all remaining axes.
+        unit : str | u.Unit | None, optional
+            Output unit.  ``None`` returns code units.  Special strings:
+            ``'native'``/``'code'``/``'model'``/``'psi'`` — unchanged;
+            ``'real'``/``'phys'``/``'physical'``/``'cgs'`` — CGS base units.
+            Default is ``None``.
+        mesh : MeshLike | None, optional
+            Target mesh stagger.  Axes on the half mesh that are requested on
+            the main mesh are averaged by :func:`~psi_io._mesh.remesh_array`.
+            Default is ``None`` (no remeshing).
+        order : {'F', 'C'} | None, optional
+            Transpose the output if it differs from the stored order.
+            Default is ``None`` (no transpose).
+        scales : bool, optional
+            If ``True``, return the coordinate slices alongside the data.
+            Default is ``False``.
+
+        Returns
+        -------
+        out : u.Quantity | tuple[u.Quantity, ...]
+            Data array, or ``(data,)`` when *scales* is ``True``.
+
+        Examples
+        --------
+        >>> data, = reader.read(scales=True)  # doctest: +SKIP
+        """
         remesh = self.mesh >> mesh
         args = _expand_args(*args, ndim=self.ndim)
         sargs = tuple(_parse_islice_args(*args, shape=self.shape, remesh=remesh))
@@ -763,33 +1310,123 @@ class _HdfArray(ABC):
         return (odata,)
 
     def slice(self, *args, **kwargs) -> u.Quantity | tuple[u.Quantity, ...]:
+        """Alias for :meth:`read`.
+
+        Parameters
+        ----------
+        *args : object
+            Forwarded to :meth:`read`.
+        **kwargs : object
+            Forwarded to :meth:`read`.
+
+        Returns
+        -------
+        out : u.Quantity | tuple[u.Quantity, ...]
+            Same as :meth:`read`.
+        """
         return self.read(*args, **kwargs)
 
     def _read(self, *args, remesh: tuple[bool,...]) -> u.Quantity:
+        """Read and remesh the dataset slice, applying the physical unit.
+
+        Parameters
+        ----------
+        *args : slice
+            Per-axis slice objects in storage order.
+        remesh : tuple[bool, ...]
+            Per-axis remesh flags.
+
+        Returns
+        -------
+        out : u.Quantity
+            Sliced and remeshed data multiplied by :attr:`unit`.
+        """
         return _remesh_array(self[args], remesh=remesh, order=self.order) * self.unit
 
     def load(self, **kwargs):
+        """Load the full dataset into the in-memory cache.
+
+        Has no effect (emits :exc:`CacheWarning`) when ``cache=None``.
+
+        Parameters
+        ----------
+        **kwargs : object
+            Accepted but ignored; present for subclass override compatibility.
+
+        Examples
+        --------
+        >>> reader.load()  # doctest: +SKIP
+        >>> reader.data_cached  # doctest: +SKIP
+        True
+        """
         if self._cache is None:
             warnings.warn(f"{self.__class__.__name__}({self}) has caching disabled; load() has no effect.", CacheWarning, stacklevel=3)
             return
         self._vcache = self.dataset[:]
 
     def clear(self, **kwargs):
+        """Release the in-memory data cache.
+
+        Emits :exc:`CacheWarning` when ``cache='eager'`` to flag an explicit
+        clear that conflicts with the cache mode.
+
+        Parameters
+        ----------
+        **kwargs : object
+            Accepted but ignored; present for subclass override compatibility.
+
+        Examples
+        --------
+        >>> reader.clear()  # doctest: +SKIP
+        >>> reader.data_cached  # doctest: +SKIP
+        False
+        """
         if self._cache == 'eager':
             warnings.warn(f"{self.__class__.__name__}({self}) has eager caching enabled; clear() was called explicitly.", CacheWarning, stacklevel=3)
         self._vcache = None
 
 
 class _HdfScale(_HdfArray, ABC):
+    """Abstract base class for a one-dimensional HDF coordinate scale array.
+
+    Wraps a single 1-D coordinate dataset stored alongside a PSI data file
+    (radial, co-latitude, or longitude scale).  Concrete implementations
+    are :class:`H4Scale` and :class:`H5Scale`.
+
+    Attributes
+    ----------
+    _ref : _HdfData
+        Parent data reader that owns this scale.
+    _id : str | None
+        Dataset key within the parent's HDF file.
+
+    See Also
+    --------
+    H4Scale : HDF4 concrete implementation.
+    H5Scale : HDF5 concrete implementation.
+    """
+
     def __init__(self,
                  parent: '_HdfData',
                  dataset_id: Optional[str],
                  **kwargs):
+        """Initialize a scale reader from the parent data reader.
+
+        Parameters
+        ----------
+        parent : _HdfData
+            The data reader that owns this coordinate scale.
+        dataset_id : str | None
+            HDF dataset key for the scale array; ``None`` uses a default key.
+        **kwargs : object
+            Metadata keyword arguments forwarded to :meth:`_HdfArray.__init__`.
+        """
         self._ref = parent
         self._id = dataset_id
         super().__init__(**kwargs)
 
     def validate_metadata(self) -> None:
+        """Validate scale-specific metadata, warning on dimensionality or name issues."""
         super().validate_metadata()
         if 1 != self.ndim != len(self.mesh) != len(self.shape):
             warnings.warn(f'Scale {self} has {self.ndim} dimensions; expected 1.', MetaDataWarning, stacklevel=3)
@@ -804,6 +1441,7 @@ class _HdfScale(_HdfArray, ABC):
                               f"Check that the correct mesh code is declared at instantiation or written to the HDF dataset's attribute mapping.", MetaDataWarning, stacklevel=3)
 
     def _parse_inputs(self, **kwargs):
+        """Merge file attributes with keyword overrides, resolving PSI defaults by name."""
         input_attrs = {k: v for k, v in kwargs.items()}
         file_attrs = {k: v for k, v in self.attrs.items() if k in SCALES_SCHEMA}
         combined_attrs = {**file_attrs, **input_attrs}
@@ -821,6 +1459,7 @@ class _HdfScale(_HdfArray, ABC):
                       unit: str = '',
                       desc: str = '',
                       validate: bool = False) -> None:
+        """Apply resolved metadata to instance attributes for a scale array."""
         self._name: str = str(name)
         self._desc: str = str(desc)
         self._unit: u.Unit = u.Unit(str(unit))
@@ -831,10 +1470,56 @@ class _HdfScale(_HdfArray, ABC):
             self.validate_metadata()
 
 class _HdfData(_HdfArray, ABC):
+    """Abstract base class for a PSI MAS or POT3D HDF data reader.
+
+    Extends :class:`_HdfArray` with file lifecycle management, coordinate scale
+    readers, value-space slicing, and spatial interpolation.  Concrete
+    implementations are :class:`H4Data` (HDF4 backend) and :class:`H5Data`
+    (HDF5 backend).
+
+    Instances should be obtained via :func:`PsiData`, not constructed directly.
+
+    Attributes
+    ----------
+    _filepath : pathlib.Path
+        Absolute path to the open HDF file.
+    _icache : RegularGridInterpolator | None
+        Cached scipy interpolator, or ``None`` if not yet built.
+
+    See Also
+    --------
+    H4Data : HDF4 concrete implementation.
+    H5Data : HDF5 concrete implementation.
+    PsiData : Public factory function.
+    """
+
     def __init__(self,
                  ifile: PathLike,
                  dataset_id: Optional[str] = None,
                  **kwargs):
+        """Open an HDF file and initialize the reader with resolved metadata.
+
+        Parameters
+        ----------
+        ifile : PathLike
+            Path to the HDF file.  Must exist and have the correct extension for
+            the concrete subclass (``'.h5'`` for :class:`H5Data`, ``'.hdf'`` for
+            :class:`H4Data`).
+        dataset_id : str | None, optional
+            Dataset key within the HDF file.  Defaults to the PSI standard
+            identifier for the given format.
+        **kwargs : object
+            Metadata keyword arguments (``model``, ``name``, ``unit``, ``mesh``,
+            etc.) forwarded to :meth:`_parse_inputs` and :meth:`_set_metadata`.
+
+        Raises
+        ------
+        FileNotFoundError
+            If *ifile* does not exist.
+        ValueError
+            If the file extension does not match the expected format, or if
+            metadata cannot be resolved.
+        """
         ifile = Path(ifile)
         hdfv = f'h{self._HDFN}'
         if not ifile.is_file():
@@ -870,22 +1555,55 @@ class _HdfData(_HdfArray, ABC):
 
     @property
     def sequence(self) -> int:
+        """Time-step sequence number extracted from the filename or file attributes.
+
+        Returns
+        -------
+        out : int
+            E.g. ``1001`` for a file named ``br001001.h5``.
+        """
         return self._sequence
 
     @sequence.setter
     def sequence(self, value: int):
+        """Set the sequence number."""
         self._sequence = int(value)
 
     @property
     def model(self) -> str:
+        """PSI model type string.
+
+        Returns
+        -------
+        out : str
+            ``'mas'``, ``'pot3d'``, or ``'custom'``.
+        """
         return self._model
 
     @property
     def scales(self) -> tuple:
+        """Named tuple of coordinate scale readers ``(r, t, p)``.
+
+        Each element is a :class:`_HdfScale` instance that wraps the
+        corresponding one-dimensional coordinate array.
+
+        Returns
+        -------
+        out : tuple
+            Named tuple with fields matching the scale names (``r``, ``t``,
+            ``p`` by default).
+        """
         return self._scales
 
     @property
     def interp_cached(self) -> bool:
+        """Whether a :class:`~scipy.interpolate.RegularGridInterpolator` is cached.
+
+        Returns
+        -------
+        out : bool
+            ``True`` if :attr:`_icache` is not ``None``.
+        """
         return self._icache is not None
 
     @abstractmethod
@@ -905,15 +1623,18 @@ class _HdfData(_HdfArray, ABC):
 
     @abstractmethod
     def _get_dims(self) -> Sequence:
+        """Return the dimension labels from the open HDF file in physical order."""
         ...
 
     @abstractmethod
     def _set_scales(self, scales: Sequence) -> type[tuple]:
+        """Build scale readers from dimension labels and attach them to ``_scales``."""
         Scales = namedtuple('Scales', scales)
         self._scales = Scales._fields
         return Scales
 
     def validate_metadata(self) -> None:
+        """Validate data-reader metadata including model, scale, and shape consistency."""
         super().validate_metadata()
         if self._model not in _PROP_GETTER_MAPPING:
             warnings.warn(f"{self.__class__.__name__}({self}) has an unrecognized model {self._model!r}. "
@@ -932,6 +1653,7 @@ class _HdfData(_HdfArray, ABC):
             warnings.warn(msg, MetaDataWarning, stacklevel=3)
 
     def _parse_inputs(self, **kwargs) -> dict:
+        """Merge file attributes with keyword overrides, resolving model defaults."""
         input_attrs = {k: v for k, v in kwargs.items()}
         file_attrs = {k: v for k, v in self.attrs.items() if k in METADATA_SCHEMA}
         combined_attrs = {**file_attrs, **input_attrs}
@@ -959,6 +1681,7 @@ class _HdfData(_HdfArray, ABC):
                       sequence: int = 0,
                       desc: str = '',
                       validate: bool = True) -> None:
+        """Apply resolved metadata to instance attributes for a data reader."""
         self._model: str = str(model)
         self._name: str = str(name)
         self._desc: str = str(desc)
@@ -979,6 +1702,39 @@ class _HdfData(_HdfArray, ABC):
              mesh: Optional[MeshLike] = None,
              order: Optional[ArrayOrdering] = None,
              scales: bool = True) -> u.Quantity | tuple[u.Quantity, ...]:
+        """Read data by index with optional unit conversion and coordinate scales.
+
+        Parameters
+        ----------
+        *args : None | int | tuple | slice
+            Index-space axis arguments in physical ``(r, t, p)`` order.
+        unit : str | u.Unit | None, optional
+            Output unit.  Default is ``None`` (code units).
+        mesh : MeshLike | None, optional
+            Target stagger mesh.  Default is ``None`` (no remeshing).
+        order : {'F', 'C'} | None, optional
+            Transpose the output if it differs from storage order.
+            Default is ``None``.
+        scales : bool, optional
+            If ``True`` (default), return coordinate slices alongside data.
+
+        Returns
+        -------
+        data : u.Quantity
+            Data array in physical order, or the first element of the tuple
+            when *scales* is ``True``.
+        r : u.Quantity
+            Radial coordinate slice.  Only returned when *scales* is ``True``.
+        t : u.Quantity
+            Co-latitude coordinate slice.  Only returned when *scales* is ``True``.
+        p : u.Quantity
+            Longitude coordinate slice.  Only returned when *scales* is ``True``.
+
+        Examples
+        --------
+        >>> data, r, t, p = reader.read()  # doctest: +SKIP
+        >>> data_gauss = reader.read(scales=False, unit='Gauss')  # doctest: +SKIP
+        """
         remesh = self.mesh >> mesh
         args = _expand_args(*args, ndim=self.ndim)
         sargs = tuple(_parse_islice_args(*args, shape=self.shape, remesh=remesh))
@@ -995,6 +1751,45 @@ class _HdfData(_HdfArray, ABC):
                unit: Optional[str | UnitLike] = None,
                **kwargs
                ) -> u.Quantity:
+        """Interpolate the dataset at arbitrary spatial positions.
+
+        Builds or reuses a :class:`~scipy.interpolate.RegularGridInterpolator`
+        and evaluates it at the positions given by *data*.  When caching is
+        disabled (``cache=None``), a minimal bounding-box slice is read on each
+        call.  When caching is enabled, the interpolator is cached and reused for
+        subsequent calls that fall within the same grid extent.
+
+        Parameters
+        ----------
+        data : array-like or astropy QTable
+            Positions to interpolate, as an ``(N, 3)`` array-like with columns
+            ``(r, t, p)`` in the units of the respective coordinate scales.
+            An :class:`~astropy.table.QTable` with columns named after the
+            scale fields is also accepted.
+        unit : str | u.Unit | None, optional
+            Output unit.  Default is ``None`` (code units).
+        **kwargs : object
+            Forwarded to :class:`~scipy.interpolate.RegularGridInterpolator`.
+            Notable keywords: ``bounds_error`` (default ``True``),
+            ``fill_value`` (default ``None``).
+
+        Returns
+        -------
+        out : u.Quantity
+            Interpolated values of shape ``(N,)``.
+
+        Raises
+        ------
+        ImportError
+            If scipy is not installed.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import astropy.units as u
+        >>> positions = np.column_stack([[1.5, 2.0], [1.57, 1.57], [0.1, 0.2]])
+        >>> result = reader.interp(positions)  # doctest: +SKIP
+        """
         _except_no_scipy()
         positions = QTable(data, names=self.scales._fields, units=[scale.unit for scale in self.scales])
         positions = structured_to_unstructured(positions.as_array())
@@ -1037,6 +1832,53 @@ class _HdfData(_HdfArray, ABC):
                scales: bool = True,
                bounds_error: bool = True,
                ) -> u.Quantity | tuple[u.Quantity, ...]:
+        """Read data by physical coordinate value with linear interpolation.
+
+        Extends :meth:`read` to accept physical coordinate values as positional
+        arguments.  A scalar or :class:`~astropy.units.Quantity` argument for an
+        axis locates the two nearest grid points and linearly interpolates to the
+        target value.  Index-space arguments (``None``, ``int``, ``slice``,
+        ``tuple``) are handled identically to :meth:`read`.
+
+        Parameters
+        ----------
+        *args : None | int | slice | tuple | QuantityLike
+            One argument per axis in physical ``(r, t, p)`` order.  Physical
+            coordinate values trigger interpolation; index-space arguments do not.
+        unit : str | u.Unit | None, optional
+            Output unit.  Default is ``None`` (code units).
+        mesh : MeshCodeType | None, optional
+            Target stagger mesh.  Default is ``None``.
+        order : {'F', 'C'} | None, optional
+            Transpose output if it differs from storage order.  Default is ``None``.
+        scales : bool, optional
+            If ``True`` (default), return coordinate slices alongside the data.
+        bounds_error : bool, optional
+            If ``True`` (default), raise :exc:`ValueError` when a physical value
+            is outside the coordinate range.
+
+        Returns
+        -------
+        data : u.Quantity
+            Interpolated or sliced data array.
+        r : u.Quantity
+            Radial coordinate slice or target value.  Only when *scales* is ``True``.
+        t : u.Quantity
+            Co-latitude coordinate slice or target value.  Only when *scales* is ``True``.
+        p : u.Quantity
+            Longitude coordinate slice or target value.  Only when *scales* is ``True``.
+
+        Raises
+        ------
+        ValueError
+            If *bounds_error* is ``True`` and a physical value falls outside the
+            coordinate range.
+
+        Examples
+        --------
+        >>> # Extract the r = 2.5 solar radii surface
+        >>> data, r, t, p = reader.vslice(2.5 * u.R_sun)  # doctest: +SKIP
+        """
         remesh = self.mesh >> mesh
         args = _expand_args(*args, ndim=self.ndim)
         varg_pairs = _parse_vslice_args(*args, scales=self.scales, remesh=remesh)
@@ -1079,6 +1921,27 @@ class _HdfData(_HdfArray, ABC):
         return sliced_data, *sliced_scales
 
     def load(self, interp: bool = False, recursive: bool = True):
+        """Load the data array and optionally build the interpolator into memory.
+
+        Parameters
+        ----------
+        interp : bool, optional
+            If ``True``, also build and cache the
+            :class:`~scipy.interpolate.RegularGridInterpolator` after loading
+            the data.  Requires scipy.  Default is ``False``.
+        recursive : bool, optional
+            If ``True`` (default), also call :meth:`load` on each coordinate
+            scale reader.
+
+        Examples
+        --------
+        >>> reader.load()  # doctest: +SKIP
+        >>> reader.data_cached  # doctest: +SKIP
+        True
+        >>> reader.load(interp=True)  # doctest: +SKIP
+        >>> reader.interp_cached  # doctest: +SKIP
+        True
+        """
         if self._cache is None:
             warnings.warn(f"{self.__class__.__name__}({self}) has caching disabled; load() has no effect.", CacheWarning, stacklevel=3)
             return
@@ -1094,6 +1957,24 @@ class _HdfData(_HdfArray, ABC):
             )
 
     def clear(self, data: bool = True, interp: bool = True, recursive: bool = True):
+        """Release cached data and/or the cached interpolator.
+
+        Parameters
+        ----------
+        data : bool, optional
+            If ``True`` (default), release the in-memory data array cache.
+        interp : bool, optional
+            If ``True`` (default), release the cached interpolator.
+        recursive : bool, optional
+            If ``True`` (default) and *data* is ``True``, also call
+            :meth:`clear` on each coordinate scale reader.
+
+        Examples
+        --------
+        >>> reader.clear()  # doctest: +SKIP
+        >>> reader.data_cached, reader.interp_cached  # doctest: +SKIP
+        (False, False)
+        """
         if self._cache == 'eager':
             warnings.warn(f"{self.__class__.__name__}({self}) has eager caching enabled; clear() was called explicitly.", CacheWarning, stacklevel=3)
         if data:
@@ -1106,79 +1987,146 @@ class _HdfData(_HdfArray, ABC):
 
 
 class _H5ArrayMixin:
+    """Mixin that provides HDF5 (h5py) property implementations for :class:`_HdfArray`.
+
+    Sets ``_HDFN = 5`` and implements :attr:`_shape`, :attr:`dtype`, :attr:`size`,
+    :attr:`nbytes`, :attr:`ndim`, :attr:`attrs`, and :meth:`_dataset` using the
+    :class:`h5py.Dataset` interface.
+
+    See Also
+    --------
+    _H4ArrayMixin : Analogous mixin for HDF4 files.
+    """
+
     __slots__ = ()
     _HDFN = 5
 
     @property
     def _shape(self) -> tuple[int, ...]:
+        """Raw dataset shape from the h5py Dataset object."""
         return self.dataset.shape
 
     @property
     def dtype(self) -> np.dtype:
+        """NumPy dtype from the h5py Dataset object."""
         return self.dataset.dtype
 
     @property
     def size(self) -> int:
+        """Total element count from the h5py Dataset object."""
         return self.dataset.size
 
     @property
     def nbytes(self) -> int:
+        """Byte size from the h5py Dataset object."""
         return self.dataset.nbytes
 
     @property
     def ndim(self) -> int:
+        """Number of dimensions from the h5py Dataset object."""
         return self.dataset.ndim
 
     @property
     def attrs(self) -> dict:
+        """HDF5 dataset attributes as a plain dict."""
         return dict(self.dataset.attrs)
 
     def _dataset(self, id_: str):
+        """Return the h5py Dataset at key *id_* from the open file."""
         return self._ref[id_]
 
 
 class _H4ArrayMixin:
+    """Mixin that provides HDF4 (pyhdf) property implementations for :class:`_HdfArray`.
+
+    Sets ``_HDFN = 4`` and implements :attr:`_shape`, :attr:`dtype`, :attr:`size`,
+    :attr:`nbytes`, :attr:`ndim`, :attr:`attrs`, and :meth:`_dataset` using the
+    ``pyhdf.SD`` interface.
+
+    See Also
+    --------
+    _H5ArrayMixin : Analogous mixin for HDF5 files.
+    """
+
     __slots__ = ()
     _HDFN = 4
 
     @property
     def _shape(self) -> tuple[int, ...]:
+        """Raw dataset shape from pyhdf SDS ``info()``."""
         shape_ = self.dataset.info()[2]
         return (shape_,) if not isinstance(shape_, Iterable) else tuple(shape_)
 
     @property
     def dtype(self) -> np.dtype:
+        """NumPy dtype mapped from the pyhdf SDC type code."""
         return SDC_TYPE_CONVERSIONS[self.dataset.info()[3]]
 
     @property
     def size(self) -> int:
+        """Total element count (product of all dimension sizes)."""
         return int(np.prod(self.shape))
 
     @property
     def nbytes(self) -> int:
+        """Dataset size in bytes (``size * dtype.itemsize``)."""
         return self.size * self.dtype.itemsize
 
     @property
     def ndim(self) -> int:
+        """Number of dimensions from pyhdf SDS ``info()``."""
         return self.dataset.info()[1]
 
     @property
     def attrs(self) -> dict:
+        """HDF4 dataset attributes as a plain dict."""
         return self.dataset.attributes()
 
     def _dataset(self, id_: str):
+        """Return the pyhdf SDS object at key *id_* from the open SD file."""
         return self._ref.select(id_)
 
 
 class H4Scale(_H4ArrayMixin, _HdfScale):
-    ...
+    """HDF4 coordinate scale reader.
+
+    Combines :class:`_H4ArrayMixin` (pyhdf property implementations) with
+    :class:`_HdfScale` (PSI scale metadata and validation).
+
+    See Also
+    --------
+    H5Scale : HDF5 equivalent.
+    H4Data : The data reader that owns instances of this class.
+    """
 
 
 class H5Scale(_H5ArrayMixin, _HdfScale):
-    ...
+    """HDF5 coordinate scale reader.
+
+    Combines :class:`_H5ArrayMixin` (h5py property implementations) with
+    :class:`_HdfScale` (PSI scale metadata and validation).
+
+    See Also
+    --------
+    H4Scale : HDF4 equivalent.
+    H5Data : The data reader that owns instances of this class.
+    """
 
 
 class H4Data(_H4ArrayMixin, _HdfData):
+    """HDF4 PSI data reader.
+
+    Combines :class:`_H4ArrayMixin` (pyhdf property implementations) with
+    :class:`_HdfData` (PSI data metadata, slicing, and interpolation).  Uses
+    ``pyhdf.SD`` to open ``.hdf`` files.
+
+    Instances are normally obtained via :func:`PsiData`.
+
+    See Also
+    --------
+    H5Data : HDF5 equivalent.
+    PsiData : Public factory function.
+    """
     @classmethod
     def read_file(cls, ifile: PathLike):
         """Open an HDF4 file for reading and return the pyhdf ``SD`` object."""
@@ -1217,6 +2165,19 @@ class H4Data(_H4ArrayMixin, _HdfData):
 
 
 class H5Data(_H5ArrayMixin, _HdfData):
+    """HDF5 PSI data reader.
+
+    Combines :class:`_H5ArrayMixin` (h5py property implementations) with
+    :class:`_HdfData` (PSI data metadata, slicing, and interpolation).  Uses
+    ``h5py.File`` to open ``.h5`` files.
+
+    Instances are normally obtained via :func:`PsiData`.
+
+    See Also
+    --------
+    H4Data : HDF4 equivalent.
+    PsiData : Public factory function.
+    """
 
     @classmethod
     def read_file(cls, ifile: PathLike):
@@ -1267,20 +2228,19 @@ def PsiData(ifile: PathLike, /,
 
     The returned reader exposes the following attributes:
 
-    - ``quantity`` — canonical lower-case quantity identifier (e.g. ``'br'``).
+    - ``name`` — canonical lower-case quantity identifier (e.g. ``'br'``).
+    - ``desc`` — human-readable quantity description.
     - ``sequence`` — integer time-step sequence number.
     - ``unit`` — :class:`~astropy.units.Unit` for code → physical conversion;
       normalization constants are defined in :mod:`psi_io._units`.
-    - ``mesh`` — per-axis Yee-grid stagger as a tuple of
-      :class:`~psi_io._mesh.Mesh` members; see :mod:`psi_io._mesh`.
-    - ``props`` — full :class:`~psi_io._models.Props` descriptor (name,
-      description, unit, mesh code); see :mod:`psi_io._models`.
-    - ``description`` — human-readable quantity description.
-    - ``scales`` — ``Scales(r, t, p)`` named tuple of coordinate scale readers,
+    - ``mesh`` — per-axis Yee-grid stagger as a :class:`~psi_io._mesh.Mesh`
+      instance; see :mod:`psi_io._mesh`.
+    - ``scales`` — named tuple of coordinate scale readers ``(r, t, p)``,
       each supporting the same :meth:`read` interface as the main reader.
     - ``shape``, ``ndim``, ``size``, ``nbytes``, ``dtype``, ``attrs`` — array
-      metadata; shape is in HDF storage order ``(Nφ, Nθ, Nr)``.
-    - ``is_cached`` — ``True`` after a full-array read has been cached.
+      metadata; shape is in physical ``(r, t, p)`` order.
+    - ``data_cached`` — ``True`` after the data array has been cached.
+    - ``interp_cached`` — ``True`` after the interpolator has been built.
 
     Use :meth:`read` to load a slice by index and :meth:`vslice` to slice by
     physical coordinate value with linear interpolation.  Both return data as
@@ -1305,27 +2265,32 @@ def PsiData(ifile: PathLike, /,
     ----------
     ifile : PathLike
         Path to the HDF4 (``.hdf``) or HDF5 (``.h5``) file.
-    model : {'mas', 'pot3d'}, optional
-        PSI model type.  Defaults to ``'mas'``.
+    model : {'mas', 'pot3d', 'custom'}, optional
+        PSI model type.  Defaults to ``'custom'``.  When ``'mas'`` or ``'pot3d'``
+        is given, the reader resolves the quantity name, unit, mesh stagger, and
+        other metadata from the corresponding mapping in :mod:`psi_io._models`.
+        With the default ``'custom'``, no metadata is inferred and the required
+        fields (``name``, ``mesh``, ``scalar``, ``order``, ``scales``) must be
+        supplied as keyword arguments.
     dataset_id : str, optional
         Dataset name within the HDF file.  Defaults to the PSI standard
         identifier for the given format.
-    quantity : str, optional
+    name : str, optional
         Override the quantity name inferred from the filename or file attributes.
     sequence : int, optional
         Override the time-step sequence number.
     unit : str or u.Unit, optional
         Override the code-to-physical unit from the quantity's
-        :class:`~psi_io._models.Props` entry.  Accepts any string parseable by
+        :class:`~psi_io._models.ModelProps` entry.  Accepts any string parseable by
         :class:`~astropy.units.Unit` or a :class:`~astropy.units.Unit` instance.
     mesh : MeshCodeType, optional
         Override the mesh stagger from the quantity's
-        :class:`~psi_io._models.Props` entry.
+        :class:`~psi_io._models.ModelProps` entry.
 
     Returns
     -------
-    out : H5Data or H4Data
-        Open reader implementing the full ``_HdfInterface`` API.  Concrete type
+    out : H5Data | H4Data
+        Open reader implementing the full :class:`_HdfData` API.  Concrete type
         depends on the file extension.
 
     Raises
@@ -1348,9 +2313,9 @@ def PsiData(ifile: PathLike, /,
     Read a MAS radial field — full array with coordinate scales, then convert:
 
     >>> from psi_io.mhd_io import PsiData                  # doctest: +SKIP
-    >>> reader = PsiData('br001001.h5')
-    >>> data, r, t, p = reader.read()                      # code units (MAS_b)
-    >>> data, r, t, p = reader.read(unit='Gauss')          # convert to Gauss
+    >>> reader = PsiData('br001001.h5')  # doctest: +SKIP
+    >>> data, r, t, p = reader.read()                      # code units (MAS_b)  # doctest: +SKIP
+    >>> data, r, t, p = reader.read(unit='Gauss')          # convert to Gauss  # doctest: +SKIP
 
     Use as a context manager:
 
@@ -1360,9 +2325,9 @@ def PsiData(ifile: PathLike, /,
     Inspect metadata without loading data:
 
     >>> reader = PsiData('rho001001.h5')                    # doctest: +SKIP
-    >>> reader.quantity    # 'rho'
-    >>> reader.unit        # MAS_n
-    >>> reader.mesh        # (Mesh.HALF, Mesh.HALF, Mesh.HALF)
-    >>> reader.is_cached   # False
+    >>> reader.name          # 'rho'  # doctest: +SKIP
+    >>> reader.unit          # MAS_n  # doctest: +SKIP
+    >>> reader.mesh          # Mesh(HALF, HALF, HALF)  # doctest: +SKIP
+    >>> reader.data_cached   # False  # doctest: +SKIP
     """
     return _dispatch_by_ext(ifile, H4Data, H5Data, *args, **kwargs)
