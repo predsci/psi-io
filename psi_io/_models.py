@@ -1,7 +1,8 @@
 r"""Physical property metadata for PSI's model quantities and scales.
 
-This module provides the :class:`Props` dataclass and three read-only mapping objects
-that fully describe every quantity PSI's modeling codes write to HDF files:
+This module provides the :class:`ScaleProps` and :class:`ModelProps` dataclasses and
+three read-only mapping objects that fully describe every quantity PSI's modeling codes
+write to HDF files:
 
 - The filename/lookup identifier (e.g., ``'br'``)
 - Human-readable description (e.g., ``'MAS Magnetic Field (Radial Component)'``)
@@ -363,7 +364,8 @@ See Also
 :mod:`psi_io._mesh` :
     Defines :class:`~psi_io._mesh.Mesh` and the mesh normalization helpers.
 :mod:`psi_io._units` :
-    Provides the custom astropy unit referenced by each :class:`Props`.
+    Provides the custom astropy unit referenced by each :class:`ScaleProps` and
+    :class:`ModelProps`.
 :mod:`psi_io.mhd_io` :
     Uses these mappings to auto-configure lazy HDF readers.
 """
@@ -393,60 +395,45 @@ from psi_io._units import MAS_v, MAS_b, MAS_j, MAS_t, MAS_n, MAS_p, MAS_heat, PO
 
 @dataclass(frozen=True, repr=True)
 class ScaleProps:
-    """Immutable property bundle for a single PSI model quantity.
+    """Immutable property bundle for a PSI coordinate scale array.
 
-    Associates a quantity name with its human-readable description, physical unit,
-    dimensionality, scalar/vector classification, and staggered-grid mesh code.
-    Instances are frozen (immutable) dataclass instances.
+    Associates a coordinate axis name with its human-readable description and
+    physical unit.  Used for the three standard PSI spatial scales ``'r'``,
+    ``'t'``, and ``'p'``.  Instances are frozen (immutable) dataclass instances.
 
     Parameters
     ----------
     name : str
-        Canonical lower-case quantity identifier (e.g. ``'br'``, ``'vr'``).  Matches
-        the filename prefix used in MAS and POT3D HDF output.
+        Canonical lower-case coordinate identifier (``'r'``, ``'t'``, or ``'p'``).
     desc : str
-        Human-readable description of the physical quantity.
+        Human-readable description (e.g. ``'PSI Radial Scale (Solar Radii)'``).
     unit : u.Unit
-        Astropy unit whose scale factor converts one code unit of this quantity to
-        physical unit.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
-    ndim : int
-        Number of spatial dimensions of the output array (``3`` for MAS/POT3D fields,
-        ``1`` for coordinate scale arrays).
-    scalar : bool
-        ``True`` if the quantity is a scalar field (temperature, density, …);
-        ``False`` if it is a component of a vector field (velocity, magnetic field, …).
-    _mesh : int, optional
-        Integer mesh code encoding the stagger position on the three-dimensional grid.
-        Each binary bit indicates whether the quantity is on the half mesh (``1``) or
-        main mesh (``0``) along one coordinate axis.  ``None`` for coordinate scale
-        arrays that carry no stagger information (e.g. the radial scale ``'r'``).
-
-    Attributes
-    ----------
-    mesh : tuple[Mesh, ...] or None
-        Normalized form of :attr:`_mesh`, expanded to a length-:attr:`ndim` tuple of
-        :class:`~psi_io._mesh.Mesh` members.  Returns ``None`` when :attr:`_mesh` is
-        ``None`` (coordinate scale arrays have no stagger).
+        Astropy unit for values stored along this coordinate axis.  For example,
+        :data:`~psi_io._units.PSI_rsun` for the radial scale.
 
     Notes
     -----
     The arithmetic dunder methods (``__mul__``, ``__rmul__``, ``__rtruediv__``)
-    delegate to :attr:`unit`, so ``some_value * props`` is equivalent to
-    ``some_value * props.unit`` and returns an :class:`~astropy.units.Quantity`.
+    delegate to :attr:`unit`, so ``value * props`` is equivalent to
+    ``value * props.unit`` and returns an :class:`~astropy.units.Quantity`.
+
+    See Also
+    --------
+    ModelProps : Extends :class:`ScaleProps` with scalar, mesh, and ordering fields
+        for 3-D model quantities.
+    get_psi_scale_properties : Retrieve a :class:`ScaleProps` by coordinate name.
 
     Examples
     --------
-    >>> from psi_io._models import ModelProps
+    >>> from psi_io._models import ScaleProps
     >>> import astropy.units as u
-    >>> p = ModelProps('br', 'Radial B field', u.Gauss, 3, False, 0b100)
+    >>> p = ScaleProps('r', 'PSI Radial Scale (Solar Radii)', u.R_sun)
     >>> str(p)
-    'br'
-    >>> p.ndim, p.scalar
-    (3, False)
-    >>> p.mesh          # doctest: +NORMALIZE_WHITESPACE
-    (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
-    >>> (2.5 * p).unit
-    Unit("G")
+    'r'
+    >>> p.name, p.desc
+    ('r', 'PSI Radial Scale (Solar Radii)')
+    >>> (1.0 * p).unit
+    Unit("solRad")
     """
 
     name: str
@@ -545,6 +532,21 @@ class ScaleProps:
         return other / self.unit
 
     def _asdict(self):
+        """Return a plain dictionary of this instance's fields.
+
+        Returns
+        -------
+        out : dict[str, object]
+            Mapping of field names to their values.
+
+        Examples
+        --------
+        >>> from psi_io._models import ScaleProps
+        >>> import astropy.units as u
+        >>> p = ScaleProps('r', 'Radial', u.R_sun)
+        >>> list(p._asdict().keys())
+        ['name', 'desc', 'unit']
+        """
         return asdict(self)
 
 
@@ -552,8 +554,8 @@ class ScaleProps:
 class ModelProps(ScaleProps):
     """Immutable property bundle for a single PSI model quantity.
 
-    Associates a quantity name with its human-readable description, physical unit,
-    dimensionality, scalar/vector classification, and staggered-grid mesh code.
+    Extends :class:`ScaleProps` with scalar/vector classification, staggered-grid mesh
+    code, array ordering, and scale axis labels.  Used for MAS and POT3D output fields.
     Instances are frozen (immutable) dataclass instances.
 
     Parameters
@@ -566,42 +568,49 @@ class ModelProps(ScaleProps):
     unit : u.Unit
         Astropy unit whose scale factor converts one code unit of this quantity to
         physical unit.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
-    ndim : int
-        Number of spatial dimensions of the output array (``3`` for MAS/POT3D fields,
-        ``1`` for coordinate scale arrays).
     scalar : bool
         ``True`` if the quantity is a scalar field (temperature, density, …);
         ``False`` if it is a component of a vector field (velocity, magnetic field, …).
-    _mesh : int, optional
+    _mesh : int
         Integer mesh code encoding the stagger position on the three-dimensional grid.
         Each binary bit indicates whether the quantity is on the half mesh (``1``) or
-        main mesh (``0``) along one coordinate axis.  ``None`` for coordinate scale
-        arrays that carry no stagger information (e.g. the radial scale ``'r'``).
+        main mesh (``0``) along one coordinate axis.
+    order : str, optional
+        Array memory layout: ``'F'`` for Fortran (column-major, PSI default) or
+        ``'C'`` for C (row-major).  Default is ``'F'``.
+    scales : tuple[str, ...], optional
+        Ordered names of the coordinate scale axes associated with this quantity.
+        Default is ``('r', 't', 'p')``.
 
     Attributes
     ----------
-    mesh : tuple[Mesh, ...] or None
-        Normalized form of :attr:`_mesh`, expanded to a length-:attr:`ndim` tuple of
-        :class:`~psi_io._mesh.Mesh` members.  Returns ``None`` when :attr:`_mesh` is
-        ``None`` (coordinate scale arrays have no stagger).
+    mesh : Mesh
+        Normalized form of :attr:`_mesh` as a single :class:`~psi_io._mesh.Mesh`
+        instance built from the integer code and the number of coordinate scales.
 
     Notes
     -----
     The arithmetic dunder methods (``__mul__``, ``__rmul__``, ``__rtruediv__``)
-    delegate to :attr:`unit`, so ``some_value * props`` is equivalent to
-    ``some_value * props.unit`` and returns an :class:`~astropy.units.Quantity`.
+    delegate to :attr:`unit`, so ``value * props`` is equivalent to
+    ``value * props.unit`` and returns an :class:`~astropy.units.Quantity`.
+
+    See Also
+    --------
+    ScaleProps : Base class for coordinate scale arrays without mesh or ordering.
+    get_mas_quantity_properties : Retrieve a :class:`ModelProps` for a MAS quantity.
+    get_pot3d_quantity_properties : Retrieve a :class:`ModelProps` for a POT3D quantity.
 
     Examples
     --------
     >>> from psi_io._models import ModelProps
     >>> import astropy.units as u
-    >>> p = ModelProps('br', 'Radial B field', u.Gauss, 3, False, 0b100)
+    >>> p = ModelProps('br', 'Radial B field', u.Gauss, False, 0b100)
     >>> str(p)
     'br'
-    >>> p.ndim, p.scalar
-    (3, False)
-    >>> p.mesh          # doctest: +NORMALIZE_WHITESPACE
-    (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
+    >>> p.scalar
+    False
+    >>> p.mesh
+    Mesh(HALF, MAIN, MAIN)
     >>> (2.5 * p).unit
     Unit("G")
     """
@@ -616,35 +625,51 @@ class ModelProps(ScaleProps):
 
     @property
     def mesh(self):
-        """Normalized mesh-stagger tuple for this quantity.
+        """Normalized mesh-stagger object for this quantity.
 
-        Converts the integer :attr:`_mesh` code to a length-3 tuple of
-        :class:`~psi_io._mesh.Mesh` members via
-        :func:`~psi_io._mesh._normalize_mesh_code`.
+        Wraps the integer :attr:`_mesh` code and the number of coordinate scales
+        in a single :class:`~psi_io._mesh.Mesh` instance via its constructor.
 
         Returns
         -------
-        out : tuple[Mesh, Mesh, Mesh] or None
-            One :class:`~psi_io._mesh.Mesh` value per spatial dimension
-            ``(r, theta, phi)`` — in the order they appear in
-            :func:`~psi_io._mesh.main_mesh` processing (most-significant bit first,
-            mapping to the last numpy axis).  Returns ``None`` when :attr:`_mesh` is
-            ``None`` (coordinate scale arrays have no stagger).
+        out : Mesh
+            A :class:`~psi_io._mesh.Mesh` whose bits classify each spatial axis
+            ``(r, theta, phi)`` as half or main mesh, with the most-significant
+            bit mapping to :math:`r` (the last NumPy axis under PSI's Fortran
+            convention).
 
         Examples
         --------
         >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
         >>> from psi_io._mesh import Mesh
         >>> _MAS_QUANTITY_PROPS_MAPPING['br'].mesh
-        (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
+        Mesh(HALF, MAIN, MAIN)
         >>> _MAS_QUANTITY_PROPS_MAPPING['t'].mesh
-        (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+        Mesh(HALF, HALF, HALF)
         >>> _MAS_QUANTITY_PROPS_MAPPING['vr'].mesh
-        (Mesh.MAIN, Mesh.HALF, Mesh.HALF)
+        Mesh(MAIN, HALF, HALF)
         """
         return Mesh(self._mesh, len(self.scales))
 
     def _asdict(self):
+        """Return a plain dictionary of this instance's fields, with mesh resolved.
+
+        Replaces the raw ``_mesh`` integer with the normalized :attr:`mesh`
+        object before returning.
+
+        Returns
+        -------
+        out : dict[str, object]
+            Mapping of field names to their values; ``'_mesh'`` is replaced by
+            ``'mesh'`` containing the resolved :class:`~psi_io._mesh.Mesh` instance.
+
+        Examples
+        --------
+        >>> from psi_io._models import get_mas_quantity_properties
+        >>> d = get_mas_quantity_properties('br')._asdict()
+        >>> 'mesh' in d and '_mesh' not in d
+        True
+        """
         dout = asdict(self)
         dout.update(mesh=self.mesh)
         del dout['_mesh']
@@ -735,12 +760,17 @@ def get_mas_quantity_properties(variable: MasQuantities) -> ModelProps:
     ValueError
         If *variable* is not a recognized MAS quantity.
 
+    See Also
+    --------
+    get_pot3d_quantity_properties : Analogous lookup for POT3D quantities.
+    get_model_prop_caller : Return the getter function for a given model type.
+
     Examples
     --------
-    >>> from psi_io.mhd_io import get_mas_quantity_properties
+    >>> from psi_io._models import get_mas_quantity_properties
     >>> props = get_mas_quantity_properties('br')
     >>> props.desc
-    'Magnetic Field (Radial Component)'
+    'MAS Magnetic Field (Radial Component)'
     >>> get_mas_quantity_properties('BR').name   # case-insensitive
     'br'
     """
@@ -809,9 +839,14 @@ def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> ModelProps:
     ValueError
         If *variable* is not a recognized POT3D quantity.
 
+    See Also
+    --------
+    get_mas_quantity_properties : Analogous lookup for MAS quantities.
+    get_model_prop_caller : Return the getter function for a given model type.
+
     Examples
     --------
-    >>> from psi_io.mhd_io import get_pot3d_quantity_properties
+    >>> from psi_io._models import get_pot3d_quantity_properties
     >>> get_pot3d_quantity_properties('bp').name
     'bp'
     """
@@ -844,7 +879,7 @@ _BASE_SCALE_PROPS_MAPPING = MappingProxyType({
     't': ScaleProps('t', 'PSI Theta Scale (Co-Latitude)', PSI_angle,),
     'p': ScaleProps('p', 'PSI Phi Scale (Longitude)', PSI_angle,),
 })
-"""Read-only mapping from coordinate scale label to its :class:`Props` descriptor."""
+"""Read-only mapping from coordinate scale label to its :class:`ScaleProps` descriptor."""
 
 _PSI_SCALE_PROPS_MAPPING = MappingProxyType({
     **_BASE_SCALE_PROPS_MAPPING,
@@ -852,10 +887,16 @@ _PSI_SCALE_PROPS_MAPPING = MappingProxyType({
     'theta': _BASE_SCALE_PROPS_MAPPING['t'],
     'phi': _BASE_SCALE_PROPS_MAPPING['p'],
 })
+"""Read-only mapping from coordinate scale label to its :class:`ScaleProps` descriptor.
+
+Includes both the canonical short keys (``'r'``, ``'t'``, ``'p'``) and their long-form
+aliases (``'radius'``, ``'theta'``, ``'phi'``).  Alias keys share the same
+:class:`ScaleProps` instance as the corresponding canonical key.
+"""
 
 
 def get_psi_scale_properties(variable: PsiScales) -> ScaleProps:
-    """Return the :class:`~psi_io._models.Props` descriptor for a PSI coordinate scale.
+    """Return the :class:`~psi_io._models.ScaleProps` descriptor for a PSI coordinate scale.
 
     Parameters
     ----------
@@ -865,20 +906,25 @@ def get_psi_scale_properties(variable: PsiScales) -> ScaleProps:
 
     Returns
     -------
-    out : Props
+    out : ScaleProps
         Descriptor for the requested coordinate axis.
 
     Raises
     ------
     ValueError
-        If the first character of *variable* is not ``'r'``, ``'t'``, or ``'p'``.
+        If *variable* is not a recognized PSI coordinate label.
+
+    See Also
+    --------
+    get_mas_quantity_properties : Analogous lookup for MAS model quantities.
+    get_pot3d_quantity_properties : Analogous lookup for POT3D model quantities.
 
     Examples
     --------
-    >>> from psi_io import get_psi_scale_properties
+    >>> from psi_io._models import get_psi_scale_properties
     >>> get_psi_scale_properties('r').desc
-    'Radial Scale (Solar Radii)'
-    >>> get_psi_scale_properties('theta').name   # uses first character only
+    'PSI Radial Scale (Solar Radii)'
+    >>> get_psi_scale_properties('theta').name
     't'
     """
     try:
@@ -906,29 +952,32 @@ ModelType = Literal['mas', 'pot3d']
 _PROP_GETTER_MAPPING = MappingProxyType({
     'mas': get_mas_quantity_properties,
     'pot3d': get_pot3d_quantity_properties,})
-"""Read-only mapping from model/scale label to its :class:`Props` getter function."""
+"""Read-only mapping from model label to its :class:`ModelProps` getter function."""
 
 
 def get_model_prop_caller(model: ModelType) -> Callable:
-    """Return the :class:`Props` getter function for the given model type.
+    """Return the :class:`ModelProps` getter function for the given model type.
 
     Parameters
     ----------
     model : ModelType
-        Case-insensitive model label.  Valid values: ``'mas'``, ``'pot3d'``,
-        ``'scale'``.
+        Case-insensitive model label.  Valid values: ``'mas'``, ``'pot3d'``.
 
     Returns
     -------
     out : Callable
-        The getter function associated with *model* — one of
-        :func:`get_mas_quantity_properties`, :func:`get_pot3d_quantity_properties`,
-        or :func:`get_psi_scale_properties`.
+        The getter function associated with *model* — either
+        :func:`get_mas_quantity_properties` or :func:`get_pot3d_quantity_properties`.
 
     Raises
     ------
     ValueError
         If *model* is not a recognized model label.
+
+    See Also
+    --------
+    get_mas_quantity_properties : Getter for MAS model quantities.
+    get_pot3d_quantity_properties : Getter for POT3D model quantities.
 
     Examples
     --------
@@ -950,6 +999,17 @@ MATCH_QUANTITIES = '|'.join(re.escape(q) for q in sorted(_MAS_QUANTITY_PROPS_MAP
 Quantities are sorted longest-first to avoid partial matches (e.g. ``'heat'`` must be
 tried before ``'h'``).  Used in :data:`FILEPATH_SCHEMA` and
 :func:`extract_quantity_from_filepath`.
+
+Examples
+--------
+>>> import re
+>>> from psi_io._models import MATCH_QUANTITIES
+>>> bool(re.match(MATCH_QUANTITIES, 'br', re.IGNORECASE))
+True
+>>> bool(re.match(MATCH_QUANTITIES, 'heat', re.IGNORECASE))
+True
+>>> bool(re.match(MATCH_QUANTITIES, 'unknown', re.IGNORECASE))
+False
 """
 
 FILEPATH_SCHEMA = rf'^({MATCH_QUANTITIES})(\d{{3}}(?:\d{{3}})?)$'
@@ -963,12 +1023,23 @@ Groups:
 1. Quantity name (e.g. ``'br'``, ``'heat'``).
 2. Sequence number (e.g. ``'001'``, ``'001001'``).
 
-Used by :func:`parse_psi_filename_schema`
+Used by :func:`parse_psi_filename_schema`.
 
 See Also
 --------
 extract_quantity_from_filepath :
     A lenient variant that does not require the sequence suffix.
+
+Examples
+--------
+>>> import re
+>>> from psi_io._models import FILEPATH_SCHEMA
+>>> bool(re.match(FILEPATH_SCHEMA, 'br001001', re.IGNORECASE))
+True
+>>> bool(re.match(FILEPATH_SCHEMA, 'heat001', re.IGNORECASE))
+True
+>>> bool(re.match(FILEPATH_SCHEMA, 'br_001', re.IGNORECASE))
+False
 """
 
 
@@ -1032,10 +1103,15 @@ def extract_sequence_from_filepath(ifile: Path, default: Optional[int] = None) -
     out : int or None
         Integer sequence number, or *default* if no match is found.
 
+    See Also
+    --------
+    extract_quantity_from_filepath : Extract the quantity name from a filepath stem.
+    parse_psi_filename_schema : Strict parser requiring both quantity and sequence.
+
     Examples
     --------
     >>> from pathlib import Path
-    >>> from psi_io.mhd_io import extract_sequence_from_filepath
+    >>> from psi_io._models import extract_sequence_from_filepath
     >>> extract_sequence_from_filepath(Path('br001001.h5'))
     1001
     >>> extract_sequence_from_filepath(Path('vr001.h5'))
@@ -1071,6 +1147,12 @@ def parse_psi_filename_schema(ifile: Path):
     ValueError
         If the filename stem does not match the expected schema.
 
+    See Also
+    --------
+    extract_quantity_from_filepath : Lenient quantity extraction without schema enforcement.
+    extract_sequence_from_filepath : Lenient sequence extraction without schema enforcement.
+    FILEPATH_SCHEMA : The regex pattern used for matching.
+
     Examples
     --------
     >>> from pathlib import Path
@@ -1079,7 +1161,7 @@ def parse_psi_filename_schema(ifile: Path):
     ('br', 1001)
     >>> parse_psi_filename_schema(Path('heat001.hdf'))
     ('heat', 1)
-    >>> parse_psi_filename_schema(Path('notvalid.h5'))
+    >>> parse_psi_filename_schema(Path('notvalid.h5'))  # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
         ...
     ValueError: Filename 'notvalid.h5' does not match expected MAS filename schema: ...
