@@ -9,13 +9,15 @@ import pytest
 
 from psi_io._mesh import Mesh
 from psi_io._models import (
-    Props,
+    ModelProps,
+    ScaleProps,
     _MAS_QUANTITY_PROPS_MAPPING,
     _POT3D_QUANTITY_PROPS_MAPPING,
     _PSI_SCALE_PROPS_MAPPING,
     extract_quantity_from_filepath,
     extract_sequence_from_filepath,
     get_mas_quantity_properties,
+    get_model_prop_caller,
     get_pot3d_quantity_properties,
     get_psi_scale_properties,
     parse_psi_filename_schema,
@@ -23,70 +25,91 @@ from psi_io._models import (
 
 
 # ===========================================================================
-# Props dataclass
+# ModelProps dataclass
 # ===========================================================================
 
-class TestProps:
+class TestModelProps:
     def test_fields_accessible(self):
-        p = Props('br', 'Radial B', u.Gauss, 3, False, 0b100)
+        p = ModelProps('br', 'Radial B', u.Gauss, False, 0b100)
         assert p.name == 'br'
         assert p.desc == 'Radial B'
         assert p.unit == u.Gauss
         assert p._mesh == 0b100
 
     def test_str_returns_name(self):
-        p = Props('vr', 'Radial V', u.km / u.s, 3, False, 0)
+        p = ModelProps('vr', 'Radial V', u.km / u.s, False, 0)
         assert str(p) == 'vr'
 
-    def test_mesh_property_returns_tuple(self):
-        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
+    def test_mesh_property_returns_mesh(self):
+        p = ModelProps('br', 'desc', u.Gauss, False, 0b100)
         mesh = p.mesh
-        assert isinstance(mesh, tuple)
-        assert len(mesh) == 3
-        assert all(isinstance(m, Mesh) for m in mesh)
+        assert isinstance(mesh, Mesh)
 
     def test_mesh_property_br_stagger(self):
-        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
-        assert p.mesh == (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
-
-    def test_mesh_property_none_when_no_mesh(self):
-        p = Props('r', 'Radial Scale', u.cm, 1, True)
-        assert p.mesh is None
+        p = ModelProps('br', 'desc', u.Gauss, False, 0b100)
+        # mesh is a Mesh object; iterate to get per-axis booleans
+        assert list(p.mesh) == [True, False, False]  # HALF, MAIN, MAIN
 
     def test_frozen_immutable(self):
-        p = Props('br', 'Radial B', u.Gauss, 3, False, 0b100)
+        p = ModelProps('br', 'Radial B', u.Gauss, False, 0b100)
         with pytest.raises((AttributeError, TypeError)):
             p.name = 'bt'  # type: ignore[misc]
 
     def test_mul_returns_quantity(self):
-        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
+        p = ModelProps('br', 'desc', u.Gauss, False, 0b100)
         result = p * 2.0
         assert isinstance(result, u.Quantity)
 
     def test_rmul_returns_quantity(self):
-        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
+        p = ModelProps('br', 'desc', u.Gauss, False, 0b100)
         result = 2.0 * p
         assert isinstance(result, u.Quantity)
 
     def test_rtruediv_returns_quantity(self):
-        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
+        p = ModelProps('br', 'desc', u.Gauss, False, 0b100)
         result = 1.0 / p
         assert isinstance(result, u.Quantity)
 
     def test_mul_value_correct(self):
-        p = Props('br', 'desc', u.Gauss, 3, False, 0b100)
+        p = ModelProps('br', 'desc', u.Gauss, False, 0b100)
         result = p * 3.5
         assert result.value == pytest.approx(3.5)
         assert result.unit == u.Gauss
 
-    def test_ndim_and_scalar_stored(self):
-        p = Props('t', 'Temperature', u.MK, 3, True, 0b111)
-        assert p.ndim == 3
+    def test_scalar_stored(self):
+        p = ModelProps('t', 'Temperature', u.MK, True, 0b111)
         assert p.scalar is True
 
-    def test_scale_props_no_mesh_default(self):
-        p = Props('r', 'Radial Scale', u.cm, 1, True)
-        assert p._mesh is None
+
+# ===========================================================================
+# ScaleProps dataclass
+# ===========================================================================
+
+class TestScaleProps:
+    def test_fields_accessible(self):
+        p = ScaleProps('r', 'Radial Scale', u.cm)
+        assert p.name == 'r'
+        assert p.desc == 'Radial Scale'
+        assert p.unit == u.cm
+
+    def test_str_returns_name(self):
+        p = ScaleProps('r', 'Radial Scale', u.cm)
+        assert str(p) == 'r'
+
+    def test_frozen_immutable(self):
+        p = ScaleProps('r', 'Radial Scale', u.cm)
+        with pytest.raises((AttributeError, TypeError)):
+            p.name = 't'  # type: ignore[misc]
+
+    def test_mul_returns_quantity(self):
+        p = ScaleProps('r', 'desc', u.cm)
+        result = p * 2.0
+        assert isinstance(result, u.Quantity)
+
+    def test_rmul_returns_quantity(self):
+        p = ScaleProps('r', 'desc', u.cm)
+        result = 2.0 * p
+        assert isinstance(result, u.Quantity)
 
 
 # ===========================================================================
@@ -165,8 +188,9 @@ class TestPot3dQuantityPropsMapping:
 # ===========================================================================
 
 class TestPsiScalePropsMapping:
-    def test_three_scales_present(self):
-        assert len(_PSI_SCALE_PROPS_MAPPING) == 3
+    def test_six_entries_present(self):
+        # r, t, p + aliases radius, theta, phi
+        assert len(_PSI_SCALE_PROPS_MAPPING) == 6
 
     def test_r_scale_name(self):
         assert _PSI_SCALE_PROPS_MAPPING['r'].name == 'r'
@@ -177,16 +201,22 @@ class TestPsiScalePropsMapping:
     def test_p_scale_name(self):
         assert _PSI_SCALE_PROPS_MAPPING['p'].name == 'p'
 
-    def test_r_scale_has_no_mesh(self):
-        assert _PSI_SCALE_PROPS_MAPPING['r'].mesh is None
+    def test_alias_radius_same_as_r(self):
+        assert _PSI_SCALE_PROPS_MAPPING['radius'] is _PSI_SCALE_PROPS_MAPPING['r']
+
+    def test_alias_theta_same_as_t(self):
+        assert _PSI_SCALE_PROPS_MAPPING['theta'] is _PSI_SCALE_PROPS_MAPPING['t']
+
+    def test_alias_phi_same_as_p(self):
+        assert _PSI_SCALE_PROPS_MAPPING['phi'] is _PSI_SCALE_PROPS_MAPPING['p']
 
     def test_scales_have_units(self):
         for key in ('r', 't', 'p'):
             assert _PSI_SCALE_PROPS_MAPPING[key].unit is not None
 
-    def test_scales_are_1d(self):
+    def test_scale_props_are_scale_props_instances(self):
         for key in ('r', 't', 'p'):
-            assert _PSI_SCALE_PROPS_MAPPING[key].ndim == 1
+            assert isinstance(_PSI_SCALE_PROPS_MAPPING[key], ScaleProps)
 
 
 # ===========================================================================
@@ -194,8 +224,8 @@ class TestPsiScalePropsMapping:
 # ===========================================================================
 
 class TestGetMasQuantityProperties:
-    def test_returns_props(self):
-        assert isinstance(get_mas_quantity_properties('br'), Props)
+    def test_returns_model_props(self):
+        assert isinstance(get_mas_quantity_properties('br'), ModelProps)
 
     def test_correct_quantity_returned(self):
         assert get_mas_quantity_properties('br').name == 'br'
@@ -223,8 +253,8 @@ class TestGetMasQuantityProperties:
 # ===========================================================================
 
 class TestGetPot3dQuantityProperties:
-    def test_returns_props(self):
-        assert isinstance(get_pot3d_quantity_properties('br'), Props)
+    def test_returns_model_props(self):
+        assert isinstance(get_pot3d_quantity_properties('br'), ModelProps)
 
     def test_correct_quantity_returned(self):
         assert get_pot3d_quantity_properties('bp').name == 'bp'
@@ -246,8 +276,8 @@ class TestGetPot3dQuantityProperties:
 # ===========================================================================
 
 class TestGetPsiScaleProperties:
-    def test_returns_props(self):
-        assert isinstance(get_psi_scale_properties('r'), Props)
+    def test_returns_scale_props(self):
+        assert isinstance(get_psi_scale_properties('r'), ScaleProps)
 
     def test_radial_scale(self):
         assert get_psi_scale_properties('r').name == 'r'
@@ -258,7 +288,7 @@ class TestGetPsiScaleProperties:
     def test_phi_scale(self):
         assert get_psi_scale_properties('p').name == 'p'
 
-    def test_first_char_only(self):
+    def test_alias_names(self):
         assert get_psi_scale_properties('theta').name == 't'
         assert get_psi_scale_properties('phi').name == 'p'
         assert get_psi_scale_properties('radius').name == 'r'
@@ -361,3 +391,52 @@ class TestParsePsiFilenameSchema:
         qty, seq = parse_psi_filename_schema(Path('br001001.h5'))
         assert isinstance(qty, str)
         assert isinstance(seq, int)
+
+
+# ===========================================================================
+# get_model_prop_caller
+# ===========================================================================
+
+class TestGetModelPropCaller:
+    def test_mas_returns_mas_getter(self):
+        caller = get_model_prop_caller('mas')
+        assert caller is get_mas_quantity_properties
+
+    def test_pot3d_returns_pot3d_getter(self):
+        caller = get_model_prop_caller('pot3d')
+        assert caller is get_pot3d_quantity_properties
+
+    def test_case_insensitive(self):
+        assert get_model_prop_caller('MAS') is get_mas_quantity_properties
+
+    def test_resolved_getter_works(self):
+        caller = get_model_prop_caller('mas')
+        assert caller('br').name == 'br'
+
+    def test_invalid_model_raises(self):
+        with pytest.raises(ValueError):
+            get_model_prop_caller('custom')
+
+
+# ===========================================================================
+# _asdict serialization
+# ===========================================================================
+
+class TestAsdict:
+    def test_scaleprops_asdict_keys(self):
+        d = get_psi_scale_properties('r')._asdict()
+        assert set(d.keys()) == {'name', 'desc', 'unit'}
+
+    def test_modelprops_asdict_replaces_mesh_int_with_mesh(self):
+        d = get_mas_quantity_properties('br')._asdict()
+        assert '_mesh' not in d
+        assert 'mesh' in d
+
+    def test_modelprops_asdict_mesh_is_mesh_instance(self):
+        d = get_mas_quantity_properties('br')._asdict()
+        assert isinstance(d['mesh'], Mesh)
+
+    def test_modelprops_asdict_roundtrip_fields(self):
+        d = get_mas_quantity_properties('vr')._asdict()
+        assert d['name'] == 'vr'
+        assert d['scalar'] is False

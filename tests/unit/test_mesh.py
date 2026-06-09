@@ -10,44 +10,69 @@ from psi_io._mesh import (
     Mesh,
     _MESH_CODE_REVERSE_MAPPING,
     _average_adjacent,
-    _normalize_mesh_code,
     _remesh_array,
     remesh_array,
 )
 
 
-class TestMeshEnum:
-    def test_main_value(self):
-        assert Mesh.MAIN.value == 0
+class TestMeshDataclass:
+    """Tests for the Mesh frozen dataclass (replaces the old Enum tests)."""
 
-    def test_half_value(self):
-        assert Mesh.HALF.value == 1
+    def test_parse_main_string_3d(self):
+        m = Mesh.parse('main', ndim=3)
+        assert m.code == 0
+        assert m.ndim == 3
 
-    def test_str_main(self):
-        assert str(Mesh.MAIN) == "MAIN"
+    def test_parse_half_string_3d(self):
+        m = Mesh.parse('half', ndim=3)
+        assert m.code == 0b111
+        assert m.ndim == 3
 
-    def test_str_half(self):
-        assert str(Mesh.HALF) == "HALF"
+    def test_parse_int_zero_3d(self):
+        m = Mesh.parse(0, ndim=3)
+        assert m.code == 0
 
-    def test_members_are_distinct(self):
-        assert Mesh.MAIN is not Mesh.HALF
+    def test_parse_int_all_ones_3d(self):
+        m = Mesh.parse(0b111, ndim=3)
+        assert m.code == 0b111
 
-    def test_from_value_zero(self):
-        assert Mesh(0) is Mesh.MAIN
+    def test_parse_returns_mesh_instance(self):
+        m = Mesh.parse(0b100, ndim=3)
+        assert isinstance(m, Mesh)
 
-    def test_from_value_one(self):
-        assert Mesh(1) is Mesh.HALF
+    def test_mesh_instances_are_distinct(self):
+        m1 = Mesh.parse(0, ndim=3)
+        m2 = Mesh.parse(0b111, ndim=3)
+        assert m1 != m2
 
-    @pytest.mark.parametrize("token", ["half", "h", "1", "true"])
-    def test_missing_half_tokens(self, token):
-        assert Mesh(token) is Mesh.HALF
+    def test_frozen_immutable(self):
+        m = Mesh.parse(0b100, ndim=3)
+        with pytest.raises((AttributeError, TypeError)):
+            m.code = 0  # type: ignore[misc]
 
-    @pytest.mark.parametrize("token", ["main", "m", "0", "false"])
-    def test_missing_main_tokens(self, token):
-        assert Mesh(token) is Mesh.MAIN
+    def test_str_all_main(self):
+        m = Mesh.parse(0, ndim=3)
+        assert str(m) == 'MAIN, MAIN, MAIN'
 
-    def test_missing_invalid_returns_none(self):
-        assert Mesh._missing_("bogus") is None
+    def test_str_all_half(self):
+        m = Mesh.parse(0b111, ndim=3)
+        assert str(m) == 'HALF, HALF, HALF'
+
+    def test_str_100(self):
+        m = Mesh.parse(0b100, ndim=3)
+        assert str(m) == 'HALF, MAIN, MAIN'
+
+    def test_len_equals_ndim(self):
+        m = Mesh.parse(0b100, ndim=3)
+        assert len(m) == 3
+
+    def test_bool_false_for_all_main(self):
+        m = Mesh.parse(0, ndim=3)
+        assert not m
+
+    def test_bool_true_for_half(self):
+        m = Mesh.parse(0b100, ndim=3)
+        assert m
 
 
 class TestMeshCodeReverseMapping:
@@ -68,74 +93,145 @@ class TestMeshCodeReverseMapping:
         assert set(_MESH_CODE_REVERSE_MAPPING.keys()) == expected
 
 
-class TestNormalizeMeshCode:
+class TestMeshParse:
+    """Tests for Mesh.parse (replaces old _normalize_mesh_code tests)."""
+
     def test_main_string_1d(self):
-        assert _normalize_mesh_code("main", ndim=1) == (Mesh.MAIN,)
+        m = Mesh.parse('main', ndim=1)
+        assert m == Mesh(0, 1)
 
     def test_main_string_3d(self):
-        assert _normalize_mesh_code("main", ndim=3) == (Mesh.MAIN, Mesh.MAIN, Mesh.MAIN)
+        m = Mesh.parse('main', ndim=3)
+        assert m == Mesh(0, 3)
+        assert list(m) == [False, False, False]
 
     def test_half_string_2d(self):
-        assert _normalize_mesh_code("half", ndim=2) == (Mesh.HALF, Mesh.HALF)
+        m = Mesh.parse('half', ndim=2)
+        assert m == Mesh(0b11, 2)
+        assert list(m) == [True, True]
 
     def test_half_string_3d(self):
-        assert _normalize_mesh_code("half", ndim=3) == (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+        m = Mesh.parse('half', ndim=3)
+        assert list(m) == [True, True, True]
 
     def test_int_zero_3d(self):
-        assert _normalize_mesh_code(0, ndim=3) == (Mesh.MAIN, Mesh.MAIN, Mesh.MAIN)
+        m = Mesh.parse(0, ndim=3)
+        assert list(m) == [False, False, False]
 
     def test_int_all_ones_3d(self):
-        assert _normalize_mesh_code(0b111, ndim=3) == (Mesh.HALF, Mesh.HALF, Mesh.HALF)
+        m = Mesh.parse(0b111, ndim=3)
+        assert list(m) == [True, True, True]
 
     def test_int_100_3d(self):
-        assert _normalize_mesh_code(0b100, ndim=3) == (Mesh.HALF, Mesh.MAIN, Mesh.MAIN)
+        m = Mesh.parse(0b100, ndim=3)
+        assert list(m) == [True, False, False]
 
     def test_int_010_3d(self):
-        assert _normalize_mesh_code(0b010, ndim=3) == (Mesh.MAIN, Mesh.HALF, Mesh.MAIN)
+        m = Mesh.parse(0b010, ndim=3)
+        assert list(m) == [False, True, False]
 
     def test_int_001_3d(self):
-        assert _normalize_mesh_code(0b001, ndim=3) == (Mesh.MAIN, Mesh.MAIN, Mesh.HALF)
+        m = Mesh.parse(0b001, ndim=3)
+        assert list(m) == [False, False, True]
 
     def test_int_011_3d(self):
-        assert _normalize_mesh_code(0b011, ndim=3) == (Mesh.MAIN, Mesh.HALF, Mesh.HALF)
+        m = Mesh.parse(0b011, ndim=3)
+        assert list(m) == [False, True, True]
 
     def test_int_101_3d(self):
-        assert _normalize_mesh_code(0b101, ndim=3) == (Mesh.HALF, Mesh.MAIN, Mesh.HALF)
+        m = Mesh.parse(0b101, ndim=3)
+        assert list(m) == [True, False, True]
 
     def test_int_110_3d(self):
-        assert _normalize_mesh_code(0b110, ndim=3) == (Mesh.HALF, Mesh.HALF, Mesh.MAIN)
+        m = Mesh.parse(0b110, ndim=3)
+        assert list(m) == [True, True, False]
 
     def test_sequence_ints(self):
-        assert _normalize_mesh_code([1, 0, 1], ndim=3) == (Mesh.HALF, Mesh.MAIN, Mesh.HALF)
+        m = Mesh.parse([1, 0, 1], ndim=3)
+        assert list(m) == [True, False, True]
 
     def test_sequence_string_tokens(self):
-        assert _normalize_mesh_code(["h", "m", "h"], ndim=3) == (Mesh.HALF, Mesh.MAIN, Mesh.HALF)
+        m = Mesh.parse(['h', 'm', 'h'], ndim=3)
+        assert list(m) == [True, False, True]
 
     def test_sequence_all_main(self):
-        assert _normalize_mesh_code(["main", "main", "main"], ndim=3) == (Mesh.MAIN, Mesh.MAIN, Mesh.MAIN)
+        m = Mesh.parse(['main', 'main', 'main'], ndim=3)
+        assert list(m) == [False, False, False]
 
-    def test_returns_tuple(self):
-        assert isinstance(_normalize_mesh_code(0, ndim=3), tuple)
+    def test_returns_mesh_instance(self):
+        m = Mesh.parse(0, ndim=3)
+        assert isinstance(m, Mesh)
 
-    def test_tuple_length_matches_ndim(self):
+    def test_ndim_matches(self):
         for ndim in (1, 2, 3, 4):
-            assert len(_normalize_mesh_code(0, ndim=ndim)) == ndim
+            m = Mesh.parse(0, ndim=ndim)
+            assert m.ndim == ndim
 
-    def test_elements_are_mesh_instances(self):
-        for element in _normalize_mesh_code(0b101, ndim=3):
-            assert isinstance(element, Mesh)
+    def test_iteration_yields_bools(self):
+        m = Mesh.parse(0b101, ndim=3)
+        for element in m:
+            assert isinstance(element, bool)
 
     def test_sequence_wrong_length_raises(self):
         with pytest.raises(ValueError):
-            _normalize_mesh_code([1, 0], ndim=3)
+            Mesh.parse([1, 0], ndim=3)
 
     def test_sequence_too_long_raises(self):
         with pytest.raises(ValueError):
-            _normalize_mesh_code([1, 0, 1, 0], ndim=3)
+            Mesh.parse([1, 0, 1, 0], ndim=3)
 
     def test_invalid_token_raises(self):
         with pytest.raises((ValueError, KeyError)):
-            _normalize_mesh_code(["2", "0", "1"], ndim=3)
+            Mesh.parse(['2', '0', '1'], ndim=3)
+
+
+class TestMeshInstanceMethods:
+    """Tests for Mesh instance behavior: indexing, reversal, and remeshing."""
+
+    def test_getitem_returns_single_axis_mesh(self):
+        m = Mesh.parse(0b100, ndim=3)   # half, main, main
+        assert bool(m[0]) is True
+        assert bool(m[1]) is False
+        assert bool(m[2]) is False
+
+    def test_getitem_str(self):
+        m = Mesh.parse(0b100, ndim=3)
+        assert str(m[0]) == 'HALF'
+        assert str(m[1]) == 'MAIN'
+
+    def test_index_returns_int_code(self):
+        assert int(Mesh.parse(0b100, ndim=3)) == 4
+        assert int(Mesh.parse(0b011, ndim=3)) == 3
+
+    def test_reverse_flips_axis_order(self):
+        m = Mesh.parse(0b100, ndim=3)        # half, main, main
+        assert list(m.reverse()) == [False, False, True]
+
+    def test_reverse_is_involution(self):
+        m = Mesh.parse(0b101, ndim=3)
+        assert m.reverse().reverse() == m
+
+    def test_len_matches_ndim(self):
+        assert len(Mesh.parse('main', ndim=3)) == 3
+        assert len(Mesh.parse('main', ndim=2)) == 2
+
+    def test_rshift_to_main_flags_half_axes(self):
+        m = Mesh.parse(0b100, ndim=3)        # half, main, main
+        main = Mesh.parse('main', ndim=3)
+        assert (m >> main) == (True, False, False)
+
+    def test_rshift_none_is_no_remesh(self):
+        m = Mesh.parse(0b111, ndim=3)
+        assert (m >> None) == (False, False, False)
+
+    def test_rshift_to_self_is_no_remesh(self):
+        m = Mesh.parse(0b101, ndim=3)
+        assert (m >> m) == (False, False, False)
+
+    def test_remesh_matches_rshift(self):
+        m = Mesh.parse(0b110, ndim=3)
+        main = Mesh.parse('main', ndim=3)
+        assert m.remesh(main) == (m >> main)
 
 
 class TestAverageAdjacent:
