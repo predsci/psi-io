@@ -37,9 +37,9 @@ from psi_io.mhd_io import PsiData
 # No array data is transferred from disk at this step.
 
 br_filepath = data.get_3d_data()
-reader = PsiData(br_filepath)
-print(f"quantity : {reader.quantity!r}")
-print(f"shape    : {reader.shape}  (Nφ × Nθ × Nr)")
+reader = PsiData(br_filepath, model='mas')
+print(f"name  : {reader.name!r}")
+print(f"shape : {reader.shape}  (Nr × Nθ × Nφ in physical order)")
 
 # %%
 # **Reading in code (native) units**
@@ -73,7 +73,7 @@ print(f"unit (Gauss): {data_gauss.unit}")
 # Passing ``mesh='main'`` shifts every half-mesh axis to the main mesh by
 # averaging adjacent array elements; the radial axis shrinks by one element.
 # The mesh stagger for each quantity is encoded in its
-# :class:`~psi_io._models.Props` descriptor (see :mod:`psi_io._models`), and the
+# :class:`~psi_io._models.ModelProps` descriptor (see :mod:`psi_io._models`), and the
 # averaging itself is performed by :func:`~psi_io._mesh.remesh_array` from
 # :mod:`psi_io._mesh`.
 

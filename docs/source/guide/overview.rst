@@ -307,7 +307,7 @@ components:
    POT3D does not apply a normalization: values are stored in the same physical
    units as the input boundary magnetogram (most commonly Gauss, but this is
    run-dependent).  When reading POT3D output, always specify the correct unit
-   explicitly; ``read(units='physical')`` without a ``unit`` override will return
+   explicitly; ``read(unit='physical')`` without a ``unit`` override will return
    dimensionless values.
 
 Using psi-io

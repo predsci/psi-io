@@ -35,7 +35,7 @@ from psi_io.mhd_io import PsiData
 # To define the metadata data of the given input file, the reader follows a hierarchy of
 # inference steps to determine the values of the following core attributes:
 #
-# ``'quantity'``
+# ``'name'``
 #     Canonical lower-case quantity identifier.
 # ``'sequence'``
 #     Integer time-step sequence number.
@@ -52,49 +52,56 @@ from psi_io.mhd_io import PsiData
 # parsing the filename according to the PSI filename schema. The
 # reader then cross-references the quantity against the canonical properties defined
 # in :mod:`psi_io._models` to infer the remaining metadata attributes.
+#
+# The ``model`` argument selects which property table to consult.  Passing
+# ``model='mas'`` tells the reader to resolve metadata from the MAS quantity
+# mapping; without it, the default ``model='custom'`` requires every metadata
+# field to be supplied explicitly.
 
 br_filepath = data.get_3d_data()
 print(f"Filename : {Path(br_filepath).name}")
-reader = PsiData(br_filepath)
+reader = PsiData(br_filepath, model='mas')
 
 # %%
 # **Core metadata attributes**
 #
-# The :attr:`quantity` and :attr:`sequence` attributes are extracted from the
+# The :attr:`name` and :attr:`sequence` attributes are extracted from the
 # filename stem using the PSI filename schema (*e.g.* ``br001001.h5`` gives
-# ``quantity='br'``, ``sequence=1001``). Since the provided filename does not
+# ``name='br'``, ``sequence=1001``). Since the provided filename does not
 # contain an explicit sequence number, the reader defaults to ``sequence=0``.
 
-print(f"quantity  : {reader.quantity!r}")
+print(f"name      : {reader.name!r}")
 print(f"sequence  : {reader.sequence}")
 print(f"ndim      : {reader.ndim}")
-print(f"shape     : {reader.shape}  (Nφ × Nθ × Nr in HDF storage order)")
+print(f"shape     : {reader.shape}  (Nr × Nθ × Nφ in physical order)")
 
 # %%
 # **Connection to** :mod:`psi_io._models`
 #
-# The :attr:`props` attribute is a :class:`~psi_io._models.Props` dataclass
-# stored in :mod:`psi_io._models`, which bundles the canonical name, description,
-# native unit, and mesh code for every recognised PSI quantity.
+# The reader's metadata is resolved against the
+# :class:`~psi_io._models.ModelProps` dataclass stored in :mod:`psi_io._models`,
+# which bundles the canonical name, description, native unit, and mesh code for
+# every recognised PSI quantity.  The :attr:`name` and :attr:`desc` attributes
+# expose this resolved metadata directly.
 
-print(f"description : {reader.description}")
-print(f"props.name  : {reader.props.name}")
+print(f"name : {reader.name}")
+print(f"desc : {reader.desc}")
 
 # %%
 # **Connection to** :mod:`psi_io._mesh`
 #
-# The :attr:`mesh` attribute is a tuple of :class:`~psi_io._mesh.Mesh` enum
-# members (one per spatial axis in physical ``(r, θ, φ)`` order) that encode the
-# Yee-grid stagger position of the field quantity.
+# The :attr:`mesh` attribute is a :class:`~psi_io._mesh.Mesh` instance
+# (one stagger flag per spatial axis in physical ``(r, θ, φ)`` order) that encodes
+# the Yee-grid stagger position of the field quantity.
 #
 # For the radial magnetic field ``br``, the field is face-centred in the radial
 # direction (*half*-mesh) and cell-centred in both angular directions (*main*-mesh):
 
 from psi_io._mesh import Mesh
 print(f"mesh : {reader.mesh}")
-print(f"  r  → {reader.mesh[0].name}")
-print(f"  θ  → {reader.mesh[1].name}")
-print(f"  φ  → {reader.mesh[2].name}")
+print(f"  r  → {reader.mesh[0]}")
+print(f"  θ  → {reader.mesh[1]}")
+print(f"  φ  → {reader.mesh[2]}")
 
 # %%
 # **Connection to** :mod:`psi_io._units`
@@ -112,9 +119,9 @@ print(f"in Gauss : {reader.unit.to('G'):.4f}")
 # %%
 # **Coordinate scale readers**
 #
-# The :attr:`scales` attribute is a ``Scales(r, t, p)`` named tuple; each element
-# is itself a lightweight reader.  Calling :meth:`read` on a scale returns the
-# 1-D coordinate array as a :class:`~astropy.units.Quantity`.
+# The :attr:`scales` attribute is a named tuple of coordinate readers ``(r, t, p)``;
+# each element is itself a lightweight reader.  Calling :meth:`read` on a scale
+# returns the 1-D coordinate array as a :class:`~astropy.units.Quantity`.
 
 r_scale = reader.scales.r.read()
 t_scale = reader.scales.t.read()
@@ -127,10 +134,10 @@ print(f"φ scale  : shape={p_scale.shape}  range=[{p_scale[0]:.5f}, {p_scale[-1]
 # **Lazy loading**
 #
 # Reading the coordinate scales above did *not* load the main data array.  The
-# :attr:`is_cached` property confirms the primary dataset has not yet been
+# :attr:`data_cached` property confirms the primary dataset has not yet been
 # transferred from disk:
 
-print(f"is_cached before read : {reader.is_cached}")
+print(f"data_cached before read : {reader.data_cached}")
 
 # %%
 # Calling :meth:`~psi_io.mhd_io.PsiData.read` with no arguments loads the full
@@ -138,9 +145,9 @@ print(f"is_cached before read : {reader.is_cached}")
 # the reader's internal cache:
 
 data_arr, r, t, p = reader.read()
-print(f"data shape : {data_arr.shape}  (Nφ × Nθ × Nr)")
-print(f"data unit  : {data_arr.unit}")
-print(f"is_cached  : {reader.is_cached}")
+print(f"data shape  : {data_arr.shape}  (Nφ × Nθ × Nr in HDF storage order)")
+print(f"data unit   : {data_arr.unit}")
+print(f"data_cached : {reader.data_cached}")
 
 # %%
 # Subsequent full-array calls return the cached copy without a second disk read.
