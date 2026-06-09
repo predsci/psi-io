@@ -138,6 +138,7 @@ def test(session: nox.Session) -> None:
     _dist_env(session)
     session.install(*pyproject["project"].get("optional-dependencies", {}).get("test", []))
     session.install(*pyproject["project"].get("optional-dependencies", {}).get("hdf4", []))
+    session.install(*pyproject["project"].get("optional-dependencies", {}).get("interp", []))
 
     tmp = session.create_tmp()
     session.chdir(tmp)
