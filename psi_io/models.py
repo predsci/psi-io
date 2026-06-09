@@ -1,15 +1,8 @@
 r"""Physical property metadata for PSI's model quantities and scales.
 
 This module provides the :class:`ScaleProps` and :class:`ModelProps` dataclasses and
-three read-only mapping objects that fully describe every quantity PSI's modeling codes
-write to HDF files:
-
-- The filename/lookup identifier (e.g., ``'br'``)
-- Human-readable description (e.g., ``'MAS Magnetic Field (Radial Component)'``)
-- Native code :class:`~astropy.units.Unit` (e.g., ``Unit("2.20689 G")`` or ``Unit("MAS_b")``)
-- Dimensionality (e.g., 3 for 3-D output fields)
-- Scalar or vector classification
-- Mesh staggering code (e.g., ``0b011``)
+three read-only mapping objects that describe every quantity PSI's modeling codes
+(*viz.* for MAS and POT3D) write to HDF files.
 
 For metadata access, one should use the provided getter functions rather than the mapping
 objects directly.
@@ -407,7 +400,7 @@ class ScaleProps:
         Canonical lower-case coordinate identifier (``'r'``, ``'t'``, or ``'p'``).
     desc : str
         Human-readable description (e.g. ``'PSI Radial Scale (Solar Radii)'``).
-    unit : u.Unit
+    unit : Unit
         Astropy unit for values stored along this coordinate axis.  For example,
         :data:`~psi_io.units.PSI_rsun` for the radial scale.
 
@@ -464,12 +457,12 @@ class ScaleProps:
 
         Parameters
         ----------
-        other : numeric or u.Quantity
+        other : numeric | Quantity
             The value to multiply by :attr:`unit`.
 
         Returns
         -------
-        out : u.Quantity
+        out : Quantity
             ``other * self.unit``.
 
         Examples
@@ -489,12 +482,12 @@ class ScaleProps:
 
         Parameters
         ----------
-        other : numeric or u.Quantity
+        other : numeric or Quantity
             The value to multiply by :attr:`unit`.
 
         Returns
         -------
-        out : u.Quantity
+        out : Quantity
             ``other * self.unit``.
 
         Examples
@@ -514,12 +507,12 @@ class ScaleProps:
 
         Parameters
         ----------
-        other : numeric or u.Quantity
+        other : numeric | Quantity
             The numerator; divided by :attr:`unit`.
 
         Returns
         -------
-        out : u.Quantity
+        out : Quantity
             ``other / self.unit``.
 
         Examples
@@ -565,7 +558,7 @@ class ModelProps(ScaleProps):
         the filename prefix used in MAS and POT3D HDF output.
     desc : str
         Human-readable description of the physical quantity.
-    unit : u.Unit
+    unit : Unit
         Astropy unit whose scale factor converts one code unit of this quantity to
         physical unit.  For example, :data:`~psi_io.units.MAS_b` ≈ 2.2 Gauss.
     scalar : bool

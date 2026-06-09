@@ -19,7 +19,7 @@ array alongside its three spherical coordinate scales (:math:`r`, :math:`\theta`
 
    import psi_io
 
-   with psi_io.PsiData('br002.h5') as mas_reader:
+   with psi_io.PsiData('br002.h5', model='mas') as mas_reader:
          br, r_scale, t_scale, p_scale = mas_reader.read(mesh='main', unit='cgs')
 
 

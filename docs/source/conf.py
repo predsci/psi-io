@@ -108,23 +108,15 @@ exclude_dunder = True
 sort_members = False
 exclusions = [
     "psi_io.psi_io._",
-
-    "psi_io.models._MAS_QUANTITY_PROPS_MAPPING",
-    "psi_io.models._POT3D_QUANTITY_PROPS_MAPPING",
-    "psi_io.models._PSI_SCALE_PROPS_MAPPING",
-    "psi_io.models.MATCH_QUANTITIES",
-    "psi_io.models.FILEPATH_SCHEMA",
-    "psi_io.models.ModelType",
-    "psi_io.models._PROP_GETTER_MAPPING",
-    "psi_io.models._BASE_SCALE_PROPS_MAPPING",
-    "psi_io.models.ModelProps._mesh",
-
-    "psi_io.mesh._MESH_CODE_REVERSE_MAPPING",
-    "psi_io.mesh._coerce_mesh_target",
-    "psi_io.mesh._average_adjacent",
-    "psi_io.mesh._remesh_array",
-
-    r"psi_io\.mhd_io\.(?!PsiData\b)",
+    "psi_io.mesh._",
+    "psi_io.units._",
+    "psi_io.models._",
+    # "psi_io.mhd_io._",
+    r"^psi_io.models.ModelProps.(?!mesh)",
+    r"^psi_io\.models\.[A-Z][A-Z0-9_]*$",  # all-UPPERCASE module constants (MATCH_QUANTITIES, FILEPATH_SCHEMA)
+    r"psi_io\.mhd_io\.(?!(?:PsiData|_HdfArray|_HdfData|CacheType|MetaDataWarning|CacheWarning)\b)",
+    r"psi_io\.mhd_io\._HdfArray\._",
+    r"psi_io\.mhd_io\._HdfData\._"
 ]
 
 node_tree = build_node_tree(root_package,
@@ -152,6 +144,11 @@ autodoc_default_options = {
 # ------------------------------------------------------------------------------
 extensions.append("numpydoc")
 
+# numpydoc otherwise auto-injects its own "Methods"/"Attributes" autosummary
+# tables into every class, duplicating the tables built by the autosummary
+# class.rst template.  Disable it so only the template's tables are rendered.
+numpydoc_show_class_members = False
+
 numpydoc_xref_param_type = True
 numpydoc_xref_ignore = {"optional", "default", "of", "or"}
 numpydoc_xref_aliases = {
@@ -165,13 +162,15 @@ numpydoc_xref_aliases = {
     # --- NumPy ---
     "np.ndarray": "numpy.ndarray",
     "np.dtype": "numpy.dtype",
+    "ArrayLike": "numpy.typing.ArrayLike",
     # --- SciPy ---
     "RegularGridInterpolator": "scipy.interpolate.RegularGridInterpolator",
     # --- Astropy ---
-    "u.Quantity": "astropy.units.Quantity",
-    "u.Unit": "astropy.units.UnitBase",
+    "Quantity": "astropy.units.Quantity",
+    "Unit": "astropy.units.UnitBase",
     "QuantityLike": "astropy.units.typing.QuantityLike",
     "UnitLike": "astropy.units.typing.UnitLike",
+    "Table": "astropy.table.Table",
     "astropy.units.Quantity": "astropy.units.Quantity",
     "astropy.units.Unit": "astropy.units.UnitBase",
     # --- psi_io.psi_io ---
@@ -182,6 +181,8 @@ numpydoc_xref_aliases = {
     # --- psi_io.mesh ---
     "Mesh": "psi_io.mesh.Mesh",
     "MeshCodeType": "psi_io.mesh.MeshCodeType",
+    "MeshLike": "psi_io.mesh.MeshLike",
+    "ArrayOrdering": "psi_io.mesh.ArrayOrdering",
     # --- psi_io_models ---
     "ScaleProps": "psi_io.models.ScaleProps",
     "ModelProps": "psi_io.models.ModelProps",
@@ -192,10 +193,6 @@ numpydoc_xref_aliases = {
     # --- psi_io.mhd_io ---
     "HdfVersionType": "psi_io.mhd_io.HdfVersionType",
     "CacheType": "psi_io.mhd_io.CacheType",
-    "H5Scale": "psi_io.mhd_io.H5Scale",
-    "H4Scale": "psi_io.mhd_io.H4Scale",
-    "H5Data": "psi_io.mhd_io.H5Data",
-    "H4Data": "psi_io.mhd_io.H4Data",
 }
 
 # ------------------------------------------------------------------------------

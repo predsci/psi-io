@@ -1,284 +1,55 @@
-r"""Lazy HDF readers for PSI MAS and POT3D magnetohydrodynamic model output.
+r"""Lazy, unit-aware HDF readers for PSI MAS and POT3D magnetohydrodynamic output.
 
-This module provides a unified, unit-aware interface for reading three-dimensional
-field variables from Predictive Science Inc.'s MAS and POT3D solvers.  Both HDF4
-(``.hdf``) and HDF5 (``.h5``) files are supported through a common API.  The sole
-public symbol exported by this module is :func:`PsiData`.
+This module reads three-dimensional field variables from Predictive Science Inc.'s
+MAS and POT3D solvers through a single interface that spans both HDF4 (``.hdf``) and
+HDF5 (``.h5``) files.  Readers are *lazy*: metadata is resolved at construction from
+the filename and HDF attributes, while array data is transferred from disk only on
+access, and full-dataset reads are cached on the reader.
 
-.. rubric:: Entry Point
+.. rubric:: Entry point
 
-:func:`PsiData` is a factory function that opens a PSI HDF file and returns a
-lazy reader object.  The file extension determines the I/O backend — ``.h5``
-files are read via `h5py <https://www.h5py.org/>`_ and ``.hdf`` files via
-`pyhdf <https://fhs.github.io/pyhdf/>`_.  The *model* argument (``'mas'`` or
-``'pot3d'``) selects the quantity-property and mesh-stagger metadata tables
-applied during metadata resolution:
+:func:`PsiData` is the sole public symbol and the intended way to use this module.
+It is a factory that inspects the file extension and ``model`` argument and returns
+the matching concrete reader; the underlying ``_Hdf*`` classes should never be
+instantiated directly.
 
 .. code-block:: python
 
     from psi_io.mhd_io import PsiData
 
-    reader = PsiData('br001001.h5')                    # MAS HDF5 (default)
-    reader = PsiData('br001001.hdf', model='mas')      # MAS HDF4
-    reader = PsiData('br001.h5', model='pot3d')        # POT3D HDF5
+    PsiData('br001001.hdf', model='mas')                                    # MAS HDF4
+    PsiData('br001.h5', model='pot3d', unit='Gauss')                        # POT3D HDF5 (unit declared)
+    PsiData('emission.h5', mesh='MMM', scales='X,Y,Z', order='C', ...)      # Custom reader
 
-.. rubric:: Lazy Loading and Caching
+.. rubric:: Reader interface
 
-No data are read from disk at construction time.  Metadata — quantity name,
-sequence number, physical unit, and mesh stagger — are parsed from the filename
-stem and/or HDF file attributes.  Data are transferred from disk only when
-:meth:`read` or :meth:`vslice` is called.
+The object returned by :func:`PsiData` is an :class:`_HdfData` instance.  Refer to
+the following classes for the complete reference:
 
-When a read or vslice call covers the *entire* dataset with no spatial
-restrictions, the result is cached on the reader object.  Subsequent full-array
-calls return the cached copy without a second disk read.  Partial reads — any
-call with at least one non-full-axis argument — are never cached.  The cache
-state is exposed via the ``data_cached`` and ``interp_cached`` properties.
-
-.. rubric:: Attributes
-
-The following attributes are available on every object returned by
-:func:`PsiData`:
-
-``name`` : :class:`str`
-    Canonical lower-case quantity identifier (e.g. ``'br'``, ``'vr'``,
-    ``'t'``).  Resolved from the filename stem, HDF file attributes, or the
-    ``name`` keyword argument passed to :func:`PsiData`.
-
-``desc`` : :class:`str`
-    Human-readable description of the physical quantity
-    (e.g. ``'MAS Magnetic Field (Radial Component)'``).
-
-``sequence`` : :class:`int`
-    Time-step sequence number extracted from the filename
-    (e.g. ``br001001.h5`` → ``1001``) or from HDF file attributes.
-
-``unit`` : :class:`~astropy.units.Unit`
-    Conversion factor from one code unit to physical units.  For MAS
-    quantities these are the custom normalization units defined in
-    :mod:`psi_io.units` (e.g. :data:`~psi_io.units.MAS_b` ≈ 2.2 G for
-    magnetic field, :data:`~psi_io.units.MAS_v` ≈ 481 km s⁻¹ for velocity).
-    For POT3D the default is dimensionless — see the :func:`PsiData` warning.
-
-``mesh`` : :class:`~psi_io.mesh.Mesh`
-    Yee-grid stagger position for each spatial axis in physical ``(r, θ, φ)``
-    order.  Each element is either half-mesh (offset by half a cell spacing)
-    or main-mesh (cell-centred).  The integer encoding and per-quantity stagger
-    codes are defined in :mod:`psi_io.mesh`; the canonical default for each
-    quantity is stored in its :class:`~psi_io.models.ModelProps` descriptor.
-
-``scales`` : named tuple of scale readers
-    Named tuple of coordinate scale readers ``(r, t, p)``.  Each element wraps
-    the one-dimensional coordinate array stored in the HDF file.  The radial
-    coordinate uses :data:`~psi_io.units.PSI_rsun` (solar radii); the
-    co-latitude and longitude coordinates use
-    :data:`~psi_io.units.PSI_angle` (radians).  Each scale reader exposes
-    the same :meth:`read` interface as the main data reader.
-
-``shape`` : :class:`tuple` of :class:`int`
-    Array dimensions in HDF storage order ``(Nφ, Nθ, Nr)`` — the radial
-    axis is *last* due to Fortran column-major convention.  All slicing APIs
-    accept arguments in physical ``(r, θ, φ)`` order and reverse the indexing
-    internally.
-
-``ndim`` : :class:`int`
-    Number of spatial dimensions; always ``3`` for MAS and POT3D field
-    variables.
-
-``size`` : :class:`int`
-    Total element count (``Nφ × Nθ × Nr``).
-
-``nbytes`` : :class:`int`
-    Dataset size in bytes.
-
-``dtype`` : :class:`numpy.dtype`
-    Element type of the stored dataset (typically ``float32``).
-
-``attrs`` : :class:`dict`
-    HDF file-level attributes as a plain Python dictionary.
-
-``data_cached`` : :class:`bool`
-    ``True`` once a full-array read has populated the in-memory data cache;
-    ``False`` otherwise.
-
-``interp_cached`` : :class:`bool`
-    ``True`` once a :class:`~scipy.interpolate.RegularGridInterpolator` has been
-    built and stored in memory; ``False`` otherwise.
-
-.. rubric:: Reading Data — ``read``
-
-.. code-block:: python
-
-    odata[, r, t, p] = reader.read(*args, unit=None, mesh=None, scales=True)
-
-Each positional argument restricts one spatial axis in physical ``(r, θ, φ)``
-order:
-
-- Omitted / ``None`` — full axis.
-- ``int`` — single index; axis retained as a length-1 dimension.
-- ``slice`` — standard Python slice.
-- ``(start, stop)`` or ``(start, stop, step)`` — converted to a slice.
-- ``Ellipsis`` — expands to ``None`` for all remaining axes.
-
-**unit**
-    Output unit.  String aliases ``'native'`` / ``'code'`` / ``'model'`` /
-    ``'psi'`` return values in MAS code units (the units defined in
-    :mod:`psi_io.units`).  Aliases ``'real'`` / ``'phys'`` / ``'physical'``
-    / ``'cgs'`` call :func:`~psi_io.units.decompose_mas_units` to express
-    values in CGS base units.  Any other string or
-    :class:`~astropy.units.Unit` instance is forwarded to
-    :meth:`astropy.units.Quantity.to`.
-
-**mesh**
-    Target mesh stagger (:data:`~psi_io.mesh.MeshCodeType`).  Axes that are
-    on the half mesh in the stored data but on the main mesh in *mesh* are
-    averaged via :func:`~psi_io.mesh.remesh_array`.  Up-sampling
-    (main → half) raises :exc:`ValueError`.
-
-**scales**
-    If ``True`` (default), return the corresponding coordinate slice for each
-    axis as additional :class:`~astropy.units.Quantity` values ``(r, t, p)``
-    after the data array.
+- :class:`_HdfData` — the main field reader.  :meth:`_HdfData.read` slices by index
+  and :meth:`_HdfData.vslice` slices by physical coordinate value with linear
+  interpolation.  Both return :class:`~astropy.units.Quantity` data in physical
+  ``(r, θ, φ)`` order, with optional unit conversion and mesh remapping.
+- :class:`_HdfArray` — the array interface inherited by every reader, defining the
+  metadata properties (``name``, ``desc``, ``unit``, ``mesh``, ``shape``, ``dtype``,
+  ``data_cached``, ``interp_cached`` …) and the base :meth:`_HdfArray.read`.
+- ``reader.scales`` — a named tuple of per-axis coordinate readers ``(r, t, p)``
+  that expose the same :class:`_HdfArray` interface as the main reader.
 
 .. note::
-    PSI HDF files are written in Fortran column-major order so that numpy
-    reads them with shape ``(Nφ, Nθ, Nr)`` — the radial axis is *last*.  All
-    positional arguments to :meth:`read` and the returned coordinate scales
-    are in physical ``(r, θ, φ)`` order regardless of on-disk layout.
+    PSI HDF files are stored in Fortran column-major order, so ``reader.shape`` and
+    the on-disk layout are ``(Nφ, Nθ, Nr)`` with the radial axis last.  All
+    slicing arguments and returned coordinate scales are nevertheless given in
+    physical ``(r, θ, φ)`` order.
 
-.. rubric:: Value-Space Slicing — ``vslice``
+.. rubric:: Supported quantities
 
-.. code-block:: python
-
-    odata[, r, t, p] = reader.vslice(*args, unit=None, mesh=None, scales=True,
-                                     bounds_error=True, fill_value=None)
-
-``vslice`` is a superset of :meth:`read` that additionally accepts physical
-coordinate values as positional arguments.  Passing a
-:class:`~astropy.units.Quantity` or a bare scalar for an axis locates the two
-nearest grid points, loads a 2-element window, and linearly interpolates to the
-target value; the resulting axis has size 1.  Index-space arguments (``slice``,
-``int``, ``None``, ``Ellipsis``) are handled identically to :meth:`read`.
-
-**bounds_error**
-    If ``True`` (default), raise :exc:`ValueError` when a value is outside the
-    coordinate range.  Set to ``False`` and supply a **fill_value** to replace
-    out-of-bounds points; pass ``fill_value=None`` to extrapolate silently.
-
-When ``scales=True``, value-interpolated axes return the target coordinate as
-a length-1 :class:`~astropy.units.Quantity`; index-space axes return the
-corresponding coordinate slice as usual.
-
-.. rubric:: File Lifecycle
-
-Readers hold an open HDF file handle.  Use the context-manager protocol to
-guarantee cleanup:
-
-.. code-block:: python
-
-    with PsiData('br001001.h5') as reader:
-        data, r, t, p = reader.read(unit='Gauss')
-
-Alternatively, call ``reader.close()`` and ``reader.open()`` to manage the
-handle explicitly.  The handle is also released automatically when the reader
-is garbage-collected.
-
-.. rubric:: Supported Quantities
-
-**MAS** (19 quantities):
-
-.. list-table::
-   :widths: 12 32 24 32
-   :header-rows: 1
-
-   * - Key(s)
-     - Description
-     - Code unit
-     - Stagger ``(r, θ, φ)``
-   * - ``br``, ``bt``, ``bp``
-     - Magnetic field components
-     - :data:`~psi_io.units.MAS_b` (≈ 2.2 G)
-     - ``HALF/MAIN/MAIN``, ``MAIN/HALF/MAIN``, ``MAIN/MAIN/HALF``
-   * - ``vr``, ``vt``, ``vp``
-     - Velocity components
-     - :data:`~psi_io.units.MAS_v` (≈ 481 km s⁻¹)
-     - ``MAIN/HALF/HALF``, ``HALF/MAIN/HALF``, ``HALF/HALF/MAIN``
-   * - ``jr``, ``jt``, ``jp``
-     - Current density components
-     - :data:`~psi_io.units.MAS_j`
-     - ``MAIN/HALF/HALF``, ``HALF/MAIN/HALF``, ``HALF/HALF/MAIN``
-   * - ``t``, ``te``, ``tp``
-     - Temperature (single / electron / proton)
-     - :data:`~psi_io.units.MAS_t` (≈ 28 MK)
-     - ``HALF/HALF/HALF``
-   * - ``rho``
-     - Mass density
-     - :data:`~psi_io.units.MAS_n` (10⁸ cm⁻³)
-     - ``HALF/HALF/HALF``
-   * - ``p``
-     - Thermal pressure
-     - :data:`~psi_io.units.MAS_p`
-     - ``HALF/HALF/HALF``
-   * - ``ep``, ``em``
-     - Alfvén wave energy density (outward / inward)
-     - :data:`~psi_io.units.MAS_p`
-     - ``HALF/HALF/HALF``
-   * - ``zp``, ``zm``
-     - Elsässer wave amplitudes (outward / inward)
-     - :data:`~psi_io.units.MAS_v`
-     - ``HALF/HALF/HALF``
-   * - ``heat``
-     - Volumetric coronal heating rate
-     - :data:`~psi_io.units.MAS_heat`
-     - ``HALF/HALF/HALF``
-
-**POT3D** (3 quantities): ``br``, ``bt``, ``bp`` — magnetic field components,
-unit :data:`~psi_io.units.POT3D_b` (dimensionless by default; see the
-:func:`PsiData` warning regarding unit declaration).
-
-.. rubric:: Examples
-
-Full MAS radial field read with coordinate scales:
-
-.. code-block:: python
-
-    from psi_io.mhd_io import PsiData
-
-    reader = PsiData('br001001.h5')
-    data, r, t, p = reader.read()              # code units (MAS_b)
-    data, r, t, p = reader.read(unit='Gauss')  # convert to Gauss on the fly
-
-Partial read — inner radial shell in CGS base units, coordinates suppressed:
-
-.. code-block:: python
-
-    data = reader.read(slice(0, 10), unit='physical', scales=False)
-
-Value-space slice — extract the r = 2.5 R☉ surface:
-
-.. code-block:: python
-
-    data, r, t, p = reader.vslice(2.5, unit='Gauss')  # bare scalar → native coord unit
-
-POT3D file — unit must be declared at construction because it is not encoded in
-the file:
-
-.. code-block:: python
-
-    reader = PsiData('br001.hdf', model='pot3d', unit='Gauss')
-    data, r, t, p = reader.read()
-
-Inspect metadata without loading data:
-
-.. code-block:: python
-
-    reader = PsiData('rho001001.h5')
-    reader.name          # 'rho'
-    reader.desc          # 'MAS Density'
-    reader.unit          # MAS_n
-    reader.mesh          # Mesh(HALF, HALF, HALF)
-    reader.data_cached   # False
-    reader.shape         # (Nφ, Nθ, Nr) — numpy storage order
+MAS provides 19 field variables — magnetic field, velocity, and current-density
+components, temperatures, density, pressure, Alfvén/Elsässer wave energy, and
+coronal heating — while POT3D provides the three magnetic-field components.  Each
+quantity's canonical unit and mesh stagger are defined in :mod:`psi_io.models`, and
+the corresponding normalization constants in :mod:`psi_io.units`.  POT3D output is
+unnormalized; see the :func:`PsiData` warning on declaring its unit.
 """
 
 from __future__ import annotations
@@ -756,9 +527,9 @@ def _apply_units(data: u.Quantity,
 
     Parameters
     ----------
-    data : u.Quantity
+    data : Quantity
         Data in code units.
-    unit : str, u.Unit, or None
+    unit : str | Unit | None
         Requested output unit.  ``None`` is a no-op.  Special string aliases:
         ``'native'`` / ``'code'`` / ``'model'`` / ``'psi'`` — return *data*
         unchanged; ``'real'`` / ``'phys'`` / ``'physical'`` / ``'cgs'`` —
@@ -768,7 +539,7 @@ def _apply_units(data: u.Quantity,
 
     Returns
     -------
-    out : u.Quantity
+    out : Quantity
         *data* in the requested unit.
 
     Raises
@@ -1104,7 +875,7 @@ class _HdfArray(ABC):
 
         Returns
         -------
-        out : u.Unit
+        out : Unit
             E.g. :data:`~psi_io.units.MAS_b` for MAS magnetic field.
         """
         return self._unit
@@ -1267,35 +1038,41 @@ class _HdfArray(ABC):
              mesh: Optional[MeshLike] = None,
              order: Optional[ArrayOrdering] = None,
              scales: bool = False) -> u.Quantity | tuple[u.Quantity, ...]:
-        """Read data from the HDF dataset, optionally remeshing and converting units.
+        """Read data by index with optional unit conversion.
+
+        .. attention::
+
+           When reading/slicing data, the ``*args`` are **always** supplied in physical (*e.g.*
+           :math:`(r, \\theta, \\phi)`) order. However, unless specified with the ``order``
+           argument, the sliced data array will be returned in storage order.
+
+        .. attention::
+
+           The ``scales`` argument is only functional on the main data array reader
+           (:class:`_HdfData`). It is accepted by scale readers (:class:`_HdfScale`)
+           for pass-through compatibility but has no effect there.
 
         Parameters
         ----------
-        *args : None | int | tuple | slice
+        *args : int | tuple | slice | None
             Index-space axis arguments in physical ``(r, t, p)`` order.
-            ``None`` selects the full axis; ``int`` selects a single element;
-            ``tuple`` is converted to a :class:`slice`; ``Ellipsis`` expands
-            to ``None`` for all remaining axes.
-        unit : str | u.Unit | None, optional
-            Output unit.  ``None`` returns code units.  Special strings:
-            ``'native'``/``'code'``/``'model'``/``'psi'`` — unchanged;
-            ``'real'``/``'phys'``/``'physical'``/``'cgs'`` — CGS base units.
-            Default is ``None``.
+        unit : UnitLike | None, optional
+            Output unit.  Default is ``None`` (code units).
         mesh : MeshLike | None, optional
-            Target mesh stagger.  Axes on the half mesh that are requested on
-            the main mesh are averaged by :func:`~psi_io.mesh.remesh_array`.
-            Default is ``None`` (no remeshing).
-        order : {'F', 'C'} | None, optional
-            Transpose the output if it differs from the stored order.
-            Default is ``None`` (no transpose).
+            Target stagger mesh.  Default is ``None`` (no remeshing).
+        order : ArrayOrdering | None, optional
+            Transpose the output if it differs from storage order.
+            Default is ``None``.
         scales : bool, optional
-            If ``True``, return the coordinate slices alongside the data.
-            Default is ``False``.
+            If ``True`` (default), return coordinate slices alongside data.
 
         Returns
         -------
-        out : u.Quantity | tuple[u.Quantity, ...]
-            Data array, or ``(data,)`` when *scales* is ``True``.
+        data : Quantity
+            Sliced data array with the specified mesh staggering, units, and ordering
+            applied.
+        *scales : Quantity
+            Sliced scales (only returned when *scales* is ``True``).
 
         Examples
         --------
@@ -1321,7 +1098,7 @@ class _HdfArray(ABC):
 
         Returns
         -------
-        out : u.Quantity | tuple[u.Quantity, ...]
+        out : Quantity | tuple[Quantity, ...]
             Same as :meth:`read`.
         """
         return self.read(*args, **kwargs)
@@ -1338,7 +1115,7 @@ class _HdfArray(ABC):
 
         Returns
         -------
-        out : u.Quantity
+        out : Quantity
             Sliced and remeshed data multiplied by :attr:`unit`.
         """
         return _remesh_array(self[args], remesh=remesh, order=self.order) * self.unit
@@ -1704,15 +1481,21 @@ class _HdfData(_HdfArray, ABC):
              scales: bool = True) -> u.Quantity | tuple[u.Quantity, ...]:
         """Read data by index with optional unit conversion and coordinate scales.
 
+        .. attention::
+
+           When reading/slicing data, the ``*args`` are **always** supplied in physical (*e.g.*
+           :math:`(r, \\theta, \\phi)`) order. However, unless specified with the ``order``
+           argument, the sliced data array will be returned in storage order.
+
         Parameters
         ----------
-        *args : None | int | tuple | slice
+        *args : int | tuple | slice | None
             Index-space axis arguments in physical ``(r, t, p)`` order.
-        unit : str | u.Unit | None, optional
+        unit : UnitLike | None, optional
             Output unit.  Default is ``None`` (code units).
         mesh : MeshLike | None, optional
             Target stagger mesh.  Default is ``None`` (no remeshing).
-        order : {'F', 'C'} | None, optional
+        order : ArrayOrdering | None, optional
             Transpose the output if it differs from storage order.
             Default is ``None``.
         scales : bool, optional
@@ -1720,15 +1503,11 @@ class _HdfData(_HdfArray, ABC):
 
         Returns
         -------
-        data : u.Quantity
-            Data array in physical order, or the first element of the tuple
-            when *scales* is ``True``.
-        r : u.Quantity
-            Radial coordinate slice.  Only returned when *scales* is ``True``.
-        t : u.Quantity
-            Co-latitude coordinate slice.  Only returned when *scales* is ``True``.
-        p : u.Quantity
-            Longitude coordinate slice.  Only returned when *scales* is ``True``.
+        data : Quantity
+            Sliced data array with the specified mesh staggering, units, and ordering
+            applied.
+        *scales : Quantity
+            Sliced scales (only returned when *scales* is ``True``).
 
         Examples
         --------
@@ -1761,12 +1540,12 @@ class _HdfData(_HdfArray, ABC):
 
         Parameters
         ----------
-        data : array-like or astropy QTable
-            Positions to interpolate, as an ``(N, 3)`` array-like with columns
-            ``(r, t, p)`` in the units of the respective coordinate scales.
-            An :class:`~astropy.table.QTable` with columns named after the
-            scale fields is also accepted.
-        unit : str | u.Unit | None, optional
+        data : ArrayLike | Table
+            Positions to interpolate, as a :class:`~astropy.table.Table`-like :math:`N \\times S` array,
+            where :math:`\\lvert N \\rvert` is the number of positions, and :math:`\\lvert S \\rvert`
+            is the number of scales. When columns do not possess a unit, they are cast to the
+            corresponding scale's units.
+        unit : UnitLike | None, optional
             Output unit.  Default is ``None`` (code units).
         **kwargs : object
             Forwarded to :class:`~scipy.interpolate.RegularGridInterpolator`.
@@ -1775,7 +1554,7 @@ class _HdfData(_HdfArray, ABC):
 
         Returns
         -------
-        out : u.Quantity
+        out : Quantity
             Interpolated values of shape ``(N,)``.
 
         Raises
@@ -1837,19 +1616,25 @@ class _HdfData(_HdfArray, ABC):
         Extends :meth:`read` to accept physical coordinate values as positional
         arguments.  A scalar or :class:`~astropy.units.Quantity` argument for an
         axis locates the two nearest grid points and linearly interpolates to the
-        target value.  Index-space arguments (``None``, ``int``, ``slice``,
-        ``tuple``) are handled identically to :meth:`read`.
+        target value.  Index-space arguments (``None``, ``int``, ``slice``) are
+        handled identically to :meth:`read`.
+
+        .. attention::
+
+           When reading/slicing data, the ``*args`` are **always** supplied in physical (*e.g.*
+           :math:`(r, \\theta, \\phi)`) order. However, unless specified with the ``order``
+           argument, the sliced data array will be returned in storage order.
 
         Parameters
         ----------
-        *args : None | int | slice | tuple | QuantityLike
+        *args : QuantityLike | int | slice | None
             One argument per axis in physical ``(r, t, p)`` order.  Physical
             coordinate values trigger interpolation; index-space arguments do not.
-        unit : str | u.Unit | None, optional
+        unit : UnitLike | None, optional
             Output unit.  Default is ``None`` (code units).
         mesh : MeshCodeType | None, optional
             Target stagger mesh.  Default is ``None``.
-        order : {'F', 'C'} | None, optional
+        order : ArrayOrdering | None, optional
             Transpose output if it differs from storage order.  Default is ``None``.
         scales : bool, optional
             If ``True`` (default), return coordinate slices alongside the data.
@@ -1859,14 +1644,10 @@ class _HdfData(_HdfArray, ABC):
 
         Returns
         -------
-        data : u.Quantity
+        data : Quantity
             Interpolated or sliced data array.
-        r : u.Quantity
-            Radial coordinate slice or target value.  Only when *scales* is ``True``.
-        t : u.Quantity
-            Co-latitude coordinate slice or target value.  Only when *scales* is ``True``.
-        p : u.Quantity
-            Longitude coordinate slice or target value.  Only when *scales* is ``True``.
+        *scales : Quantity
+            Sliced scales (only returned when ``scales`` is ``True``).
 
         Raises
         ------
@@ -2226,26 +2007,19 @@ def PsiData(ifile: PathLike, /,
     :meth:`vslice`.  Full-array reads are cached automatically; partial reads
     are not.
 
-    The returned reader exposes the following attributes:
+    The returned object is an :class:`_HdfData` instance; see :class:`_HdfData`
+    and the inherited :class:`_HdfArray` interface for the full set of metadata
+    properties (``name``, ``desc``, ``unit``, ``mesh``, ``scales``, ``shape``,
+    ``dtype`` …) and reader methods.  In brief, use :meth:`~_HdfData.read` to load
+    a slice by index and :meth:`~_HdfData.vslice` to slice by physical coordinate
+    value with linear interpolation; both return :class:`~astropy.units.Quantity`
+    data in physical ``(r, θ, φ)`` order, and the object supports the
+    context-manager protocol.
 
-    - ``name`` — canonical lower-case quantity identifier (e.g. ``'br'``).
-    - ``desc`` — human-readable quantity description.
-    - ``sequence`` — integer time-step sequence number.
-    - ``unit`` — :class:`~astropy.units.Unit` for code → physical conversion;
-      normalization constants are defined in :mod:`psi_io.units`.
-    - ``mesh`` — per-axis Yee-grid stagger as a :class:`~psi_io.mesh.Mesh`
-      instance; see :mod:`psi_io.mesh`.
-    - ``scales`` — named tuple of coordinate scale readers ``(r, t, p)``,
-      each supporting the same :meth:`read` interface as the main reader.
-    - ``shape``, ``ndim``, ``size``, ``nbytes``, ``dtype``, ``attrs`` — array
-      metadata; shape is in physical ``(r, t, p)`` order.
-    - ``data_cached`` — ``True`` after the data array has been cached.
-    - ``interp_cached`` — ``True`` after the interpolator has been built.
-
-    Use :meth:`read` to load a slice by index and :meth:`vslice` to slice by
-    physical coordinate value with linear interpolation.  Both return data as
-    :class:`~astropy.units.Quantity` objects in physical ``(r, θ, φ)`` order.
-    The object also supports the context-manager protocol.
+    By default the reader is **lazy** (``cache='lazy'``): array data is
+    transferred from disk only on access, and a full-array read is then cached on
+    the reader.  Pass ``cache='eager'`` to load the data immediately at
+    construction, or ``cache=None`` to disable caching entirely.
 
     .. warning:: **POT3D unit convention**
 
@@ -2261,11 +2035,45 @@ def PsiData(ifile: PathLike, /,
             reader = PsiData('br001.h5', model='pot3d', unit='Gauss')
             data, r, t, p = reader.read()
 
+    .. rubric:: Metadata resolution
+
+    Every metadata field is drawn from up to three sources, in *decreasing*
+    priority:
+
+    1. **Keyword arguments** passed to this function, named after the
+       :class:`~psi_io.models.ModelProps` fields (``name``, ``desc``, ``unit``,
+       ``scalar``, ``mesh``, ``order``, ``sequence``, ``scales``).
+    2. The **HDF dataset attribute dictionary** (``reader.attrs``), for any of
+       those same field names stored on the file.
+    3. The **model-mapping defaults** in :mod:`psi_io.models`, consulted only
+       when *model* names a recognized PSI model.
+
+    A value supplied at a higher level overrides the levels beneath it: an
+    explicit keyword argument always wins over a file attribute, which in turn
+    overrides the model default.  This is how the keyword arguments below can
+    *correct* or *complete* metadata that is missing, wrong, or absent from the
+    file.
+
+    When *model* is ``'mas'`` or ``'pot3d'``, the quantity ``name`` and
+    ``sequence`` additionally fall back to the values parsed from the filename
+    stem (e.g. ``br001001`` → ``name='br'``, ``sequence=1001``), and the
+    resolved ``name`` selects the :class:`~psi_io.models.ModelProps` entry that
+    provides the default ``unit``, ``mesh``, ``scalar``, ``order``, ``scales``,
+    and ``desc``.
+
+    When *model* is the default ``'custom'``, **no defaults are inferred** —
+    every field must be given as a keyword argument or be present in the file
+    attribute dictionary.  ``name``, ``mesh``, ``scalar``, ``order``, and
+    ``scales`` are required; ``unit`` (defaults to dimensionless), ``sequence``
+    (defaults to ``0``), and ``desc`` (defaults to ``''``) are optional.  If a
+    required field cannot be resolved, :exc:`ValueError` (*"Missing or
+    incompatible metadata"*) is raised.
+
     Parameters
     ----------
     ifile : PathLike
         Path to the HDF4 (``.hdf``) or HDF5 (``.h5``) file.
-    model : {'mas', 'pot3d', 'custom'}, optional
+    model : ModelType, optional
         PSI model type.  Defaults to ``'custom'``.  When ``'mas'`` or ``'pot3d'``
         is given, the reader resolves the quantity name, unit, mesh stagger, and
         other metadata from the corresponding mapping in :mod:`psi_io.models`.
@@ -2279,13 +2087,44 @@ def PsiData(ifile: PathLike, /,
         Override the quantity name inferred from the filename or file attributes.
     sequence : int, optional
         Override the time-step sequence number.
-    unit : str or u.Unit, optional
+    unit : UnitLike, optional
         Override the code-to-physical unit from the quantity's
         :class:`~psi_io.models.ModelProps` entry.  Accepts any string parseable by
         :class:`~astropy.units.Unit` or a :class:`~astropy.units.Unit` instance.
     mesh : MeshCodeType, optional
         Override the mesh stagger from the quantity's
-        :class:`~psi_io.models.ModelProps` entry.
+        :class:`~psi_io.models.ModelProps` entry.  Required when *model* is
+        ``'custom'`` and no ``mesh`` attribute is stored on the file.
+    scalar : bool, optional
+        Whether the quantity is a scalar (rather than a component of a vector)
+        field.  Required when *model* is ``'custom'``.
+    order : ArrayOrdering, optional
+        Memory layout of the stored array — ``'F'`` (Fortran / column-major, the
+        PSI default) or ``'C'`` (row-major).  Determines whether :attr:`shape`
+        and the slicing axes are reversed relative to the on-disk layout.
+        Required when *model* is ``'custom'``.
+    scales : Sequence, optional
+        Names of the coordinate axes, in physical order (e.g.
+        ``('r', 't', 'p')``).  The argument does three things:
+
+        - **Names** the axes — the strings become the fields of the
+          ``reader.scales`` named tuple and the ``name`` of each coordinate
+          scale reader.
+        - **Orders** them — the names are zipped positionally with the file's
+          stored dimension arrays, so the *i*-th name labels the *i*-th
+          dimension; the ordering must therefore match the physical axis order.
+        - **Fixes the dimensionality** — ``len(scales)`` sets the expected
+          dataset rank; :meth:`~_HdfData.validate_metadata` emits a
+          :exc:`MetaDataWarning` if it disagrees with ``ndim`` (or with the
+          length of *mesh* / :attr:`shape`), or if any named axis does not match
+          the size of its corresponding data dimension.
+
+        Required when *model* is ``'custom'``.
+    desc : str, optional
+        Override the human-readable description.  Optional; defaults to ``''``.
+    cache : CacheType, optional
+        Cache mode.  ``'lazy'`` (default) caches the array on the first full
+        read, ``'eager'`` loads it immediately, and ``None`` disables caching.
 
     Returns
     -------
@@ -2307,6 +2146,8 @@ def PsiData(ifile: PathLike, /,
         expressions, and :class:`~astropy.units.Unit` instances.
     astropy.units.Quantity.to : Unit conversion used internally when
         a ``unit`` string is supplied to :meth:`read`.
+    _HdfData : Base data reader interface.
+    _HdfArray : Base data array interface.
 
     Examples
     --------

@@ -183,8 +183,8 @@ All three forms below encode the same 3-D stagger (half only along :math:`r`):
 MeshLike = Union['Mesh', MeshCodeType]
 r"""Type alias for any accepted mesh specification, including an existing :class:`Mesh`.
 
-This is a superset of :data:`MeshCodeType`; it additionally accepts an already-
-constructed :class:`Mesh` instance, which is passed through unchanged.
+This is a superset of :data:`MeshCodeType`; it additionally accepts a :class:`Mesh` 
+instance, which is passed through unchanged.
 
 See Also
 --------

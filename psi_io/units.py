@@ -199,12 +199,12 @@ def compose_mas_units(quantity: u.Quantity) -> u.Quantity:
 
     Parameters
     ----------
-    quantity : u.Quantity
+    quantity : Quantity
         Input quantity in any unit system.
 
     Returns
     -------
-    out : u.Quantity
+    out : Quantity
         Equivalent quantity expressed in the MAS-preferred CGS units basis
         (erg, cm, s, K, Gauss, g, rad).
 
@@ -231,12 +231,12 @@ def decompose_mas_units(quantity: u.Quantity) -> u.Quantity:
 
     Parameters
     ----------
-    quantity : u.Quantity
+    quantity : Quantity
         Input quantity in any unit system.
 
     Returns
     -------
-    out : u.Quantity
+    out : Quantity
         Equivalent quantity with all units decomposed into the MAS-preferred CGS
         bases.
 
