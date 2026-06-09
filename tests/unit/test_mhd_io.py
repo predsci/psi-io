@@ -8,8 +8,8 @@ import pytest
 import astropy.units as u
 import h5py
 
-from psi_io._mesh import Mesh
-from psi_io._units import MAS_b, PSI_rsun, PSI_angle
+from psi_io.mesh import Mesh
+from psi_io.units import MAS_b, PSI_rsun, PSI_angle
 from psi_io.mhd_io import (
     _HDF_EXT_MAPPING,
     METADATA_SCHEMA,

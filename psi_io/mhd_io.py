@@ -56,23 +56,23 @@ The following attributes are available on every object returned by
 ``unit`` : :class:`~astropy.units.Unit`
     Conversion factor from one code unit to physical units.  For MAS
     quantities these are the custom normalization units defined in
-    :mod:`psi_io._units` (e.g. :data:`~psi_io._units.MAS_b` ≈ 2.2 G for
-    magnetic field, :data:`~psi_io._units.MAS_v` ≈ 481 km s⁻¹ for velocity).
+    :mod:`psi_io.units` (e.g. :data:`~psi_io.units.MAS_b` ≈ 2.2 G for
+    magnetic field, :data:`~psi_io.units.MAS_v` ≈ 481 km s⁻¹ for velocity).
     For POT3D the default is dimensionless — see the :func:`PsiData` warning.
 
-``mesh`` : :class:`~psi_io._mesh.Mesh`
+``mesh`` : :class:`~psi_io.mesh.Mesh`
     Yee-grid stagger position for each spatial axis in physical ``(r, θ, φ)``
     order.  Each element is either half-mesh (offset by half a cell spacing)
     or main-mesh (cell-centred).  The integer encoding and per-quantity stagger
-    codes are defined in :mod:`psi_io._mesh`; the canonical default for each
-    quantity is stored in its :class:`~psi_io._models.ModelProps` descriptor.
+    codes are defined in :mod:`psi_io.mesh`; the canonical default for each
+    quantity is stored in its :class:`~psi_io.models.ModelProps` descriptor.
 
 ``scales`` : named tuple of scale readers
     Named tuple of coordinate scale readers ``(r, t, p)``.  Each element wraps
     the one-dimensional coordinate array stored in the HDF file.  The radial
-    coordinate uses :data:`~psi_io._units.PSI_rsun` (solar radii); the
+    coordinate uses :data:`~psi_io.units.PSI_rsun` (solar radii); the
     co-latitude and longitude coordinates use
-    :data:`~psi_io._units.PSI_angle` (radians).  Each scale reader exposes
+    :data:`~psi_io.units.PSI_angle` (radians).  Each scale reader exposes
     the same :meth:`read` interface as the main data reader.
 
 ``shape`` : :class:`tuple` of :class:`int`
@@ -123,16 +123,16 @@ order:
 **unit**
     Output unit.  String aliases ``'native'`` / ``'code'`` / ``'model'`` /
     ``'psi'`` return values in MAS code units (the units defined in
-    :mod:`psi_io._units`).  Aliases ``'real'`` / ``'phys'`` / ``'physical'``
-    / ``'cgs'`` call :func:`~psi_io._units.decompose_mas_units` to express
+    :mod:`psi_io.units`).  Aliases ``'real'`` / ``'phys'`` / ``'physical'``
+    / ``'cgs'`` call :func:`~psi_io.units.decompose_mas_units` to express
     values in CGS base units.  Any other string or
     :class:`~astropy.units.Unit` instance is forwarded to
     :meth:`astropy.units.Quantity.to`.
 
 **mesh**
-    Target mesh stagger (:data:`~psi_io._mesh.MeshCodeType`).  Axes that are
+    Target mesh stagger (:data:`~psi_io.mesh.MeshCodeType`).  Axes that are
     on the half mesh in the stored data but on the main mesh in *mesh* are
-    averaged via :func:`~psi_io._mesh.remesh_array`.  Up-sampling
+    averaged via :func:`~psi_io.mesh.remesh_array`.  Up-sampling
     (main → half) raises :exc:`ValueError`.
 
 **scales**
@@ -197,43 +197,43 @@ is garbage-collected.
      - Stagger ``(r, θ, φ)``
    * - ``br``, ``bt``, ``bp``
      - Magnetic field components
-     - :data:`~psi_io._units.MAS_b` (≈ 2.2 G)
+     - :data:`~psi_io.units.MAS_b` (≈ 2.2 G)
      - ``HALF/MAIN/MAIN``, ``MAIN/HALF/MAIN``, ``MAIN/MAIN/HALF``
    * - ``vr``, ``vt``, ``vp``
      - Velocity components
-     - :data:`~psi_io._units.MAS_v` (≈ 481 km s⁻¹)
+     - :data:`~psi_io.units.MAS_v` (≈ 481 km s⁻¹)
      - ``MAIN/HALF/HALF``, ``HALF/MAIN/HALF``, ``HALF/HALF/MAIN``
    * - ``jr``, ``jt``, ``jp``
      - Current density components
-     - :data:`~psi_io._units.MAS_j`
+     - :data:`~psi_io.units.MAS_j`
      - ``MAIN/HALF/HALF``, ``HALF/MAIN/HALF``, ``HALF/HALF/MAIN``
    * - ``t``, ``te``, ``tp``
      - Temperature (single / electron / proton)
-     - :data:`~psi_io._units.MAS_t` (≈ 28 MK)
+     - :data:`~psi_io.units.MAS_t` (≈ 28 MK)
      - ``HALF/HALF/HALF``
    * - ``rho``
      - Mass density
-     - :data:`~psi_io._units.MAS_n` (10⁸ cm⁻³)
+     - :data:`~psi_io.units.MAS_n` (10⁸ cm⁻³)
      - ``HALF/HALF/HALF``
    * - ``p``
      - Thermal pressure
-     - :data:`~psi_io._units.MAS_p`
+     - :data:`~psi_io.units.MAS_p`
      - ``HALF/HALF/HALF``
    * - ``ep``, ``em``
      - Alfvén wave energy density (outward / inward)
-     - :data:`~psi_io._units.MAS_p`
+     - :data:`~psi_io.units.MAS_p`
      - ``HALF/HALF/HALF``
    * - ``zp``, ``zm``
      - Elsässer wave amplitudes (outward / inward)
-     - :data:`~psi_io._units.MAS_v`
+     - :data:`~psi_io.units.MAS_v`
      - ``HALF/HALF/HALF``
    * - ``heat``
      - Volumetric coronal heating rate
-     - :data:`~psi_io._units.MAS_heat`
+     - :data:`~psi_io.units.MAS_heat`
      - ``HALF/HALF/HALF``
 
 **POT3D** (3 quantities): ``br``, ``bt``, ``bp`` — magnetic field components,
-unit :data:`~psi_io._units.POT3D_b` (dimensionless by default; see the
+unit :data:`~psi_io.units.POT3D_b` (dimensionless by default; see the
 :func:`PsiData` warning regarding unit declaration).
 
 .. rubric:: Examples
@@ -313,18 +313,18 @@ try:
 except ImportError:
     h4 = None
 
-from psi_io._mesh import (MeshCodeType,
+from psi_io.mesh import (MeshCodeType,
                           _remesh_array,
                           ArrayOrdering, Mesh, MeshLike,
                           )
-from psi_io._models import (ModelType,
+from psi_io.models import (ModelType,
                             extract_quantity_from_filepath,
                             extract_sequence_from_filepath,
                             get_model_prop_caller,
                             get_psi_scale_properties,
                             _PROP_GETTER_MAPPING,
                             _PSI_SCALE_PROPS_MAPPING, )
-from psi_io._units import decompose_mas_units
+from psi_io.units import decompose_mas_units
 from psi_io.psi_io import (PathLike,
                            PSI_DATA_ID,
                            SDC_TYPE_CONVERSIONS,
@@ -394,7 +394,7 @@ _REAL_UNIT_ALIASES = {'real', 'phys', 'physical', 'cgs'}
 """Set of strings that request decomposed CGS output from :meth:`_HdfInterface.read`.
 
 When the ``units`` argument to ``read()`` is one of these strings, the data are
-converted to physical CGS units via :func:`~psi_io._units.decompose_mas_units`.
+converted to physical CGS units via :func:`~psi_io.units.decompose_mas_units`.
 """
 
 _BASE_SLOTS = ('_ref', '_id', '_cache', '_name', '_desc', '_unit', '_scalar', '_mesh', '_order', '_vcache',)
@@ -763,7 +763,7 @@ def _apply_units(data: u.Quantity,
         ``'native'`` / ``'code'`` / ``'model'`` / ``'psi'`` — return *data*
         unchanged; ``'real'`` / ``'phys'`` / ``'physical'`` / ``'cgs'`` —
         decompose to CGS base unit via
-        :func:`~psi_io._units.decompose_mas_units`.  Any other value is
+        :func:`~psi_io.units.decompose_mas_units`.  Any other value is
         forwarded to :meth:`~u.Quantity.to`.
 
     Returns
@@ -1105,7 +1105,7 @@ class _HdfArray(ABC):
         Returns
         -------
         out : u.Unit
-            E.g. :data:`~psi_io._units.MAS_b` for MAS magnetic field.
+            E.g. :data:`~psi_io.units.MAS_b` for MAS magnetic field.
         """
         return self._unit
 
@@ -1121,7 +1121,7 @@ class _HdfArray(ABC):
         Returns
         -------
         out : Mesh
-            :class:`~psi_io._mesh.Mesh` instance encoding per-axis stagger.
+            :class:`~psi_io.mesh.Mesh` instance encoding per-axis stagger.
         """
         return self._mesh
 
@@ -1283,7 +1283,7 @@ class _HdfArray(ABC):
             Default is ``None``.
         mesh : MeshLike | None, optional
             Target mesh stagger.  Axes on the half mesh that are requested on
-            the main mesh are averaged by :func:`~psi_io._mesh.remesh_array`.
+            the main mesh are averaged by :func:`~psi_io.mesh.remesh_array`.
             Default is ``None`` (no remeshing).
         order : {'F', 'C'} | None, optional
             Transpose the output if it differs from the stored order.
@@ -2232,9 +2232,9 @@ def PsiData(ifile: PathLike, /,
     - ``desc`` — human-readable quantity description.
     - ``sequence`` — integer time-step sequence number.
     - ``unit`` — :class:`~astropy.units.Unit` for code → physical conversion;
-      normalization constants are defined in :mod:`psi_io._units`.
-    - ``mesh`` — per-axis Yee-grid stagger as a :class:`~psi_io._mesh.Mesh`
-      instance; see :mod:`psi_io._mesh`.
+      normalization constants are defined in :mod:`psi_io.units`.
+    - ``mesh`` — per-axis Yee-grid stagger as a :class:`~psi_io.mesh.Mesh`
+      instance; see :mod:`psi_io.mesh`.
     - ``scales`` — named tuple of coordinate scale readers ``(r, t, p)``,
       each supporting the same :meth:`read` interface as the main reader.
     - ``shape``, ``ndim``, ``size``, ``nbytes``, ``dtype``, ``attrs`` — array
@@ -2268,7 +2268,7 @@ def PsiData(ifile: PathLike, /,
     model : {'mas', 'pot3d', 'custom'}, optional
         PSI model type.  Defaults to ``'custom'``.  When ``'mas'`` or ``'pot3d'``
         is given, the reader resolves the quantity name, unit, mesh stagger, and
-        other metadata from the corresponding mapping in :mod:`psi_io._models`.
+        other metadata from the corresponding mapping in :mod:`psi_io.models`.
         With the default ``'custom'``, no metadata is inferred and the required
         fields (``name``, ``mesh``, ``scalar``, ``order``, ``scales``) must be
         supplied as keyword arguments.
@@ -2281,11 +2281,11 @@ def PsiData(ifile: PathLike, /,
         Override the time-step sequence number.
     unit : str or u.Unit, optional
         Override the code-to-physical unit from the quantity's
-        :class:`~psi_io._models.ModelProps` entry.  Accepts any string parseable by
+        :class:`~psi_io.models.ModelProps` entry.  Accepts any string parseable by
         :class:`~astropy.units.Unit` or a :class:`~astropy.units.Unit` instance.
     mesh : MeshCodeType, optional
         Override the mesh stagger from the quantity's
-        :class:`~psi_io._models.ModelProps` entry.
+        :class:`~psi_io.models.ModelProps` entry.
 
     Returns
     -------

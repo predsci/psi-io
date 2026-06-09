@@ -147,7 +147,7 @@ See Also
 --------
 :mod:`astropy.units` :
     The underlying unit system used for normalization and conversion.
-:mod:`psi_io._models` :
+:mod:`psi_io.models` :
     Maps each MAS quantity name to its :data:`FN_*` normalization.
 :mod:`psi_io.mhd_io` :
     Lazy readers that apply these normalizations on property access.
@@ -215,7 +215,7 @@ def compose_mas_units(quantity: u.Quantity) -> u.Quantity:
     Examples
     --------
     >>> import astropy.units as u
-    >>> from psi_io._units import compose_mas_units, FN_P
+    >>> from psi_io.units import compose_mas_units, FN_P
     >>> compose_mas_units(1.0 * u.Pa)        # doctest: +ELLIPSIS
     <Quantity ... erg / cm3>
     """
@@ -247,7 +247,7 @@ def decompose_mas_units(quantity: u.Quantity) -> u.Quantity:
     Examples
     --------
     >>> import astropy.units as u
-    >>> from psi_io._units import decompose_mas_units
+    >>> from psi_io.units import decompose_mas_units
     >>> decompose_mas_units(1.0 * u.J)       # doctest: +ELLIPSIS
     <Quantity 1.e+07 erg>
     """
@@ -742,7 +742,7 @@ def get_helium_fractions(he_frac: float) -> dict[str, float]:
 
     Examples
     --------
-    >>> from psi_io._units import get_helium_fractions
+    >>> from psi_io.units import get_helium_fractions
     >>> fracs = get_helium_fractions(0.0)   # pure hydrogen plasma
     >>> fracs['he_rho']
     1.0
@@ -750,7 +750,7 @@ def get_helium_fractions(he_frac: float) -> dict[str, float]:
     2.0
     >>> fracs = get_helium_fractions(0.05)  # 5 % helium by electron fraction
     >>> round(fracs['he_rho'], 4)
-    1.1818
+    1.0909
     """
     # Mass Density Multiplier: A = (np + 4*na)/ne
     # --> rho_mas = ne_mas*he_rho

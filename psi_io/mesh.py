@@ -92,7 +92,7 @@ Convert a radial magnetic-field array (half-mesh in :math:`r`, the last numpy
 axis) to the all-main mesh:
 
 >>> import numpy as np
->>> from psi_io._mesh import remesh_array
+>>> from psi_io.mesh import remesh_array
 >>> br = np.ones((128, 64, 57))   # shape (Nφ, Nθ, Nr); Nr is half-mesh size
 >>> br_main = remesh_array(br, imesh=0b100, omesh='main')
 >>> br_main.shape
@@ -173,7 +173,7 @@ Examples
 --------
 All three forms below encode the same 3-D stagger (half only along :math:`r`):
 
->>> from psi_io._mesh import Mesh
+>>> from psi_io.mesh import Mesh
 >>> str(Mesh.parse(0b100, ndim=3))
 'HALF, MAIN, MAIN'
 >>> str(Mesh.parse([True, False, False], ndim=3))
@@ -193,7 +193,7 @@ Mesh.parse : Normalizes any :data:`MeshLike` value into a :class:`Mesh`.
 
 Examples
 --------
->>> from psi_io._mesh import Mesh
+>>> from psi_io.mesh import Mesh
 >>> m = Mesh.parse(0b101, ndim=3)
 >>> Mesh.parse(m, ndim=3) is m   # Mesh passthrough
 True
@@ -221,7 +221,7 @@ Controls how the bits of a :data:`MeshCodeType` integer map to numpy array axes.
 Examples
 --------
 >>> import numpy as np
->>> from psi_io._mesh import remesh_array
+>>> from psi_io.mesh import remesh_array
 >>> arr = np.ones((57, 64, 128))   # C-order: shape (Nr, Nθ, Nφ); Nr is half-mesh
 >>> out = remesh_array(arr, imesh=0b100, omesh='main', order='C')
 >>> out.shape
@@ -262,7 +262,7 @@ def _coerce_mesh_target(method: Callable) -> Callable:
     The decorator is applied internally; here is the observable behavior it
     enables on :meth:`Mesh.remesh`:
 
-    >>> from psi_io._mesh import Mesh
+    >>> from psi_io.mesh import Mesh
     >>> m = Mesh.parse(0b111, ndim=3)
     >>> m.remesh('main')         # string target is coerced automatically
     (True, True, True)
@@ -342,7 +342,7 @@ class Mesh:
 
     Examples
     --------
-    >>> from psi_io._mesh import Mesh
+    >>> from psi_io.mesh import Mesh
     >>> str(Mesh.parse(0b100, ndim=3))
     'HALF, MAIN, MAIN'
     >>> str(Mesh.parse('MMH', ndim=3))
@@ -375,7 +375,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> Mesh(code=0b100, ndim=3).code   # valid: 3 bits, MSB is bit 2
         4
         >>> import pytest
@@ -400,7 +400,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> repr(Mesh.parse(0b101, ndim=3))
         'Mesh(HALF, MAIN, HALF)'
         """
@@ -416,7 +416,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> len(Mesh.parse(0b101, ndim=3))
         3
         """
@@ -433,7 +433,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> bool(Mesh.parse('half', ndim=3))
         True
         >>> bool(Mesh.parse('main', ndim=3))
@@ -454,7 +454,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> m = Mesh.parse(0b110, ndim=3)
         >>> int(m)
         6
@@ -485,7 +485,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> Mesh.parse(0b001, ndim=3) < Mesh.parse(0b100, ndim=3)
         True
         >>> Mesh.parse(0b100, ndim=3) < 3
@@ -524,7 +524,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> m = Mesh.parse(0b101, ndim=3)   # HALF, MAIN, HALF
         >>> str(m[0])
         'HALF'
@@ -561,7 +561,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> list(Mesh.parse(0b101, ndim=3))
         [True, False, True]
         >>> list(Mesh.parse('main', ndim=3))
@@ -584,7 +584,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> list(reversed(Mesh.parse(0b101, ndim=3)))
         [True, False, True]
         >>> list(reversed(Mesh.parse(0b100, ndim=3)))
@@ -603,7 +603,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> str(Mesh.parse(0b100, ndim=3))
         'HALF, MAIN, MAIN'
         >>> str(Mesh.parse('main', ndim=2))
@@ -634,7 +634,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> src = Mesh.parse(0b111, ndim=3)
         >>> src >> 'main'
         (True, True, True)
@@ -658,7 +658,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> m = Mesh.parse(0b100, ndim=3)   # HALF, MAIN, MAIN
         >>> str(m.reverse())
         'MAIN, MAIN, HALF'
@@ -704,7 +704,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> str(Mesh.parse(0b100, ndim=3))
         'HALF, MAIN, MAIN'
         >>> str(Mesh.parse('half', ndim=2))
@@ -787,7 +787,7 @@ class Mesh:
 
         Examples
         --------
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.mesh import Mesh
         >>> src = Mesh.parse(0b111, ndim=3)   # all-half
         >>> src.remesh('main')
         (True, True, True)
@@ -835,7 +835,7 @@ def _average_adjacent(arr: np.ndarray,
     Examples
     --------
     >>> import numpy as np
-    >>> from psi_io._mesh import _average_adjacent
+    >>> from psi_io.mesh import _average_adjacent
     >>> arr = np.array([1.0, 3.0, 5.0, 7.0])
     >>> _average_adjacent(arr, axis=0)
     array([2., 4., 6.])
@@ -886,7 +886,7 @@ def _remesh_array(data: np.ndarray,
     Examples
     --------
     >>> import numpy as np
-    >>> from psi_io._mesh import _remesh_array
+    >>> from psi_io.mesh import _remesh_array
     >>> arr = np.ones((4, 4, 4))
     >>> out = _remesh_array(arr, remesh=[False, False, True], order='F')
     >>> out.shape   # F-order: LSB flag (True) maps to numpy axis 0 (phi)
@@ -963,7 +963,7 @@ def remesh_array(data: np.ndarray,
     numpy axis) to the all-main mesh:
 
     >>> import numpy as np
-    >>> from psi_io._mesh import remesh_array
+    >>> from psi_io.mesh import remesh_array
     >>> br = np.ones((128, 64, 57))   # shape (Nφ, Nθ, Nr); Nr is half-mesh size
     >>> br_main = remesh_array(br, imesh=0b100, omesh='main')
     >>> br_main.shape

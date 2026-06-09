@@ -26,7 +26,7 @@ This example demonstrates:
 import astropy.units as u
 import numpy as np
 from psi_io import data
-from psi_io._units import PSI_rsun
+from psi_io.units import PSI_rsun
 from psi_io.mhd_io import PsiData
 
 # %%
@@ -73,9 +73,9 @@ print(f"unit (Gauss): {data_gauss.unit}")
 # Passing ``mesh='main'`` shifts every half-mesh axis to the main mesh by
 # averaging adjacent array elements; the radial axis shrinks by one element.
 # The mesh stagger for each quantity is encoded in its
-# :class:`~psi_io._models.ModelProps` descriptor (see :mod:`psi_io._models`), and the
-# averaging itself is performed by :func:`~psi_io._mesh.remesh_array` from
-# :mod:`psi_io._mesh`.
+# :class:`~psi_io.models.ModelProps` descriptor (see :mod:`psi_io.models`), and the
+# averaging itself is performed by :func:`~psi_io.mesh.remesh_array` from
+# :mod:`psi_io.mesh`.
 
 data_main, r_main, t_main, p_main = reader.read(mesh='main', unit='Gauss')
 print(f"original r points  : {r.shape[0]}")
@@ -115,7 +115,7 @@ print(f"r value      : {r_vs[0]:.5f}")
 
 # %%
 # Passing an :class:`~astropy.units.Quantity` allows specifying the coordinate
-# in any compatible unit.  Here we use :data:`~psi_io._units.PSI_rsun`, the
+# in any compatible unit.  Here we use :data:`~psi_io.units.PSI_rsun`, the
 # solar radius constant used internally by MAS coordinate scales:
 
 r_qty = r_scale[len(r_scale) // 2].to(u.cm)

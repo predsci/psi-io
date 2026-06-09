@@ -12,15 +12,15 @@ example datasets used in the gallery examples, see :mod:`psi_io.data`.
 """
 # from . import psi_io as _psi_io
 from .psi_io import *
-from ._mesh import *
-from ._units import *
-from ._models import *
+from .mesh import *
+from .units import *
+from .models import *
 from .mhd_io import *
 
 __all__ = [*psi_io.__all__,
-           *_mesh.__all__,
-           *_units.__all__,
-           *_models.__all__,
+           *mesh.__all__,
+           *units.__all__,
+           *models.__all__,
            *mhd_io.__all__]
 
 try:

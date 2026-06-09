@@ -1,4 +1,4 @@
-"""Unit tests for psi_io._mesh."""
+"""Unit tests for psi_io.mesh."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from psi_io._mesh import (
+from psi_io.mesh import (
     Mesh,
     _MESH_CODE_REVERSE_MAPPING,
     _average_adjacent,

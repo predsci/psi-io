@@ -50,17 +50,17 @@ across MAS, POT3D, and most other PSI codes:
    * - ``'r'``
      - :math:`r`
      - Radial distance
-     - solar radii (:data:`~psi_io._units.PSI_rsun`)
+     - solar radii (:data:`~psi_io.units.PSI_rsun`)
      - :math:`r \geq 1\,R_\odot`
    * - ``'t'``
      - :math:`\theta`
      - Co-latitude (pole = 0)
-     - radians (:data:`~psi_io._units.PSI_angle`)
+     - radians (:data:`~psi_io.units.PSI_angle`)
      - :math:`[0,\,\pi]`
    * - ``'p'``
      - :math:`\varphi`
      - Longitude
-     - radians (:data:`~psi_io._units.PSI_angle`)
+     - radians (:data:`~psi_io.units.PSI_angle`)
      - :math:`[0,\,2\pi]`
 
 PSI HDF files are written in **Fortran order** (column-major), so the *first* Fortran
@@ -93,7 +93,7 @@ MAS Model Quantities
 --------------------
 MAS outputs 19 3-D fields in spherical coordinates.  Code-unit values are converted
 to physical (CGS/SI) unit by multiplying by the normalization constants defined in
-:mod:`psi_io._units`.  Approximate physical scales are given in parentheses.
+:mod:`psi_io.units`.  Approximate physical scales are given in parentheses.
 
 .. list-table::
    :header-rows: 1
@@ -108,7 +108,7 @@ to physical (CGS/SI) unit by multiplying by the normalization constants defined 
    * - ``vr``
      - :math:`v_r`
      - Radial velocity
-     - km s⁻¹ (:data:`~psi_io._units.FN_V` ≈ 481 km s⁻¹)
+     - km s⁻¹ (:data:`~psi_io.units.FN_V` ≈ 481 km s⁻¹)
      - vector
      - ``0b011``
    * - ``vt``
@@ -126,7 +126,7 @@ to physical (CGS/SI) unit by multiplying by the normalization constants defined 
    * - ``br``
      - :math:`B_r`
      - Radial magnetic field
-     - G (:data:`~psi_io._units.FN_B` ≈ 2.2 G)
+     - G (:data:`~psi_io.units.FN_B` ≈ 2.2 G)
      - vector
      - ``0b100``
    * - ``bt``
@@ -144,7 +144,7 @@ to physical (CGS/SI) unit by multiplying by the normalization constants defined 
    * - ``jr``
      - :math:`J_r`
      - Radial current density
-     - A m⁻² (:data:`~psi_io._units.FN_J`)
+     - A m⁻² (:data:`~psi_io.units.FN_J`)
      - vector
      - ``0b011``
    * - ``jt``
@@ -162,7 +162,7 @@ to physical (CGS/SI) unit by multiplying by the normalization constants defined 
    * - ``t``
      - :math:`T`
      - Single-fluid temperature
-     - MK (:data:`~psi_io._units.FN_T` ≈ 28 MK)
+     - MK (:data:`~psi_io.units.FN_T` ≈ 28 MK)
      - scalar
      - ``0b111``
    * - ``te``
@@ -180,13 +180,13 @@ to physical (CGS/SI) unit by multiplying by the normalization constants defined 
    * - ``rho``
      - :math:`\rho`
      - Plasma density
-     - cm⁻³ (:data:`~psi_io._units.FN_N` = 10⁸ cm⁻³)
+     - cm⁻³ (:data:`~psi_io.units.FN_N` = 10⁸ cm⁻³)
      - scalar
      - ``0b111``
    * - ``p``
      - :math:`p`
      - Plasma pressure
-     - erg cm⁻³ (:data:`~psi_io._units.FN_P`)
+     - erg cm⁻³ (:data:`~psi_io.units.FN_P`)
      - scalar
      - ``0b111``
    * - ``ep``
@@ -216,7 +216,7 @@ to physical (CGS/SI) unit by multiplying by the normalization constants defined 
    * - ``heat``
      - :math:`Q`
      - Volumetric heating rate
-     - erg cm⁻³ s⁻¹ (:data:`~psi_io._units.FN_HEAT`)
+     - erg cm⁻³ s⁻¹ (:data:`~psi_io.units.FN_HEAT`)
      - scalar
      - ``0b111``
 
@@ -262,7 +262,7 @@ magnetic field components:
 
    POT3D does not apply a normalization: values are in whatever physical unit the
    input boundary magnetogram was provided in (typically Gauss, but run-dependent).
-   The code unit :data:`~psi_io._units.POT3D_b` has a scale factor of 1
+   The code unit :data:`~psi_io.units.POT3D_b` has a scale factor of 1
    (dimensionless-unscaled).  Always supply the correct unit explicitly when
    converting; ``read(unit='physical')`` without a ``unit`` override will return
    dimensionless values.
@@ -361,9 +361,9 @@ cell corners, which are equivalent to cell centers on the dual grid.
 See Also
 --------
 
-:mod:`psi_io._mesh` :
-    Defines :class:`~psi_io._mesh.Mesh` and the mesh normalization helpers.
-:mod:`psi_io._units` :
+:mod:`psi_io.mesh` :
+    Defines :class:`~psi_io.mesh.Mesh` and the mesh normalization helpers.
+:mod:`psi_io.units` :
     Provides the custom astropy unit referenced by each :class:`ScaleProps` and
     :class:`ModelProps`.
 :mod:`psi_io.mhd_io` :
@@ -389,8 +389,8 @@ from typing import Literal, Optional, Callable
 
 import astropy.units as u
 
-from psi_io._mesh import ArrayOrdering, Mesh
-from psi_io._units import MAS_v, MAS_b, MAS_j, MAS_t, MAS_n, MAS_p, MAS_heat, POT3D_b, PSI_rsun, PSI_angle
+from psi_io.mesh import ArrayOrdering, Mesh
+from psi_io.units import MAS_v, MAS_b, MAS_j, MAS_t, MAS_n, MAS_p, MAS_heat, POT3D_b, PSI_rsun, PSI_angle
 
 
 @dataclass(frozen=True, repr=True)
@@ -409,7 +409,7 @@ class ScaleProps:
         Human-readable description (e.g. ``'PSI Radial Scale (Solar Radii)'``).
     unit : u.Unit
         Astropy unit for values stored along this coordinate axis.  For example,
-        :data:`~psi_io._units.PSI_rsun` for the radial scale.
+        :data:`~psi_io.units.PSI_rsun` for the radial scale.
 
     Notes
     -----
@@ -425,7 +425,7 @@ class ScaleProps:
 
     Examples
     --------
-    >>> from psi_io._models import ScaleProps
+    >>> from psi_io.models import ScaleProps
     >>> import astropy.units as u
     >>> p = ScaleProps('r', 'PSI Radial Scale (Solar Radii)', u.R_sun)
     >>> str(p)
@@ -450,7 +450,7 @@ class ScaleProps:
 
         Examples
         --------
-        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
+        >>> from psi_io.models import _MAS_QUANTITY_PROPS_MAPPING
         >>> str(_MAS_QUANTITY_PROPS_MAPPING['br'])
         'br'
         """
@@ -474,7 +474,7 @@ class ScaleProps:
 
         Examples
         --------
-        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
+        >>> from psi_io.models import _MAS_QUANTITY_PROPS_MAPPING
         >>> props = _MAS_QUANTITY_PROPS_MAPPING['vr']
         >>> (props * 1.0).unit   # doctest: +ELLIPSIS
         Unit(...)
@@ -499,7 +499,7 @@ class ScaleProps:
 
         Examples
         --------
-        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
+        >>> from psi_io.models import _MAS_QUANTITY_PROPS_MAPPING
         >>> props = _MAS_QUANTITY_PROPS_MAPPING['vr']
         >>> (1.0 * props).unit   # doctest: +ELLIPSIS
         Unit(...)
@@ -524,7 +524,7 @@ class ScaleProps:
 
         Examples
         --------
-        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
+        >>> from psi_io.models import _MAS_QUANTITY_PROPS_MAPPING
         >>> props = _MAS_QUANTITY_PROPS_MAPPING['br']
         >>> (1.0 / props).unit   # doctest: +ELLIPSIS
         Unit(...)
@@ -541,7 +541,7 @@ class ScaleProps:
 
         Examples
         --------
-        >>> from psi_io._models import ScaleProps
+        >>> from psi_io.models import ScaleProps
         >>> import astropy.units as u
         >>> p = ScaleProps('r', 'Radial', u.R_sun)
         >>> list(p._asdict().keys())
@@ -567,7 +567,7 @@ class ModelProps(ScaleProps):
         Human-readable description of the physical quantity.
     unit : u.Unit
         Astropy unit whose scale factor converts one code unit of this quantity to
-        physical unit.  For example, :data:`~psi_io._units.MAS_b` ≈ 2.2 Gauss.
+        physical unit.  For example, :data:`~psi_io.units.MAS_b` ≈ 2.2 Gauss.
     scalar : bool
         ``True`` if the quantity is a scalar field (temperature, density, …);
         ``False`` if it is a component of a vector field (velocity, magnetic field, …).
@@ -585,7 +585,7 @@ class ModelProps(ScaleProps):
     Attributes
     ----------
     mesh : Mesh
-        Normalized form of :attr:`_mesh` as a single :class:`~psi_io._mesh.Mesh`
+        Normalized form of :attr:`_mesh` as a single :class:`~psi_io.mesh.Mesh`
         instance built from the integer code and the number of coordinate scales.
 
     Notes
@@ -602,7 +602,7 @@ class ModelProps(ScaleProps):
 
     Examples
     --------
-    >>> from psi_io._models import ModelProps
+    >>> from psi_io.models import ModelProps
     >>> import astropy.units as u
     >>> p = ModelProps('br', 'Radial B field', u.Gauss, False, 0b100)
     >>> str(p)
@@ -628,20 +628,20 @@ class ModelProps(ScaleProps):
         """Normalized mesh-stagger object for this quantity.
 
         Wraps the integer :attr:`_mesh` code and the number of coordinate scales
-        in a single :class:`~psi_io._mesh.Mesh` instance via its constructor.
+        in a single :class:`~psi_io.mesh.Mesh` instance via its constructor.
 
         Returns
         -------
         out : Mesh
-            A :class:`~psi_io._mesh.Mesh` whose bits classify each spatial axis
+            A :class:`~psi_io.mesh.Mesh` whose bits classify each spatial axis
             ``(r, theta, phi)`` as half or main mesh, with the most-significant
             bit mapping to :math:`r` (the last NumPy axis under PSI's Fortran
             convention).
 
         Examples
         --------
-        >>> from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING
-        >>> from psi_io._mesh import Mesh
+        >>> from psi_io.models import _MAS_QUANTITY_PROPS_MAPPING
+        >>> from psi_io.mesh import Mesh
         >>> _MAS_QUANTITY_PROPS_MAPPING['br'].mesh
         Mesh(HALF, MAIN, MAIN)
         >>> _MAS_QUANTITY_PROPS_MAPPING['t'].mesh
@@ -661,11 +661,11 @@ class ModelProps(ScaleProps):
         -------
         out : dict[str, object]
             Mapping of field names to their values; ``'_mesh'`` is replaced by
-            ``'mesh'`` containing the resolved :class:`~psi_io._mesh.Mesh` instance.
+            ``'mesh'`` containing the resolved :class:`~psi_io.mesh.Mesh` instance.
 
         Examples
         --------
-        >>> from psi_io._models import get_mas_quantity_properties
+        >>> from psi_io.models import get_mas_quantity_properties
         >>> d = get_mas_quantity_properties('br')._asdict()
         >>> 'mesh' in d and '_mesh' not in d
         True
@@ -741,7 +741,7 @@ _MAS_QUANTITY_PROPS_MAPPING = MappingProxyType({
 
 
 def get_mas_quantity_properties(variable: MasQuantities) -> ModelProps:
-    """Return the :class:`~psi_io._models.ModelProps` descriptor for a MAS quantity.
+    """Return the :class:`~psi_io.models.ModelProps` descriptor for a MAS quantity.
 
     Parameters
     ----------
@@ -767,7 +767,7 @@ def get_mas_quantity_properties(variable: MasQuantities) -> ModelProps:
 
     Examples
     --------
-    >>> from psi_io._models import get_mas_quantity_properties
+    >>> from psi_io.models import get_mas_quantity_properties
     >>> props = get_mas_quantity_properties('br')
     >>> props.desc
     'MAS Magnetic Field (Radial Component)'
@@ -803,7 +803,7 @@ the magnetic field: ``'br'`` (radial), ``'bt'`` (co-latitude), and ``'bp'``
 .. warning::
 
     POT3D output files carry **no intrinsic physical unit**.  The values are stored as
-    dimensionless quantities (unit :data:`~psi_io._units.POT3D_b` = 1) whose physical
+    dimensionless quantities (unit :data:`~psi_io.units.POT3D_b` = 1) whose physical
     interpretation depends entirely on the unit of the photospheric boundary
     magnetogram used to drive the simulation — typically Gauss, but this is not
     guaranteed.  Always supply the correct unit explicitly via the ``unit`` keyword
@@ -821,7 +821,7 @@ _POT3D_QUANTITY_PROPS_MAPPING = MappingProxyType({
 
 
 def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> ModelProps:
-    """Return the :class:`~psi_io._models.ModelProps` descriptor for a POT3D quantity.
+    """Return the :class:`~psi_io.models.ModelProps` descriptor for a POT3D quantity.
 
     Parameters
     ----------
@@ -846,7 +846,7 @@ def get_pot3d_quantity_properties(variable: Pot3dQuantities) -> ModelProps:
 
     Examples
     --------
-    >>> from psi_io._models import get_pot3d_quantity_properties
+    >>> from psi_io.models import get_pot3d_quantity_properties
     >>> get_pot3d_quantity_properties('bp').name
     'bp'
     """
@@ -866,11 +866,11 @@ PsiScales = Literal['r', 'radius', 't', 'theta', 'p', 'phi']
 """Literal type alias for the three PSI coordinate scale identifiers.
 
 ``'r'`` or ``'radius'``
-    Radial coordinate in unit of solar radii (:data:`~psi_io._units.PSI_rsun`).
+    Radial coordinate in unit of solar radii (:data:`~psi_io.units.PSI_rsun`).
 ``'t'`` or ``'theta'``
-    Co-latitude :math:`\\theta` in radians (:data:`~psi_io._units.PSI_angle`).
+    Co-latitude :math:`\\theta` in radians (:data:`~psi_io.units.PSI_angle`).
 ``'p'`` or ``'phi'``
-    Longitude :math:`\\varphi` in radians (:data:`~psi_io._units.PSI_angle`).
+    Longitude :math:`\\varphi` in radians (:data:`~psi_io.units.PSI_angle`).
 """
 
 
@@ -896,7 +896,7 @@ aliases (``'radius'``, ``'theta'``, ``'phi'``).  Alias keys share the same
 
 
 def get_psi_scale_properties(variable: PsiScales) -> ScaleProps:
-    """Return the :class:`~psi_io._models.ScaleProps` descriptor for a PSI coordinate scale.
+    """Return the :class:`~psi_io.models.ScaleProps` descriptor for a PSI coordinate scale.
 
     Parameters
     ----------
@@ -921,7 +921,7 @@ def get_psi_scale_properties(variable: PsiScales) -> ScaleProps:
 
     Examples
     --------
-    >>> from psi_io._models import get_psi_scale_properties
+    >>> from psi_io.models import get_psi_scale_properties
     >>> get_psi_scale_properties('r').desc
     'PSI Radial Scale (Solar Radii)'
     >>> get_psi_scale_properties('theta').name
@@ -981,7 +981,7 @@ def get_model_prop_caller(model: ModelType) -> Callable:
 
     Examples
     --------
-    >>> from psi_io._models import get_model_prop_caller
+    >>> from psi_io.models import get_model_prop_caller
     >>> caller = get_model_prop_caller('mas')
     >>> caller('br').name
     'br'
@@ -1003,7 +1003,7 @@ tried before ``'h'``).  Used in :data:`FILEPATH_SCHEMA` and
 Examples
 --------
 >>> import re
->>> from psi_io._models import MATCH_QUANTITIES
+>>> from psi_io.models import MATCH_QUANTITIES
 >>> bool(re.match(MATCH_QUANTITIES, 'br', re.IGNORECASE))
 True
 >>> bool(re.match(MATCH_QUANTITIES, 'heat', re.IGNORECASE))
@@ -1033,7 +1033,7 @@ extract_quantity_from_filepath :
 Examples
 --------
 >>> import re
->>> from psi_io._models import FILEPATH_SCHEMA
+>>> from psi_io.models import FILEPATH_SCHEMA
 >>> bool(re.match(FILEPATH_SCHEMA, 'br001001', re.IGNORECASE))
 True
 >>> bool(re.match(FILEPATH_SCHEMA, 'heat001', re.IGNORECASE))
@@ -1067,7 +1067,7 @@ def extract_quantity_from_filepath(ifile: Path, default: Optional[str] = None) -
 
     Examples
     --------
-    >>> from psi_io._models import extract_quantity_from_filepath
+    >>> from psi_io.models import extract_quantity_from_filepath
     >>> from pathlib import Path
     >>> extract_quantity_from_filepath(Path('br001001.h5'))
     'br'
@@ -1111,7 +1111,7 @@ def extract_sequence_from_filepath(ifile: Path, default: Optional[int] = None) -
     Examples
     --------
     >>> from pathlib import Path
-    >>> from psi_io._models import extract_sequence_from_filepath
+    >>> from psi_io.models import extract_sequence_from_filepath
     >>> extract_sequence_from_filepath(Path('br001001.h5'))
     1001
     >>> extract_sequence_from_filepath(Path('vr001.h5'))
@@ -1156,7 +1156,7 @@ def parse_psi_filename_schema(ifile: Path):
     Examples
     --------
     >>> from pathlib import Path
-    >>> from psi_io._models import parse_psi_filename_schema
+    >>> from psi_io.models import parse_psi_filename_schema
     >>> parse_psi_filename_schema(Path('br001001.h5'))
     ('br', 1001)
     >>> parse_psi_filename_schema(Path('heat001.hdf'))

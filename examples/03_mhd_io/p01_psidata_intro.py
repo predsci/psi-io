@@ -3,16 +3,16 @@ Opening MHD Model Files with PsiData
 =====================================
 
 Explore a MAS radial-magnetic-field file through the :func:`~psi_io.mhd_io.PsiData`
-interface: inspect metadata attributes, trace the connections to :mod:`psi_io._models`,
-:mod:`psi_io._mesh`, and :mod:`psi_io._units`, and observe the lazy-loading and
+interface: inspect metadata attributes, trace the connections to :mod:`psi_io.models`,
+:mod:`psi_io.mesh`, and :mod:`psi_io.units`, and observe the lazy-loading and
 caching behavior.
 
 This example demonstrates:
 
 1. Opening a MAS HDF5 file and exploring the reader's metadata attributes.
-2. The role of :mod:`psi_io._models` in defining physical quantity properties.
-3. How :mod:`psi_io._mesh` encodes Yee-grid stagger positions for each quantity.
-4. How :mod:`psi_io._units` supplies the MAS code-unit normalization factors.
+2. The role of :mod:`psi_io.models` in defining physical quantity properties.
+3. How :mod:`psi_io.mesh` encodes Yee-grid stagger positions for each quantity.
+4. How :mod:`psi_io.units` supplies the MAS code-unit normalization factors.
 5. Lazy loading — no data leaves the disk until explicitly requested.
 6. Automatic caching of full-array reads for quick re-access.
 
@@ -45,13 +45,13 @@ from psi_io.mhd_io import PsiData
 # ``'scalar'``
 #     ``True`` if the quantity is a scalar field; ``False`` for vector components.
 # ``'mesh'``
-#     Mesh code (:data:`~psi_io._mesh.MeshCodeType`) describing data staggering.
+#     Mesh code (:data:`~psi_io.mesh.MeshCodeType`) describing data staggering.
 #
 # If these values are not explicitly included in the :func:`~psi_io.mhd_io.PsiData`
 # constructor the reader falls back to reading the HDF metadata attributes (if present) and then
 # parsing the filename according to the PSI filename schema. The
 # reader then cross-references the quantity against the canonical properties defined
-# in :mod:`psi_io._models` to infer the remaining metadata attributes.
+# in :mod:`psi_io.models` to infer the remaining metadata attributes.
 #
 # The ``model`` argument selects which property table to consult.  Passing
 # ``model='mas'`` tells the reader to resolve metadata from the MAS quantity
@@ -76,10 +76,10 @@ print(f"ndim      : {reader.ndim}")
 print(f"shape     : {reader.shape}  (Nr × Nθ × Nφ in physical order)")
 
 # %%
-# **Connection to** :mod:`psi_io._models`
+# **Connection to** :mod:`psi_io.models`
 #
 # The reader's metadata is resolved against the
-# :class:`~psi_io._models.ModelProps` dataclass stored in :mod:`psi_io._models`,
+# :class:`~psi_io.models.ModelProps` dataclass stored in :mod:`psi_io.models`,
 # which bundles the canonical name, description, native unit, and mesh code for
 # every recognised PSI quantity.  The :attr:`name` and :attr:`desc` attributes
 # expose this resolved metadata directly.
@@ -88,30 +88,30 @@ print(f"name : {reader.name}")
 print(f"desc : {reader.desc}")
 
 # %%
-# **Connection to** :mod:`psi_io._mesh`
+# **Connection to** :mod:`psi_io.mesh`
 #
-# The :attr:`mesh` attribute is a :class:`~psi_io._mesh.Mesh` instance
+# The :attr:`mesh` attribute is a :class:`~psi_io.mesh.Mesh` instance
 # (one stagger flag per spatial axis in physical ``(r, θ, φ)`` order) that encodes
 # the Yee-grid stagger position of the field quantity.
 #
 # For the radial magnetic field ``br``, the field is face-centred in the radial
 # direction (*half*-mesh) and cell-centred in both angular directions (*main*-mesh):
 
-from psi_io._mesh import Mesh
+from psi_io.mesh import Mesh
 print(f"mesh : {reader.mesh}")
 print(f"  r  → {reader.mesh[0]}")
 print(f"  θ  → {reader.mesh[1]}")
 print(f"  φ  → {reader.mesh[2]}")
 
 # %%
-# **Connection to** :mod:`psi_io._units`
+# **Connection to** :mod:`psi_io.units`
 #
 # The :attr:`unit` attribute is one of the custom MAS normalization units defined
-# in :mod:`psi_io._units`.  Multiplying a code-unit value by this factor converts
+# in :mod:`psi_io.units`.  Multiplying a code-unit value by this factor converts
 # it to physical CGS units.  Here, ``MAS_b`` represents approximately 2.2 Gauss
 # per code unit.
 
-from psi_io._units import MAS_b
+from psi_io.units import MAS_b
 print(f"unit     : {reader.unit}")
 print(f"MAS_b    : {MAS_b}")
 print(f"in Gauss : {reader.unit.to('G'):.4f}")

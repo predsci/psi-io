@@ -1,4 +1,4 @@
-"""Unit tests for psi_io._models."""
+"""Unit tests for psi_io.models."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 import astropy.units as u
 import pytest
 
-from psi_io._mesh import Mesh
-from psi_io._models import (
+from psi_io.mesh import Mesh
+from psi_io.models import (
     ModelProps,
     ScaleProps,
     _MAS_QUANTITY_PROPS_MAPPING,
@@ -178,7 +178,7 @@ class TestPot3dQuantityPropsMapping:
 
     def test_pot3d_mesh_codes_are_complement_of_mas(self):
         # POT3D mesh = 0b111 ^ MAS_mesh
-        from psi_io._models import _MAS_QUANTITY_PROPS_MAPPING as mas
+        from psi_io.models import _MAS_QUANTITY_PROPS_MAPPING as mas
         for qty in ('br', 'bt', 'bp'):
             assert _POT3D_QUANTITY_PROPS_MAPPING[qty]._mesh == (0b111 ^ mas[qty]._mesh)
 

@@ -394,7 +394,7 @@ def rdhdf_1d(hdf_filename: PathLike
     >>> filepath = get_1d_data()
     >>> x, f = rdhdf_1d(filepath)
     >>> x.shape, f.shape
-    ((151,), (151,))
+    ((121,), (121,))
     """
     return _rdhdf_nd(hdf_filename, dimensionality=1)
 
@@ -1423,7 +1423,7 @@ def write_hdf_data(ifile: PathLike, /,
     >>> p = np.linspace(0.0, 2*np.pi, 30, dtype=np.float32)
     >>> f = np.ones((30, 20, 10), dtype=np.float32)
     >>> with tempfile.TemporaryDirectory() as d:
-    ...     write_hdf_data(Path(d) / "out.h5", f, r, t, p)
+    ...     _ = write_hdf_data(Path(d) / "out.h5", f, r, t, p)
     ...     data, r2, t2, p2 = read_hdf_data(Path(d) / "out.h5")
     ...     data.shape
     (30, 20, 10)
@@ -1686,7 +1686,7 @@ def instantiate_linear_interpolator(*args, **kwargs):
     Interpolate at a specific position.
 
     >>> interpolator((15, pi/2, pi))
-    0.0012864485109423877
+    array(0.00128645)
     """
     _except_no_scipy()
     return RegularGridInterpolator(
@@ -1755,7 +1755,7 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
 
     >>> point_value, *_ = sp_interpolate_slice_from_hdf(filepath, 1, pi/2, pi)
     >>> point_value
-    6.084495480971823
+    np.float64(6.084495480971823)
     """
     filepath, *args = xi
     kwargs.pop('return_scales', None)
@@ -1830,7 +1830,7 @@ def np_interpolate_slice_from_hdf(ifile: PathLike, /,
 
     >>> point_value, *_ = np_interpolate_slice_from_hdf(filepath, 1, pi/2, pi)
     >>> point_value
-    6.084496
+    np.float32(6.084496)
 
     """
     reader = read_hdf_by_value if not by_index else read_hdf_by_ivalue
@@ -1894,7 +1894,7 @@ def interpolate_positions_from_hdf(ifile, *xi, **kwargs):
     Interpolate at the specified positions.
 
     >>> interpolate_positions_from_hdf(filepath, r_vals, theta_vals, phi_vals)
-    [0.0008402743657585175, 0.000723875405654482, -0.00041033233811179216]
+    array([ 0.00084027,  0.00072388, -0.00041033])
     """
     xi_ = [(np.nanmin(i), np.nanmax(i)) for i in xi]
     f, *scales = read_hdf_by_value(ifile, *xi_, **kwargs)
@@ -2196,7 +2196,13 @@ def _read_h5_meta(ifile: PathLike, /,
         return [HdfDataMeta(name=k,
                             type=v.dtype,
                             shape=v.shape,
-                            attr=dict(v.attrs),
+                            # Exclude HDF5 dimension-scale bookkeeping attributes
+                            # (``DIMENSION_LIST`` / ``DIMENSION_LABELS``).  These are
+                            # managed automatically by ``attach_scale`` and hold object
+                            # references that are not real user attributes; surfacing
+                            # them breaks round-trips such as :func:`convert` to HDF4.
+                            attr={ak: av for ak, av in v.attrs.items()
+                                  if not ak.startswith("DIMENSION")},
                             scales=[HdfScaleMeta(name=dimproxy.label,
                                                  type=dim.dtype,
                                                  shape=dim.shape,
@@ -2582,7 +2588,7 @@ def _write_h5_data(ifile: PathLike, /,
     >>> f = np.ones((10,), dtype=np.float32)
     >>> x = np.linspace(0.0, 1.0, 10, dtype=np.float32)
     >>> with tempfile.TemporaryDirectory() as d:
-    ...     _write_h5_data(Path(d) / "out.h5", f, x)
+    ...     _ = _write_h5_data(Path(d) / "out.h5", f, x)
     ...     data, *_ = _read_h5_data(Path(d) / "out.h5")
     ...     data.shape
     (10,)

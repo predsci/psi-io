@@ -80,11 +80,11 @@ in a consistent manner, regardless of the underlying HDF format.
 PSI Model Quantities & Coordinate Scales
 ========================================
 
-PSI's modeling codes — MAS and POT3D — write output as HDF files containing 3-D
-physical fields defined on a structured spherical grid
+PSI's modeling codes — MAS and POT3D — write output as Fortran-ordered HDF files
+containing 3-D physical fields defined on a structured spherical grid
 :math:`(r, \theta, \varphi)`.  Each file also stores three 1-D coordinate arrays
-that describe the grid.  The tables below summarize every quantity that
-``psi-io`` recognises, together with its physical meaning and units.
+that describe the grid.  The tables below articulate the quantities that
+``psi-io`` recognises, together with their physical meaning, units, and mesh staggering.
 
 Coordinate scales
 -----------------

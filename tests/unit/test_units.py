@@ -1,4 +1,4 @@
-"""Unit tests for psi_io._units."""
+"""Unit tests for psi_io.units."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import astropy.units as u
 import pytest
 from numpy.testing import assert_allclose
 
-from psi_io._units import (
+from psi_io.units import (
     BOLTZ,
     C_CGS,
     FAVORED_UNITS,
