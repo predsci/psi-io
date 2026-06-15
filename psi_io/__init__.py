@@ -8,7 +8,9 @@ to deprecate the former in the future), and includes utilities for managing
 PSI-specific data conventions.
 
 The public API is re-exported directly from :mod:`psi_io.psi_io`.  For
-example datasets used in the gallery examples, see :mod:`psi_io.data`.
+example datasets used in the gallery examples, see the ``psi-data-utils``
+package (:mod:`psi_data`) and its `documentation
+<https://predsci.com/doc/psi-data-utils/index.html>`_.
 """
 # from . import psi_io as _psi_io
 from .psi_io import *

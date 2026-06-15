@@ -462,14 +462,21 @@ def _parse_vslice_args(*args,
     """Parse value-space slice arguments, returning coordinate values and index slices.
 
     For each axis argument, determines whether it is an index-space argument
-    (``None``, ``int``, ``slice``, tuple) or a physical-coordinate argument
-    (:class:`~astropy.units.Quantity` or bare scalar).  Physical values are
-    converted to the scale unit, ``NaN`` is treated as an open bound, and the
-    surrounding index window is computed via :func:`numpy.searchsorted`.
+    (``None`` or ``slice``) or a physical-coordinate argument
+    (:class:`~astropy.units.Quantity`, a bare scalar including :class:`int`, or
+    a 2-element sequence of coordinate bounds).  Physical values are converted
+    to the scale unit, ``NaN`` is treated as an open bound, and the surrounding
+    index window is computed via :func:`numpy.searchsorted`.
+
+    .. note::
+       Unlike :meth:`PsiData.read`, an :class:`int` argument here is **not** an
+       array index — it is a physical coordinate value (in the scale's native
+       unit) that triggers interpolation.  Only ``None`` and ``slice`` are
+       index-space.
 
     Parameters
     ----------
-    *args : None | int | slice | tuple | QuantityLike
+    *args : None | slice | QuantityLike
         One argument per axis in physical ``(r, t, p)`` order.
     scales : tuple
         Scale reader objects for each axis; used for unit conversion and
@@ -498,7 +505,7 @@ def _parse_vslice_args(*args,
     [((None, None), slice(None, None, None))]
     """
     for arg, scale, rmesh in zip(args, scales, remesh):
-        if arg is None or isinstance(arg, (slice, int)):
+        if arg is None or isinstance(arg, slice):
             yield (None, None), _cast_to_slice(arg)
             continue
         arg = u.Quantity(arg, unit=scale.unit, ndmin=1)
@@ -1614,10 +1621,10 @@ class _HdfData(_HdfArray, ABC):
         """Read data by physical coordinate value with linear interpolation.
 
         Extends :meth:`read` to accept physical coordinate values as positional
-        arguments.  A scalar or :class:`~astropy.units.Quantity` argument for an
-        axis locates the two nearest grid points and linearly interpolates to the
-        target value.  Index-space arguments (``None``, ``int``, ``slice``) are
-        handled identically to :meth:`read`.
+        arguments.  A scalar, :class:`int`, or :class:`~astropy.units.Quantity`
+        argument for an axis locates the two nearest grid points and linearly
+        interpolates to the target value.  Only ``None`` and ``slice`` arguments
+        are index-space and handled identically to :meth:`read`.
 
         .. attention::
 
@@ -1625,11 +1632,18 @@ class _HdfData(_HdfArray, ABC):
            :math:`(r, \\theta, \\phi)`) order. However, unless specified with the ``order``
            argument, the sliced data array will be returned in storage order.
 
+        .. note::
+           Unlike :meth:`read`, an :class:`int` argument is treated as a physical
+           coordinate **value** (in the axis's native unit), not an array index.
+           Use a ``slice`` to select by index.
+
         Parameters
         ----------
-        *args : QuantityLike | int | slice | None
-            One argument per axis in physical ``(r, t, p)`` order.  Physical
-            coordinate values trigger interpolation; index-space arguments do not.
+        *args : QuantityLike | slice | None
+            One argument per axis in physical ``(r, t, p)`` order.  A
+            :class:`~astropy.units.Quantity`, bare scalar, or :class:`int`
+            triggers interpolation to that coordinate value; ``None`` and
+            ``slice`` are index-space and do not interpolate.
         unit : UnitLike | None, optional
             Output unit.  Default is ``None`` (code units).
         mesh : MeshCodeType | None, optional

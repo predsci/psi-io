@@ -574,6 +574,14 @@ class TestParseVsliceArgs:
         assert isinstance(value, u.Quantity)
         assert (s.stop - s.start) == 2
 
+    def test_int_arg_is_value_space_not_index(self, mas_reader):
+        # An int is interpreted as a physical coordinate value (value-space),
+        # not an array index. Only None and slice are index-space.
+        value, s = next(iter(_parse_vslice_args(2, scales=mas_reader.scales,
+                                                remesh=(False, False, False))))
+        assert isinstance(value, u.Quantity)
+        assert (s.stop - s.start) == 2
+
     def test_quantity_arg_gives_two_element_window(self, mas_reader):
         target = 0.4 * PSI_rsun
         value, s = next(iter(_parse_vslice_args(target, scales=mas_reader.scales,

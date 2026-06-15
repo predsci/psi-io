@@ -22,7 +22,7 @@ This example demonstrates:
    transparently; the file extension selects the I/O backend.
 """
 from pathlib import Path
-from psi_io import data
+from psi_data import fetch_mas_data
 from psi_io.mhd_io import PsiData
 
 # %%
@@ -58,7 +58,7 @@ from psi_io.mhd_io import PsiData
 # mapping; without it, the default ``model='custom'`` requires every metadata
 # field to be supplied explicitly.
 
-br_filepath = data.get_3d_data()
+br_filepath = fetch_mas_data(domains="cor", variables="br").cor_br
 print(f"Filename : {Path(br_filepath).name}")
 reader = PsiData(br_filepath, model='mas')
 
@@ -74,6 +74,22 @@ print(f"name      : {reader.name!r}")
 print(f"sequence  : {reader.sequence}")
 print(f"ndim      : {reader.ndim}")
 print(f"shape     : {reader.shape}  (Nr × Nθ × Nφ in physical order)")
+
+# %%
+# **Array ordering**
+#
+# The :attr:`order` attribute records the in-memory layout of the dataset, mirroring
+# the :attr:`~psi_io.models.ModelProps.order` field: ``'F'`` for Fortran (column-major,
+# the PSI default) or ``'C'`` for C (row-major).  PSI HDF files are written Fortran-ordered,
+# so the on-disk storage order is ``(Nφ, Nθ, Nr)`` — the *reverse* of the physical
+# ``(r, θ, φ)`` order.  This is precisely why :attr:`shape` (reported above in physical
+# ``(r, θ, φ)`` order) is the reverse of the raw HDF storage shape, and why every positional
+# argument to :meth:`~psi_io.mhd_io.PsiData.read` is supplied in physical order regardless of
+# how the bytes are laid out on disk.
+
+print(f"order        : {reader.order!r}  ('F' = Fortran/column-major, PSI default)")
+print(f"shape (phys) : {reader.shape}        (r, θ, φ)")
+print(f"shape (HDF)  : {reader.shape[::-1]}        (Nφ, Nθ, Nr storage order)")
 
 # %%
 # **Connection to** :mod:`psi_io.models`
@@ -119,9 +135,17 @@ print(f"in Gauss : {reader.unit.to('G'):.4f}")
 # %%
 # **Coordinate scale readers**
 #
-# The :attr:`scales` attribute is a named tuple of coordinate readers ``(r, t, p)``;
-# each element is itself a lightweight reader.  Calling :meth:`read` on a scale
-# returns the 1-D coordinate array as a :class:`~astropy.units.Quantity`.
+# The :attr:`scales` attribute is a named tuple of coordinate readers whose field
+# names — and their order — come from the :attr:`~psi_io.models.ModelProps.scales`
+# field (default ``('r', 't', 'p')``).  This tuple *defines* the physical
+# ``(r, θ, φ)`` axis ordering used everywhere else in the API: it is the order of
+# the :attr:`shape`, the per-axis flags of :attr:`mesh`, and every positional
+# argument accepted by :meth:`~psi_io.mhd_io.PsiData.read` and
+# :meth:`~psi_io.mhd_io.PsiData.vslice`.  Each element is itself a lightweight
+# reader; calling :meth:`read` on a scale returns the 1-D coordinate array as a
+# :class:`~astropy.units.Quantity`.
+
+print(f"scale order : {reader.scales._fields}  (from ModelProps.scales)")
 
 r_scale = reader.scales.r.read()
 t_scale = reader.scales.t.read()

@@ -12,12 +12,13 @@ reading in datasets of a specific dimensionality.
 """
 
 import numpy as np
-from psi_io import read_hdf_data, rdhdf_2d, rdhdf_3d, data
+from psi_io import read_hdf_data, rdhdf_2d, rdhdf_3d
+from psi_data import fetch_mas_data
 
 # %%
 # Read in example 3D data file (the radial magnetic field data).
 
-br_data_filepath = data.get_3d_data()
+br_data_filepath = fetch_mas_data(domains="cor", variables="br").cor_br
 result_with_scales = read_hdf_data(br_data_filepath)
 for d in result_with_scales:
     print(d.shape)

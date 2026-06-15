@@ -23,7 +23,8 @@ This example walks through a realistic data-preparation workflow:
 import tempfile
 from pathlib import Path
 import numpy as np
-from psi_io import read_hdf_data, write_hdf_data, read_hdf_meta, convert_psih4_to_psih5, data
+from psi_io import read_hdf_data, write_hdf_data, read_hdf_meta, convert_psih4_to_psih5
+from psi_data import fetch_mas_data
 
 # %%
 # **Step 1 – Read the source HDF4 file**
@@ -31,7 +32,7 @@ from psi_io import read_hdf_data, write_hdf_data, read_hdf_meta, convert_psih4_t
 # Fetch the example radial magnetic field file and load the primary dataset
 # together with its (r, θ, φ) coordinate scales:
 
-br_filepath = data.get_3d_data(hdf=".hdf")
+br_filepath = fetch_mas_data(domains="cor", variables="br", hdf=4).cor_br
 print(f"Source file : {Path(br_filepath).name}")
 
 br_data, r, t, p = read_hdf_data(br_filepath)

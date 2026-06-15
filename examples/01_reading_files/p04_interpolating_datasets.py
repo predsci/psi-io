@@ -50,14 +50,15 @@ def pretty_print_meta(filename, meta):
 # sphinx_gallery_end_ignore
 
 from pathlib import Path
-from psi_io import data, read_hdf_meta, np_interpolate_slice_from_hdf, interpolate_positions_from_hdf
+from psi_io import read_hdf_meta, np_interpolate_slice_from_hdf, interpolate_positions_from_hdf
+from psi_data import fetch_mas_data
 import matplotlib.pyplot as plt
 import numpy as np
 
 # %%
 # Read in the metadata for a 3D data file (the radial magnetic field data).
 
-br_data_filepath = data.get_3d_data()
+br_data_filepath = fetch_mas_data(domains="cor", variables="br").cor_br
 metadata = read_hdf_meta(br_data_filepath)
 # sphinx_gallery_start_ignore
 pretty_print_meta(Path(br_data_filepath).name, metadata)

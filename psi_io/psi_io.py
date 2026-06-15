@@ -30,19 +30,21 @@ Converting between formats:
 
 See Also
 --------
-:mod:`psi_io.data` :
-    Helpers for fetching example HDF data files.
+:mod:`psi_data` :
+    The ``psi-data-utils`` package, which provides helpers for fetching
+    example HDF data files. See its `documentation
+    <https://predsci.com/doc/psi-data-utils/index.html>`_ for details.
 
 Examples
 --------
 Read a 3D PSI-style HDF5 file:
 
 >>> from psi_io import read_hdf_data
->>> from psi_io.data import get_3d_data
->>> filepath = get_3d_data()
+>>> from psi_data import fetch_mas_data
+>>> filepath = fetch_mas_data().cor_br
 >>> data, r, t, p = read_hdf_data(filepath)
 >>> data.shape
-(181, 100, 151)
+(299, 142, 255)
 """
 
 from __future__ import annotations
@@ -347,11 +349,11 @@ def _dispatch_by_ext(ifile: PathLike,
     Examples
     --------
     >>> from psi_io.psi_io import _dispatch_by_ext, _read_h5_data, _read_h4_data
-    >>> from psi_io.data import get_3d_data
-    >>> filepath = get_3d_data()
+    >>> from psi_data import fetch_mas_data
+    >>> filepath = fetch_mas_data().cor_br
     >>> data, *_ = _dispatch_by_ext(filepath, _read_h4_data, _read_h5_data)
     >>> data.shape
-    (181, 100, 151)
+    (299, 142, 255)
     """
     ipath = Path(ifile)
     if ipath.suffix == '.h5':
@@ -390,8 +392,8 @@ def rdhdf_1d(hdf_filename: PathLike
     Examples
     --------
     >>> from psi_io import rdhdf_1d
-    >>> from psi_io.data import get_1d_data
-    >>> filepath = get_1d_data()
+    >>> from psi_data import fetch_example_radial_scale
+    >>> filepath = fetch_example_radial_scale()
     >>> x, f = rdhdf_1d(filepath)
     >>> x.shape, f.shape
     ((121,), (121,))
@@ -435,8 +437,8 @@ def rdhdf_2d(hdf_filename: PathLike
     Examples
     --------
     >>> from psi_io import rdhdf_2d
-    >>> from psi_io.data import get_2d_data
-    >>> filepath = get_2d_data()
+    >>> from psi_data import fetch_mas_quantities
+    >>> filepath = fetch_mas_quantities().ch_pm
     >>> x, y, f = rdhdf_2d(filepath)
     >>> f.shape == (y.shape[0], x.shape[0])
     True
@@ -483,8 +485,8 @@ def rdhdf_3d(hdf_filename: PathLike
     Examples
     --------
     >>> from psi_io import rdhdf_3d
-    >>> from psi_io.data import get_3d_data
-    >>> filepath = get_3d_data()
+    >>> from psi_data import fetch_mas_data
+    >>> filepath = fetch_mas_data().cor_br
     >>> r, t, p, f = rdhdf_3d(filepath)
     >>> f.shape == (p.shape[0], t.shape[0], r.shape[0])
     True
@@ -743,8 +745,8 @@ def get_scales_1d(filename: PathLike
     Examples
     --------
     >>> from psi_io import get_scales_1d
-    >>> from psi_io.data import get_1d_data
-    >>> filepath = get_1d_data()
+    >>> from psi_data import fetch_example_radial_scale
+    >>> filepath = fetch_example_radial_scale()
     >>> x = get_scales_1d(filepath)
     >>> x.ndim
     1
@@ -775,8 +777,8 @@ def get_scales_2d(filename: PathLike
     Examples
     --------
     >>> from psi_io import get_scales_2d
-    >>> from psi_io.data import get_2d_data
-    >>> filepath = get_2d_data()
+    >>> from psi_data import fetch_mas_quantities
+    >>> filepath = fetch_mas_quantities().ch_pm
     >>> x, y = get_scales_2d(filepath)
     >>> x.ndim, y.ndim
     (1, 1)
@@ -809,8 +811,8 @@ def get_scales_3d(filename: PathLike
     Examples
     --------
     >>> from psi_io import get_scales_3d
-    >>> from psi_io.data import get_3d_data
-    >>> filepath = get_3d_data()
+    >>> from psi_data import fetch_mas_data
+    >>> filepath = fetch_mas_data().cor_br
     >>> r, t, p = get_scales_3d(filepath)
     >>> r.ndim, t.ndim, p.ndim
     (1, 1, 1)
@@ -886,13 +888,13 @@ def read_hdf_meta(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io import read_hdf_meta
-    >>> from psi_io.data import get_3d_data
-    >>> filepath = get_3d_data()
+    >>> from psi_data import fetch_mas_data
+    >>> filepath = fetch_mas_data().cor_br
     >>> meta = read_hdf_meta(filepath)
     >>> meta[0].name
     'Data'
     >>> meta[0].shape
-    (181, 100, 151)
+    (299, 142, 255)
     >>> meta[0].attr                        # attributes attached to the dataset
     {}
     >>> len(meta[0].scales)                 # one HdfScaleMeta per dimension
@@ -935,8 +937,8 @@ def read_rtp_meta(ifile: PathLike, /) -> Dict:
     Examples
     --------
     >>> from psi_io import read_rtp_meta
-    >>> from psi_io.data import get_3d_data
-    >>> filepath = get_3d_data()
+    >>> from psi_data import fetch_mas_data
+    >>> filepath = fetch_mas_data().cor_br
     >>> meta = read_rtp_meta(filepath)
     >>> sorted(meta.keys())
     ['p', 'r', 't']
@@ -990,13 +992,13 @@ def read_hdf_data(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io import read_hdf_data
-    >>> from psi_io.data import get_3d_data
-    >>> filepath = get_3d_data()
+    >>> from psi_data import fetch_mas_data
+    >>> filepath = fetch_mas_data().cor_br
     >>> data, r, t, p = read_hdf_data(filepath)
     >>> data.shape
-    (181, 100, 151)
+    (299, 142, 255)
     >>> r.shape, t.shape, p.shape
-    ((151,), (100,), (181,))
+    ((255,), (142,), (299,))
     """
     return _dispatch_by_ext(ifile, _read_h4_data, _read_h5_data,
                             dataset_id=dataset_id, return_scales=return_scales)
@@ -1067,27 +1069,27 @@ def read_hdf_by_index(ifile: PathLike, /,
     --------
     Import a 3D HDF5 cube.
 
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import read_hdf_by_index
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Extract a radial slice at the first radial index from a 3D cube:
 
     >>> f, r, t, p = read_hdf_by_index(filepath, 0, None, None)
     >>> f.shape, r.shape, t.shape, p.shape
-    ((181, 100, 1), (1,), (100,), (181,))
+    ((299, 142, 1), (1,), (142,), (299,))
 
     Extract a phi slice at the 90th index from a 3D cube:
 
     >>> f, r, t, p = read_hdf_by_index(filepath, None, None, 90)
     >>> f.shape, r.shape, t.shape, p.shape
-    ((1, 100, 151), (151,), (100,), (1,))
+    ((1, 142, 255), (255,), (142,), (1,))
 
     Extract up to the 20th radial index with phi indices 10 to 25:
 
     >>> f, r, t, p = read_hdf_by_index(filepath, (None, 20), None, (10, 25))
     >>> f.shape, r.shape, t.shape, p.shape
-    ((15, 100, 20), (20,), (100,), (15,))
+    ((15, 142, 20), (20,), (142,), (15,))
     """
     if not xi:
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
@@ -1175,28 +1177,28 @@ def read_hdf_by_value(ifile: PathLike, /,
     --------
     Import a 3D HDF5 cube.
 
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import read_hdf_by_value
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Extract a radial slice at r=15 from a 3D cube:
 
     >>> f, r, t, p = read_hdf_by_value(filepath, 15, None, None)
     >>> f.shape, r.shape, t.shape, p.shape
-    ((181, 100, 2), (2,), (100,), (181,))
+    ((299, 142, 2), (2,), (142,), (299,))
 
     Extract a phi slice at p=1.57 from a 3D cube:
 
     >>> f, r, t, p = read_hdf_by_value(filepath, None, None, 1.57)
     >>> f.shape, r.shape, t.shape, p.shape
-    ((2, 100, 151), (151,), (100,), (2,))
+    ((2, 142, 255), (255,), (142,), (2,))
 
     Extract the values between 3.2 and 6.4 (in the radial dimension) and with
     phi equal to 4.5
 
     >>> f, r, t, p = read_hdf_by_value(filepath, (3.2, 6.4), None, 4.5)
     >>> f.shape, r.shape, t.shape, p.shape
-    ((2, 100, 15), (15,), (100,), (2,))
+    ((2, 142, 35), (35,), (142,), (2,))
     """
     if not xi:
         return read_hdf_data(ifile, dataset_id=dataset_id, return_scales=return_scales)
@@ -1275,9 +1277,9 @@ def read_hdf_by_ivalue(ifile: PathLike, /,
 
     Examples
     --------
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import read_hdf_by_ivalue
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Extract a 2-element bracket around fractional radial index 2.7:
 
@@ -1549,8 +1551,8 @@ def convert(ifile: PathLike,
     >>> import tempfile
     >>> from pathlib import Path
     >>> from psi_io import convert, read_hdf_meta
-    >>> from psi_io.data import get_3d_data
-    >>> h5_path = get_3d_data(hdf=".h5")
+    >>> from psi_data import fetch_mas_data
+    >>> h5_path = fetch_mas_data(hdf=5).cor_br
     >>> with tempfile.TemporaryDirectory() as d:
     ...     out = convert(h5_path, Path(d) / "br.hdf")
     ...     meta = read_hdf_meta(out)
@@ -1614,8 +1616,8 @@ def convert_psih4_to_psih5(ifile: PathLike,
     >>> import tempfile
     >>> from pathlib import Path
     >>> from psi_io import convert_psih4_to_psih5, read_hdf_meta
-    >>> from psi_io.data import get_3d_data
-    >>> hdf4_path = get_3d_data(hdf=".hdf")
+    >>> from psi_data import fetch_mas_data
+    >>> hdf4_path = fetch_mas_data(hdf=4).cor_br
     >>> with tempfile.TemporaryDirectory() as d:
     ...     out = convert_psih4_to_psih5(hdf4_path, Path(d) / "br.h5")
     ...     meta = read_hdf_meta(out)
@@ -1673,10 +1675,10 @@ def instantiate_linear_interpolator(*args, **kwargs):
     --------
     Import a 3D HDF5 cube.
 
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import read_hdf_by_value
     >>> from numpy import pi
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Read the dataset by value (at 15 R_sun in the radial dimension).
 
@@ -1686,7 +1688,7 @@ def instantiate_linear_interpolator(*args, **kwargs):
     Interpolate at a specific position.
 
     >>> interpolator((15, pi/2, pi))
-    array(0.00128645)
+    array(-0.00117191)
     """
     _except_no_scipy()
     return RegularGridInterpolator(
@@ -1740,22 +1742,22 @@ def sp_interpolate_slice_from_hdf(*xi, **kwargs):
 
     Examples
     --------
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import sp_interpolate_slice_from_hdf
     >>> from numpy import pi
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Fetch a 2D slice at r=15 from 3D map
 
     >>> slice_, theta_scale, phi_scale = sp_interpolate_slice_from_hdf(filepath, 15, None, None)
     >>> slice_.shape, theta_scale.shape, phi_scale.shape
-    ((181, 100), (100,), (181,))
+    ((299, 142), (142,), (299,))
 
     Fetch a single point from 3D map
 
     >>> point_value, *_ = sp_interpolate_slice_from_hdf(filepath, 1, pi/2, pi)
     >>> point_value
-    np.float64(6.084495480971823)
+    np.float64(-0.20146621106799947)
     """
     filepath, *args = xi
     kwargs.pop('return_scales', None)
@@ -1815,22 +1817,22 @@ def np_interpolate_slice_from_hdf(ifile: PathLike, /,
 
     Examples
     --------
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import np_interpolate_slice_from_hdf
     >>> from numpy import pi
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Fetch a 2D slice at r=15 from 3D map
 
     >>> slice_, theta_scale, phi_scale = np_interpolate_slice_from_hdf(filepath, 15, None, None)
     >>> slice_.shape, theta_scale.shape, phi_scale.shape
-    ((181, 100), (100,), (181,))
+    ((299, 142), (142,), (299,))
 
     Fetch a single point from 3D map
 
     >>> point_value, *_ = np_interpolate_slice_from_hdf(filepath, 1, pi/2, pi)
     >>> point_value
-    np.float32(6.084496)
+    np.float32(-0.2014672)
 
     """
     reader = read_hdf_by_value if not by_index else read_hdf_by_ivalue
@@ -1880,10 +1882,10 @@ def interpolate_positions_from_hdf(ifile, *xi, **kwargs):
     --------
     Import a 3D HDF5 cube.
 
-    >>> from psi_io.data import get_3d_data
+    >>> from psi_data import fetch_mas_data
     >>> from psi_io import interpolate_positions_from_hdf
     >>> import numpy as np
-    >>> filepath = get_3d_data()
+    >>> filepath = fetch_mas_data().cor_br
 
     Set up positions to interpolate.
 
@@ -1894,7 +1896,7 @@ def interpolate_positions_from_hdf(ifile, *xi, **kwargs):
     Interpolate at the specified positions.
 
     >>> interpolate_positions_from_hdf(filepath, r_vals, theta_vals, phi_vals)
-    array([ 0.00084027,  0.00072388, -0.00041033])
+    array([-1.44383936e-03, -6.70081301e-04,  8.56632460e-05])
     """
     xi_ = [(np.nanmin(i), np.nanmax(i)) for i in xi]
     f, *scales = read_hdf_by_value(ifile, *xi_, **kwargs)
@@ -2003,10 +2005,10 @@ def _rdhdf_nd(hdf_filename: str,
     Examples
     --------
     >>> from psi_io.psi_io import _rdhdf_nd
-    >>> from psi_io.data import get_3d_data
-    >>> r, t, p, f = _rdhdf_nd(get_3d_data(), dimensionality=3)
+    >>> from psi_data import fetch_mas_data
+    >>> r, t, p, f = _rdhdf_nd(fetch_mas_data().cor_br, dimensionality=3)
     >>> f.shape
-    (181, 100, 151)
+    (299, 142, 255)
     """
     f, *scales = read_hdf_data(hdf_filename)
     if f.ndim != dimensionality:
@@ -2098,10 +2100,10 @@ def _get_scales_nd_h5(ifile: Union[ Path, str], /,
     Examples
     --------
     >>> from psi_io.psi_io import _get_scales_nd_h5
-    >>> from psi_io.data import get_3d_data
-    >>> r, t, p = _get_scales_nd_h5(get_3d_data(), dimensionality=3)
+    >>> from psi_data import fetch_mas_data
+    >>> r, t, p = _get_scales_nd_h5(fetch_mas_data().cor_br, dimensionality=3)
     >>> r.shape, t.shape, p.shape
-    ((151,), (100,), (181,))
+    ((255,), (142,), (299,))
     """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
@@ -2149,8 +2151,9 @@ def _get_scales_nd_h4(ifile: Union[ Path, str], /,
     Examples
     --------
     >>> from psi_io.psi_io import _get_scales_nd_h4
-    >>> from psi_io.data import get_3d_data
-    >>> r, t, p = _get_scales_nd_h4(get_3d_data(hdf=".hdf"), dimensionality=3)  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> path = fetch_mas_data(hdf=4).cor_br  # doctest: +SKIP
+    >>> r, t, p = _get_scales_nd_h4(path, dimensionality=3)  # doctest: +SKIP
     >>> r.shape  # doctest: +SKIP
     (151,)
     """
@@ -2177,8 +2180,8 @@ def _read_h5_meta(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h5_meta
-    >>> from psi_io.data import get_3d_data
-    >>> meta = _read_h5_meta(get_3d_data())
+    >>> from psi_data import fetch_mas_data
+    >>> meta = _read_h5_meta(fetch_mas_data().cor_br)
     >>> meta[0].name
     'Data'
     """
@@ -2221,8 +2224,8 @@ def _read_h4_meta(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h4_meta
-    >>> from psi_io.data import get_3d_data
-    >>> meta = _read_h4_meta(get_3d_data(hdf=".hdf"))  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> meta = _read_h4_meta(fetch_mas_data(hdf=4).cor_br)  # doctest: +SKIP
     >>> meta[0].name  # doctest: +SKIP
     'Data-Set-2'
     """
@@ -2265,8 +2268,8 @@ def _read_h5_rtp(ifile: Union[ Path, str], /):
     Examples
     --------
     >>> from psi_io.psi_io import _read_h5_rtp
-    >>> from psi_io.data import get_3d_data
-    >>> meta = _read_h5_rtp(get_3d_data())
+    >>> from psi_data import fetch_mas_data
+    >>> meta = _read_h5_rtp(fetch_mas_data().cor_br)
     >>> sorted(meta.keys())
     ['p', 'r', 't']
     """
@@ -2281,8 +2284,8 @@ def _read_h4_rtp(ifile: Union[ Path, str], /):
     Examples
     --------
     >>> from psi_io.psi_io import _read_h4_rtp
-    >>> from psi_io.data import get_3d_data
-    >>> meta = _read_h4_rtp(get_3d_data(hdf=".hdf"))  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> meta = _read_h4_rtp(fetch_mas_data(hdf=4).cor_br)  # doctest: +SKIP
     >>> sorted(meta.keys())  # doctest: +SKIP
     ['p', 'r', 't']
     """
@@ -2300,10 +2303,10 @@ def _read_h5_data(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h5_data
-    >>> from psi_io.data import get_3d_data
-    >>> data, r, t, p = _read_h5_data(get_3d_data())
+    >>> from psi_data import fetch_mas_data
+    >>> data, r, t, p = _read_h5_data(fetch_mas_data().cor_br)
     >>> data.shape
-    (181, 100, 151)
+    (299, 142, 255)
     """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
@@ -2323,10 +2326,10 @@ def _read_h4_data(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h4_data
-    >>> from psi_io.data import get_3d_data
-    >>> data, *_ = _read_h4_data(get_3d_data(hdf=".hdf"))  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> data, *_ = _read_h4_data(fetch_mas_data(hdf=4).cor_br)  # doctest: +SKIP
     >>> data.shape  # doctest: +SKIP
-    (181, 100, 151)
+    (299, 142, 255)
     """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
@@ -2348,10 +2351,10 @@ def _read_h5_by_index(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h5_by_index
-    >>> from psi_io.data import get_3d_data
-    >>> f, r, t, p = _read_h5_by_index(get_3d_data(), 0, None, None)
+    >>> from psi_data import fetch_mas_data
+    >>> f, r, t, p = _read_h5_by_index(fetch_mas_data().cor_br, 0, None, None)
     >>> f.shape
-    (181, 100, 1)
+    (299, 142, 1)
     """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
@@ -2374,10 +2377,11 @@ def _read_h4_by_index(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h4_by_index
-    >>> from psi_io.data import get_3d_data
-    >>> f, r, t, p = _read_h4_by_index(get_3d_data(hdf=".hdf"), 0, None, None)  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> path = fetch_mas_data(hdf=4).cor_br  # doctest: +SKIP
+    >>> f, r, t, p = _read_h4_by_index(path, 0, None, None)  # doctest: +SKIP
     >>> f.shape  # doctest: +SKIP
-    (181, 100, 1)
+    (299, 142, 1)
     """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
@@ -2402,10 +2406,10 @@ def _read_h5_by_value(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h5_by_value
-    >>> from psi_io.data import get_3d_data
-    >>> f, r, t, p = _read_h5_by_value(get_3d_data(), 15, None, None)
+    >>> from psi_data import fetch_mas_data
+    >>> f, r, t, p = _read_h5_by_value(fetch_mas_data().cor_br, 15, None, None)
     >>> f.shape
-    (181, 100, 2)
+    (299, 142, 2)
     """
     with h5.File(ifile, 'r') as hdf:
         data = hdf[dataset_id or PSI_DATA_ID['h5']]
@@ -2436,10 +2440,11 @@ def _read_h4_by_value(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h4_by_value
-    >>> from psi_io.data import get_3d_data
-    >>> f, r, t, p = _read_h4_by_value(get_3d_data(hdf=".hdf"), 15, None, None)  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> path = fetch_mas_data(hdf=4).cor_br  # doctest: +SKIP
+    >>> f, r, t, p = _read_h4_by_value(path, 15, None, None)  # doctest: +SKIP
     >>> f.shape  # doctest: +SKIP
-    (181, 100, 2)
+    (299, 142, 2)
     """
     hdf = h4.SD(str(ifile))
     data = hdf.select(dataset_id or PSI_DATA_ID['h4'])
@@ -2471,8 +2476,8 @@ def _read_h5_by_ivalue(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h5_by_ivalue
-    >>> from psi_io.data import get_3d_data
-    >>> f, r_idx, t_idx, p_idx = _read_h5_by_ivalue(get_3d_data(), 2.7, None, None)
+    >>> from psi_data import fetch_mas_data
+    >>> f, r_idx, t_idx, p_idx = _read_h5_by_ivalue(fetch_mas_data().cor_br, 2.7, None, None)
     >>> r_idx.shape
     (2,)
     """
@@ -2498,8 +2503,9 @@ def _read_h4_by_ivalue(ifile: PathLike, /,
     Examples
     --------
     >>> from psi_io.psi_io import _read_h4_by_ivalue
-    >>> from psi_io.data import get_3d_data
-    >>> f, r_idx, t_idx, p_idx = _read_h4_by_ivalue(get_3d_data(hdf=".hdf"), 2.7, None, None)  # doctest: +SKIP
+    >>> from psi_data import fetch_mas_data
+    >>> path = fetch_mas_data(hdf=4).cor_br  # doctest: +SKIP
+    >>> f, r_idx, t_idx, p_idx = _read_h4_by_ivalue(path, 2.7, None, None)  # doctest: +SKIP
     >>> r_idx.shape  # doctest: +SKIP
     (2,)
     """

@@ -47,12 +47,19 @@ def pretty_print_meta(filename, meta):
 # sphinx_gallery_end_ignore
 
 from pathlib import Path
-from psi_io import read_hdf_meta, data
+from psi_io import read_hdf_meta
+from psi_data import (
+    fetch_example_radial_scale,
+    fetch_mas_quantities,
+    fetch_mas_data,
+    fetch_example_fieldline,
+    fetch_example_chmapdb,
+)
 
 # %%
 # Read in example 1D data file, *viz.* a vignette function (used for radial scaling).
 
-data1d_filepath = data.get_1d_data()
+data1d_filepath = fetch_example_radial_scale()
 meta1d = read_hdf_meta(data1d_filepath)
 
 # sphinx_gallery_start_ignore
@@ -62,7 +69,7 @@ pretty_print_meta(Path(data1d_filepath).name, meta1d)
 # %%
 # Read in example 2D data file, *viz.* a long-lat coronal hole map.
 
-data2d_filepath = data.get_2d_data()
+data2d_filepath = fetch_mas_quantities(quantities="ch_pm").ch_pm
 meta2d = read_hdf_meta(data2d_filepath)
 
 # sphinx_gallery_start_ignore
@@ -72,7 +79,7 @@ pretty_print_meta(Path(data2d_filepath).name, meta2d)
 # %%
 # Read in example 3D data file, *viz.* the radial component of the magnetic field.
 
-data3d_filepath = data.get_3d_data()
+data3d_filepath = fetch_mas_data(domains="cor", variables="br").cor_br
 meta3d = read_hdf_meta(data3d_filepath)
 
 # sphinx_gallery_start_ignore
@@ -82,7 +89,7 @@ pretty_print_meta(Path(data3d_filepath).name, meta3d)
 # %%
 # Read in example fieldline trace data file – a 2D dataset without coordinate variables.
 
-datafieldline_filepath = data.get_fieldline_data()
+datafieldline_filepath = fetch_example_fieldline()
 metafieldline = read_hdf_meta(datafieldline_filepath)
 
 # sphinx_gallery_start_ignore
@@ -97,7 +104,7 @@ pretty_print_meta(Path(datafieldline_filepath).name, metafieldline)
 #    but also a variety of additional metadata datasets describing the observation and processing
 #    used to create the map.
 
-datasynchronic_map_filepath = data.get_synchronic_map_data()
+datasynchronic_map_filepath = fetch_example_chmapdb()
 metasynchronic_map = read_hdf_meta(datasynchronic_map_filepath)
 
 # sphinx_gallery_start_ignore
@@ -111,7 +118,7 @@ pretty_print_meta(Path(datasynchronic_map_filepath).name, metasynchronic_map)
 # differ (internally) between HDF4 and HDF5, we can read the metadata from the HDF4 version of
 # the 3D data file using the same function:
 
-data3d_hdf4_filepath = data.get_3d_data(hdf=".hdf")
+data3d_hdf4_filepath = fetch_mas_data(domains="cor", variables="br", hdf=4).cor_br
 meta3d_hdf4 = read_hdf_meta(data3d_hdf4_filepath)
 
 # sphinx_gallery_start_ignore

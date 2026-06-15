@@ -39,7 +39,7 @@ release = psi_io.__version__
 extensions = []
 
 # --- HTML Theme
-_logo = "https://predsci.com/doc/assets/static/psi_logo.png"
+_logo = "https://predsci.com/doc/psi_logo.png"
 html_favicon = _logo
 html_logo = _logo
 html_theme = "sphinx_book_theme"
@@ -224,9 +224,9 @@ intersphinx_mapping = {
         # (INV / "matplotlib-objects.inv").as_posix(),
         None
     ),
-    "pooch": (
-        "https://www.fatiando.org/pooch/latest/",
-        # (INV / "pooch-objects.inv").as_posix(),
+    "psi_data": (
+        "https://predsci.com/doc/psi-data-utils/",
+        # (INV / "psi_data-objects.inv").as_posix(),
         None
     ),
     "h5py": (

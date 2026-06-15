@@ -25,8 +25,7 @@ This example demonstrates:
 
 import astropy.units as u
 import numpy as np
-from psi_io import data
-from psi_io.units import PSI_rsun
+from psi_data import fetch_mas_data
 from psi_io.mhd_io import PsiData
 
 # %%
@@ -36,7 +35,7 @@ from psi_io.mhd_io import PsiData
 # unit, and mesh stagger — is resolved from the filename and HDF attributes.
 # No array data is transferred from disk at this step.
 
-br_filepath = data.get_3d_data()
+br_filepath = fetch_mas_data(domains="cor", variables="br").cor_br
 reader = PsiData(br_filepath, model='mas')
 print(f"name  : {reader.name!r}")
 print(f"shape : {reader.shape}  (Nr × Nθ × Nφ in physical order)")
@@ -122,16 +121,19 @@ r_qty = r_scale[len(r_scale) // 2].to(u.cm)
 data_vsq, r_vsq, t_vsq, p_vsq = reader.vslice(r_qty, unit='Gauss')
 print(f"input (Qty) r  : {r_qty:.4e}")
 print(f"vslice (Qty) r : {r_vsq[0]:.4f}")
-np.testing.assert_allclose(data_vs.value, data_vsq.value, rtol=1e-5)
+np.testing.assert_allclose(data_vs.value, data_vsq.value, rtol=1e-5, atol=1e-6)
 print("Scalar and Quantity results match.")
 
 # %%
 # **Mixing value-space and index-space arguments**
 #
-# ``vslice`` accepts any combination of value-space (Quantity / scalar) and
-# index-space (``slice``, ``int``, ``None``) arguments, one per spatial axis
-# in ``(r, θ, φ)`` order.  The example below fixes the radial coordinate at
-# the chosen target value and reads only the first five co-latitude grid points:
+# ``vslice`` accepts any combination of value-space (``Quantity``, bare scalar,
+# or ``int``) and index-space (``slice`` or ``None``) arguments, one per spatial
+# axis in ``(r, θ, φ)`` order.  Note that — unlike
+# :meth:`~psi_io.mhd_io.PsiData.read` — a bare ``int`` is interpreted as a
+# coordinate *value*, not an array index; use a ``slice`` to select by index.
+# The example below fixes the radial coordinate at the chosen target value and
+# reads only the first five co-latitude grid points:
 
 data_mixed, r_mixed, t_mixed, p_mixed = reader.vslice(
     r_qty,           # r: value-space (PSI_rsun) → collapses to 1

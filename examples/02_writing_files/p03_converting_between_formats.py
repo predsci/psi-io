@@ -25,13 +25,14 @@ def print_meta_summary(label, meta):
 
 import tempfile
 from pathlib import Path
-from psi_io import convert, convert_psih4_to_psih5, read_hdf_meta, data
+from psi_io import convert, convert_psih4_to_psih5, read_hdf_meta
+from psi_data import fetch_mas_data
 
 # %%
 # Fetch a real PSI HDF4 data file (the radial magnetic field cube) to use as
 # the conversion source:
 
-br_hdf4_filepath = data.get_3d_data(hdf=".hdf")
+br_hdf4_filepath = fetch_mas_data(domains="cor", variables="br", hdf=4).cor_br
 print(f"Source file : {Path(br_hdf4_filepath).name}")
 
 # %%
@@ -106,7 +107,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 #    conversion to fail.
 
 with tempfile.TemporaryDirectory() as tmpdir:
-    br_h5_filepath = data.get_3d_data(hdf=".h5")
+    br_h5_filepath = fetch_mas_data(domains="cor", variables="br", hdf=5).cor_br
     out_hdf = Path(tmpdir) / "br_back.hdf"
     convert(br_h5_filepath, out_hdf, strict=False)
 

@@ -26,6 +26,6 @@ Required Dependencies
 Optional Dependencies
 ----------------------
 - `matplotlib <https://matplotlib.org/>`_ (*viz.* for running examples)
-- `pooch <https://www.fatiando.org/pooch/>`_ (*viz.* for running examples)
+- `psi-data-utils <https://predsci.com/doc/psi-data-utils/index.html>`_ (*viz.* for fetching the example datasets used in the gallery)
 - `pyhdf <https://pypi.org/project/pyhdf/>`_ (for HDF4 support)
 - `scipy <https://scipy.org/>`_ (for advanced interpolation methods)
